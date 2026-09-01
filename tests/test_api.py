@@ -427,3 +427,33 @@ def test_equipment(client):
     backup = client.get("/api/export/backup.json").json()
     assert backup["devices"] and backup["device_tickets"]
     assert client.post("/api/import/backup", json=backup).status_code == 200
+
+
+def test_openai_param_retry(monkeypatch):
+    """Newer models reject legacy params; the client strips them and retries."""
+    import io as _io
+    import json as _json
+    import urllib.error
+    from app.routers import extras
+
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        body = _json.loads(req.data)
+        calls.append(dict(body))
+        for bad in ("max_tokens", "temperature"):
+            if bad in body:
+                msg = _json.dumps({"error": {"message": f"Unsupported parameter: '{bad}' is not supported with this model."}}).encode()
+                raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, _io.BytesIO(msg))
+
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+        return R()
+
+    monkeypatch.setattr(extras.urllib.request, "urlopen", fake_urlopen)
+    out = extras.openai_chat("sk-x", {"model": "gpt-5", "max_tokens": 10, "temperature": 0, "messages": []})
+    assert out["choices"]
+    assert "max_tokens" not in calls[-1] and "temperature" not in calls[-1] and calls[-1]["max_completion_tokens"] == 800
+    assert len(calls) == 3

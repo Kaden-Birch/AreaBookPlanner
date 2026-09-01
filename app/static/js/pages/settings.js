@@ -26,7 +26,7 @@ export async function render(container) {
           <div class="field"><label>OpenAI API key</label>
             <div class="flex"><input id="ai-key" type="password" class="grow" placeholder="${ai.ai_configured ? `Saved (${attr(ai.openai_api_key_masked)}) — paste a new key to replace` : 'sk-…'}" autocomplete="off"><button class="btn" id="ai-save">Save</button>${ai.ai_configured ? '<button class="btn btn-danger" id="ai-clear">Remove</button>' : ''}</div>
             <div class="help">Get one at platform.openai.com → API keys. Status: <strong>${ai.ai_configured ? 'configured' : 'not configured'}</strong></div></div>
-          <div class="field"><label>Model</label><input id="ai-model" value="${attr(ai.openai_model)}" placeholder="gpt-4o-mini"><div class="help">Any OpenAI model that accepts images. gpt-4o-mini is cheap and accurate for cards.</div></div>
+          <div class="field"><label>Model</label><input id="ai-model" value="${attr(ai.openai_model)}" placeholder="gpt-4o-mini"><div class="help">Any OpenAI model that accepts images, e.g. gpt-4o-mini, gpt-4.1-mini or gpt-5-mini. gpt-4o-mini is cheap and accurate for cards.</div></div>
         </div>
 
         <div class="card">

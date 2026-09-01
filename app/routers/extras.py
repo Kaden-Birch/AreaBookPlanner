@@ -582,6 +582,42 @@ def guess_role(title: str | None) -> str:
     return "staff"
 
 
+_UNSUPPORTED_RE = re.compile(r"Unsupported (?:parameter|value)[^']*'([a-zA-Z_.]+)'")
+
+
+def openai_chat(key: str, body: dict, _attempt: int = 0) -> dict:
+    """POST to chat/completions. If the model rejects a parameter (older/newer models differ,
+    e.g. max_tokens vs max_completion_tokens, or temperature on reasoning models), drop it and retry."""
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": USER_AGENT},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", "ignore")[:600]
+        try:
+            detail = json.loads(raw).get("error", {}).get("message", raw)
+        except Exception:  # noqa: BLE001
+            detail = raw
+        m = _UNSUPPORTED_RE.search(detail or "")
+        if exc.code == 400 and m and _attempt < 3:
+            param = m.group(1).split(".")[0]
+            if param in body:
+                body = {k: v for k, v in body.items() if k != param}
+                if param == "max_tokens" and "max_completion_tokens" not in body:
+                    body["max_completion_tokens"] = 800
+                return openai_chat(key, body, _attempt + 1)
+        raise HTTPException(status_code=502, detail=f"OpenAI error ({exc.code}): {detail}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc}") from exc
+
+
 @router.post("/contacts/scan-card")
 async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connection = Depends(db_dependency)):
     key = get_setting(conn, "openai_api_key")
@@ -597,8 +633,7 @@ async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connect
     b64 = base64.b64encode(data).decode("ascii")
     body = {
         "model": model,
-        "temperature": 0,
-        "max_tokens": 600,
+        "max_completion_tokens": 800,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": CARD_PROMPT},
@@ -608,24 +643,7 @@ async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connect
             ]},
         ],
     }
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": USER_AGENT},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "ignore")[:400]
-        try:
-            detail = json.loads(detail).get("error", {}).get("message", detail)
-        except Exception:  # noqa: BLE001
-            pass
-        raise HTTPException(status_code=502, detail=f"OpenAI error ({exc.code}): {detail}") from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc}") from exc
+    result = openai_chat(key, body)
     try:
         text = result["choices"][0]["message"]["content"]
         parsed = json.loads(text)

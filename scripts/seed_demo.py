@@ -20,7 +20,8 @@ CLINICS = [
     {"name": "Crowfoot Medical Clinic", "address": "400 Crowfoot Cres NW", "postal_code": "T3G 5H6",
      "lat": 51.1235, "lng": -114.2065, "relationship": "current_client", "clinic_type": "Family practice",
      "emr_system": "Telus Wolf", "provider_count": 8, "tags": "NW, client", "phone": "403-555-0100",
-     "stage": "won", "deal_value": 18000, "outcome_reason": "service", "outcome_notes": "Chose us for on-site response time."},
+     "stage": "won", "deal_value": 18000, "outcome_reason": "service", "outcome_notes": "Chose us for on-site response time.",
+     "shorthand": "CMC", "outcome_date": "2024-02-12"},
     {"name": "Beltline Family Practice", "address": "1121 12 Ave SW", "postal_code": "T2R 0J3",
      "lat": 51.0413, "lng": -114.0794, "relationship": "interested", "clinic_type": "Family practice",
      "emr_system": "Accuro", "provider_count": 5, "tags": "downtown", "next_follow_up": (datetime.now() + timedelta(days=3)).date().isoformat(),
@@ -41,7 +42,7 @@ CLINICS = [
 ]
 
 CONTACTS = [
-    ("Crowfoot Medical Clinic", {"first_name": "Sarah", "last_name": "Nguyen", "role": "manager", "title": "Office Manager", "phone": "403-555-0101", "email": "sarah@example.com", "is_primary": True}),
+    ("Crowfoot Medical Clinic", {"first_name": "Sarah", "last_name": "Nguyen", "role": "manager", "title": "Office Manager", "use_main_line": True, "extension": "204", "email": "sarah@example.com", "is_primary": True}),
     ("Crowfoot Medical Clinic", {"first_name": "Raj", "last_name": "Patel", "role": "doctor", "title": "MD, Lead Physician"}),
     ("Beltline Family Practice", {"first_name": "Emily", "last_name": "Chen", "role": "receptionist", "phone": "403-555-0202"}),
     ("Marlborough Walk-In", {"first_name": "Tom", "last_name": "Baker", "role": "owner", "mobile": "403-555-0303", "is_primary": True}),
@@ -74,6 +75,11 @@ NOTES = [
 ]
 
 
+LOCATIONS = [
+    ("Crowfoot Medical Clinic", {"name": "CMC Tuscany", "address": "11 Tuscany Blvd NW", "postal_code": "T3L 2V7", "lat": 51.1258, "lng": -114.2426, "phone": "403-555-0110"}),
+]
+
+
 def seed_via_api(base: str) -> None:
     def post(path, body):
         req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
@@ -91,6 +97,9 @@ def seed_via_api(base: str) -> None:
         post(f"/api/clinics/{ids[name]}/notes", {"body": body})
     for name, t in TASKS:
         post("/api/tasks", {**t, "clinic_id": ids[name] if name else None})
+    for name, loc in LOCATIONS:
+        post(f"/api/clinics/{ids[name]}/locations", loc)
+    post(f"/api/clinics/{ids['Beltline Family Practice']}/links", {"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
     print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks via {base}")
 
 
@@ -110,6 +119,9 @@ def seed_direct() -> None:
             client.post(f"/api/clinics/{ids[name]}/notes", json={"body": body})
         for name, t in TASKS:
             client.post("/api/tasks", json={**t, "clinic_id": ids[name] if name else None})
+        for name, loc in LOCATIONS:
+            client.post(f"/api/clinics/{ids[name]}/locations", json=loc)
+        client.post(f"/api/clinics/{ids['Beltline Family Practice']}/links", json={"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
     print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks")
 
 

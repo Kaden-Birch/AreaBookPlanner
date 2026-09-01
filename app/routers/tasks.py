@@ -11,7 +11,7 @@ from ..schemas import TaskIn, TaskPatch
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-TASK_COLUMNS = ["clinic_id", "contact_id", "title", "notes", "due_date", "priority", "done"]
+TASK_COLUMNS = ["clinic_id", "contact_id", "title", "notes", "due_date", "due_time", "reminder_minutes", "rep", "priority", "done"]
 
 SELECT = """SELECT t.*, cl.name AS clinic_name, c.first_name AS contact_first_name, c.last_name AS contact_last_name
             FROM tasks t LEFT JOIN clinics cl ON cl.id = t.clinic_id

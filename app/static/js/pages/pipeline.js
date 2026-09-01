@@ -1,9 +1,9 @@
 // Pipeline page: Kanban board of clinics by sales stage, with deal totals and won/lost reasons.
 import { clinics, dashboard, getMeta } from '../api.js';
-import { esc, attr, dot, fmtMoney, fmtDate, fmtDateOnly, relativeDays, options, debounce, setTitle, badge } from '../ui.js';
+import { esc, attr, dot, fmtMoney, fmtDate, fmtDateOnly, relativeDays, options, debounce, setTitle, badge, toast, shorthandBadge } from '../ui.js';
 import { changeStage, openClinicForm } from '../forms.js';
 
-let state = { q: '', color: '', showClosed: true, sort: 'value' };
+let state = { q: '', color: '', showClosed: true, showArchived: false, sort: 'value' };
 let allClinics = [];
 let meta = null;
 
@@ -30,6 +30,7 @@ export async function render(container) {
         <option value="activity" ${state.sort === 'activity' ? 'selected' : ''}>Sort: Recently updated</option>
       </select>
       <label class="checkbox"><input type="checkbox" id="show-closed" ${state.showClosed ? 'checked' : ''}> Show Won / Lost</label>
+      <label class="checkbox"><input type="checkbox" id="show-archived" ${state.showArchived ? 'checked' : ''}> Show dismissed clients <span class="muted" id="archived-count"></span></label>
       <span class="muted small">Drag cards between columns to move them along the pipeline.</span>
     </div>
     <div id="board"></div>
@@ -41,6 +42,7 @@ export async function render(container) {
   container.querySelector('#color').onchange = (e) => { state.color = e.target.value; renderBoard(); };
   container.querySelector('#sort').onchange = (e) => { state.sort = e.target.value; renderBoard(); };
   container.querySelector('#show-closed').onchange = (e) => { state.showClosed = e.target.checked; renderBoard(); };
+  container.querySelector('#show-archived').onchange = (e) => { state.showArchived = e.target.checked; renderBoard(); };
   await load();
 }
 
@@ -66,6 +68,7 @@ function renderForecast(d) {
 
 function visible(c) {
   if (!state.showClosed && (c.stage === 'won' || c.stage === 'lost')) return false;
+  if (c.archived && !state.showArchived) return false;
   if (state.color && c.color !== state.color) return false;
   if (state.q) {
     const q = state.q.toLowerCase();
@@ -84,6 +87,8 @@ function sorter(a, b) {
 }
 
 function renderBoard() {
+  const archivedN = allClinics.filter(c => c.archived).length;
+  document.getElementById('archived-count').textContent = archivedN ? `(${archivedN})` : '';
   const stages = Object.keys(meta.stages).filter(s => state.showClosed || !['won', 'lost'].includes(s));
   const board = document.getElementById('board');
   const today = new Date().toISOString().slice(0, 10);
@@ -112,6 +117,13 @@ function renderBoard() {
       const c = allClinics.find(x => x.id === Number(el.dataset.id));
       changeStage(c, e.target.value, load);
     };
+    const dismiss = el.querySelector('[data-act=dismiss]');
+    if (dismiss) dismiss.onclick = async () => {
+      const c = allClinics.find(x => x.id === Number(el.dataset.id));
+      await clinics.archive(c.id, !c.archived);
+      toast(c.archived ? `${c.name} restored to the board` : `${c.name} dismissed from the board`, 'success');
+      load();
+    };
   });
   board.querySelectorAll('.kanban-col').forEach(col => {
     col.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('drag-over'); });
@@ -132,7 +144,7 @@ function card(c, today) {
   const reasonLabel = closed && c.outcome_reason ? (c.stage === 'won' ? meta.won_reasons : meta.lost_reasons)[c.outcome_reason] || c.outcome_reason : null;
   return `
     <div class="kanban-card" draggable="true" data-id="${c.id}">
-      <div class="name">${dot(c.color, c.color_label)}<a href="#/clinics/${c.id}">${esc(c.name)}</a></div>
+      <div class="name">${dot(c.color, c.color_label)}<a href="#/clinics/${c.id}">${esc(c.name)}</a>${c.shorthand ? ` ${shorthandBadge(c)}` : ''}${c.archived ? ' ' + badge('Dismissed', 'badge-grey') : ''}</div>
       <div class="row">
         ${c.deal_value ? `<span class="value money">${fmtMoney(c.deal_value)}</span>` : '<span>No value set</span>'}
         ${!closed ? `<span>· ${c.effective_probability}%</span>` : ''}
@@ -143,6 +155,7 @@ function card(c, today) {
       <div class="row">${c.next_appointment ? `Next: ${esc(fmtDate(c.next_appointment.start_time))}` : (c.last_visit ? `Last visit ${esc(relativeDays(c.last_visit))}` : 'Never visited')}</div>
       <div class="foot">
         ${c.clinic_type ? `<span class="badge">${esc(c.clinic_type)}</span>` : ''}
+        ${c.stage === 'won' ? `<button class="btn btn-sm btn-link" data-act="dismiss" title="${c.archived ? 'Show on the board again' : 'Hide from the board (stays a client)'}">${c.archived ? 'Restore' : 'Dismiss'}</button>` : ''}
         <select class="stage-select" title="Move to stage">${options(meta.stages, c.stage)}</select>
       </div>
     </div>`;

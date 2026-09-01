@@ -222,6 +222,21 @@ export function getCurrentPosition() {
     );
   });
 }
+// ---- Rep name (per browser) ---------------------------------------------
+export function getRepName() { try { return localStorage.getItem('rep_name') || ''; } catch { return ''; } }
+export function setRepName(v) { try { localStorage.setItem('rep_name', v || ''); } catch { /* ignore */ } }
+
+// ---- Email templates -----------------------------------------------------
+export function fillTemplate(text, ctx) {
+  return (text || '').replace(/\{(\w+)\}/g, (m, k) => (ctx[k] !== undefined && ctx[k] !== null ? String(ctx[k]) : m));
+}
+export function mailtoUrl(email, subject, body) {
+  return `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
+}
+export function shorthandBadge(clinic) {
+  return clinic.shorthand ? `<span class="badge badge-shorthand" title="Client shorthand">${esc(clinic.shorthand)}</span>` : '';
+}
+
 export function stageBadge(clinic) {
   return `<span class="badge badge-stage-${esc(clinic.stage)}">${esc(clinic.stage_label || clinic.stage)}</span>`;
 }
@@ -234,12 +249,22 @@ export function debounce(fn, ms = 250) {
 }
 
 // Leaflet marker icon for a clinic colour.
-export function pinIcon(color, extraClass = '') {
+export function pinIcon(color, extraClass = '', label = '') {
   return L.divIcon({
     className: '',
-    html: `<div class="pin pin-${esc(color)} ${esc(extraClass)}"></div>`,
+    html: `<div class="pin pin-${esc(color)} ${esc(extraClass)}">${label ? `<span class="pin-label">${esc(label)}</span>` : ''}</div>`,
     iconSize: [20, 20],
     iconAnchor: [10, 10],
     popupAnchor: [0, -10],
+  });
+}
+// Smaller, dashed pin for a secondary (sister) location of a clinic.
+export function secondaryPinIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="pin pin-secondary pin-${esc(color)}"></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    popupAnchor: [0, -8],
   });
 }

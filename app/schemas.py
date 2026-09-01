@@ -48,13 +48,21 @@ class ClinicIn(BaseModel):
     outcome_reason: Optional[str] = None
     outcome_notes: Optional[str] = None
     outcome_date: Optional[str] = None
+    # Client-specific
+    shorthand: Optional[str] = Field(default=None, max_length=10)
+    group_id: Optional[int] = None
 
     _blank = field_validator(
         "address", "city", "province", "postal_code", "phone", "fax", "email", "website",
         "clinic_type", "emr_system", "it_provider", "tags", "notes", "next_follow_up",
         "lat", "lng", "provider_count", "deal_value", "expected_close", "win_probability",
-        "outcome_reason", "outcome_notes", "outcome_date", mode="before",
+        "outcome_reason", "outcome_notes", "outcome_date", "shorthand", "group_id", mode="before",
     )(_blank_to_none)
+
+    @field_validator("shorthand")
+    @classmethod
+    def _upper(cls, v):
+        return v.strip().upper() if v else v
 
     @field_validator("name")
     @classmethod
@@ -72,13 +80,16 @@ class ContactIn(BaseModel):
     role: ContactRole = "staff"
     title: Optional[str] = None
     phone: Optional[str] = None
+    extension: Optional[str] = None
+    use_main_line: bool = False
     mobile: Optional[str] = None
     email: Optional[str] = None
     is_primary: bool = False
+    shared_with_group: bool = False
     notes: Optional[str] = None
 
     _blank = field_validator(
-        "clinic_id", "last_name", "title", "phone", "mobile", "email", "notes", mode="before"
+        "clinic_id", "last_name", "title", "phone", "extension", "mobile", "email", "notes", mode="before"
     )(_blank_to_none)
 
 
@@ -93,8 +104,10 @@ class AppointmentIn(BaseModel):
     location: Optional[str] = None
     notes: Optional[str] = None
     outcome: Optional[str] = None
+    reminder_minutes: Optional[int] = None
+    rep: Optional[str] = None
 
-    _blank = field_validator("contact_id", "end_time", "location", "notes", "outcome", mode="before")(
+    _blank = field_validator("contact_id", "end_time", "location", "notes", "outcome", "reminder_minutes", "rep", mode="before")(
         _blank_to_none
     )
 
@@ -122,6 +135,17 @@ class AppointmentPatch(BaseModel):
 class NoteIn(BaseModel):
     body: str = Field(min_length=1)
     author: Optional[str] = None
+    kind: str = "note"
+
+    _blank = field_validator("author", mode="before")(_blank_to_none)
+
+
+class QuickLogIn(BaseModel):
+    preset: str
+    author: Optional[str] = None
+    detail: Optional[str] = None
+
+    _blank = field_validator("author", "detail", mode="before")(_blank_to_none)
 
 
 class StageChange(BaseModel):
@@ -129,8 +153,63 @@ class StageChange(BaseModel):
     stage: Stage
     outcome_reason: Optional[str] = None
     outcome_notes: Optional[str] = None
+    outcome_date: Optional[str] = None  # allow back-dating (e.g. onboarded years ago)
 
-    _blank = field_validator("outcome_reason", "outcome_notes", mode="before")(_blank_to_none)
+    _blank = field_validator("outcome_reason", "outcome_notes", "outcome_date", mode="before")(_blank_to_none)
+
+
+class ArchiveIn(BaseModel):
+    archived: bool = True
+
+
+class LocationIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    address: Optional[str] = None
+    city: Optional[str] = "Calgary"
+    province: Optional[str] = "AB"
+    postal_code: Optional[str] = None
+    phone: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("address", "city", "province", "postal_code", "phone", "lat", "lng", "notes", mode="before")(_blank_to_none)
+
+
+class LinkIn(BaseModel):
+    other_clinic_id: int
+    link_type: str = "other"
+    notes: Optional[str] = None
+
+    _blank = field_validator("notes", mode="before")(_blank_to_none)
+
+
+class GroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    notes: Optional[str] = None
+
+    _blank = field_validator("notes", mode="before")(_blank_to_none)
+
+
+class TemplateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    subject: str = Field(min_length=1, max_length=300)
+    body: str = ""
+
+
+class SavedViewIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    page: str = "map"
+    state: dict
+
+
+class ImportRequest(BaseModel):
+    rows: list[dict]
+    skip_duplicates: bool = True
+
+
+class BulkGeocodeRequest(BaseModel):
+    clinic_ids: Optional[list[int]] = None
 
 
 class TaskIn(BaseModel):
@@ -139,10 +218,13 @@ class TaskIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     notes: Optional[str] = None
     due_date: Optional[str] = None  # YYYY-MM-DD
+    due_time: Optional[str] = None  # HH:MM
+    reminder_minutes: Optional[int] = None
+    rep: Optional[str] = None
     priority: Priority = "medium"
     done: bool = False
 
-    _blank = field_validator("clinic_id", "contact_id", "notes", "due_date", mode="before")(_blank_to_none)
+    _blank = field_validator("clinic_id", "contact_id", "notes", "due_date", "due_time", "reminder_minutes", "rep", mode="before")(_blank_to_none)
 
     @field_validator("title")
     @classmethod

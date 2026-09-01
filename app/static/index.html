@@ -33,13 +33,17 @@
       <a href="#/contacts" data-route="contacts">Contacts</a>
       <a href="#/calendar" data-route="calendar">Calendar</a>
       <a href="#/tasks" data-route="tasks">Tasks</a>
+      <a href="#/analytics" data-route="analytics">Analytics</a>
+      <a href="#/settings" data-route="settings">Settings</a>
     </nav>
     <div class="topbar-right">
+      <button class="btn" id="global-search" title="Search (Ctrl/⌘ K)">🔍 <span class="kbd">⌘K</span></button>
       <button class="btn btn-primary" id="global-add-clinic">+ Clinic</button>
       <button class="btn" id="global-add-appointment">+ Appointment</button>
       <button class="btn theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
     </div>
   </header>
+  <div id="notif-banner" class="notif-banner hidden"></div>
   <main id="app" class="page"></main>
   <div id="modal-root"></div>
   <div id="toast-root"></div>

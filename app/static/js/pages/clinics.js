@@ -1,6 +1,6 @@
 // Clinics page: alphabetical, grouped by first letter, searchable and filterable.
 import { clinics, getMeta } from '../api.js';
-import { esc, attr, dot, fmtDate, fmtDateOnly, fmtMoney, relativeDays, badge, options, navigate, debounce, setTitle, stageBadge } from '../ui.js';
+import { esc, attr, dot, fmtDate, fmtDateOnly, fmtMoney, relativeDays, badge, options, navigate, debounce, setTitle, stageBadge, shorthandBadge } from '../ui.js';
 import { openClinicForm } from '../forms.js';
 
 let state = { q: '', relationship: '', color: '', stage: '', sort: 'name' };
@@ -65,7 +65,7 @@ async function load() {
     }
     rows += `
       <tr class="clickable" data-id="${c.id}">
-        <td>${dot(c.color, c.color_label)}<strong>${esc(c.name)}</strong>${c.priority === 'high' ? ' ' + badge('High', 'badge-high') : ''}</td>
+        <td>${dot(c.color, c.color_label)}${c.shorthand ? shorthandBadge(c) + ' ' : ''}<strong>${esc(c.name)}</strong>${c.priority === 'high' && !c.is_client ? ' ' + badge('High', 'badge-high') : ''}</td>
         <td><span class="badge badge-${esc(c.color)}">${esc(c.color_label)}</span></td>
         <td>${stageBadge(c)}${c.deal_value ? `<div class="muted small money">${fmtMoney(c.deal_value)}</div>` : ''}</td>
         <td>${esc(c.clinic_type || '')}</td>

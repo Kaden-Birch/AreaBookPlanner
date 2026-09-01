@@ -16,8 +16,8 @@ from fastapi.responses import PlainTextResponse, Response
 
 from ..database import db_dependency, rows_to_list
 from ..logic import (
-    COLOR_LABELS, DEFAULT_PROBABILITY, LOST_REASONS, OPEN_STAGES, RELATIONSHIP_LABELS, STAGE_LABELS,
-    WON_REASONS, enrich_clinic, now_iso,
+    COLOR_LABELS, DEFAULT_PROBABILITY, LINK_TYPES, LOST_REASONS, OPEN_STAGES, QUICK_LOGS, RELATIONSHIP_LABELS,
+    REMINDER_OPTIONS, STAGE_LABELS, WON_REASONS, enrich_clinic, now_iso,
 )
 from ..schemas import RouteRequest
 from .appointments import STATUS_LABELS, TYPE_LABELS
@@ -52,6 +52,9 @@ def meta():
         "default_probability": DEFAULT_PROBABILITY,
         "won_reasons": WON_REASONS,
         "lost_reasons": LOST_REASONS,
+        "link_types": LINK_TYPES,
+        "quick_logs": QUICK_LOGS,
+        "reminder_options": REMINDER_OPTIONS,
         "map_default": {"lat": 51.0447, "lng": -114.0719, "zoom": 11},
     }
 
@@ -137,10 +140,11 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
     ]
     follow_ups.sort(key=lambda x: x["next_follow_up"])
 
+    # Clients are serviced, not "visited" - only prospects/interested show up here.
     stale = [
         {"id": c["id"], "name": c["name"], "last_visit": c["last_visit"], "color": c["color"], "priority": c["priority"]}
         for c in clinics
-        if c["color"] == "grey" or (c["relationship"] == "current_client" and (
+        if c["color"] == "grey" or (c["relationship"] == "interested" and (
             not c["last_visit"] or c["last_visit"] < (datetime.now() - timedelta(days=90)).isoformat()))
     ]
     stale.sort(key=lambda x: (x["last_visit"] or ""))
@@ -185,6 +189,7 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
     closing_soon.sort(key=lambda x: x["expected_close"])
 
     return {
+        "archived_won": sum(1 for c in clinics if c["stage"] == "won" and c["archived"]),
         "pipeline": pipeline,
         "forecast": {
             "open_value": round(sum(p["value"] for s, p in pipeline.items() if s in OPEN_STAGES), 2),
@@ -238,7 +243,7 @@ def _csv_response(rows: list[dict], columns: list[str], filename: str) -> Respon
 def export_clinics(conn: sqlite3.Connection = Depends(db_dependency)):
     clinics = [enrich_clinic(conn, c) for c in rows_to_list(conn.execute("SELECT * FROM clinics ORDER BY name COLLATE NOCASE"))]
     cols = [
-        "id", "name", "relationship_label", "color_label", "address", "city", "province", "postal_code",
+        "id", "name", "shorthand", "relationship_label", "color_label", "address", "city", "province", "postal_code",
         "phone", "fax", "email", "website", "clinic_type", "emr_system", "it_provider", "provider_count",
         "priority", "tags", "stage_label", "deal_value", "expected_close", "effective_probability",
         "outcome_reason", "outcome_date", "last_visit", "next_follow_up", "lat", "lng", "notes",
@@ -314,6 +319,12 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "clinic_notes": rows_to_list(conn.execute("SELECT * FROM clinic_notes")),
         "tasks": rows_to_list(conn.execute("SELECT * FROM tasks")),
         "clinic_events": rows_to_list(conn.execute("SELECT * FROM clinic_events")),
+        "clinic_groups": rows_to_list(conn.execute("SELECT * FROM clinic_groups")),
+        "clinic_locations": rows_to_list(conn.execute("SELECT * FROM clinic_locations")),
+        "clinic_links": rows_to_list(conn.execute("SELECT * FROM clinic_links")),
+        "attachments": rows_to_list(conn.execute("SELECT * FROM attachments")),
+        "email_templates": rows_to_list(conn.execute("SELECT * FROM email_templates")),
+        "saved_views": rows_to_list(conn.execute("SELECT * FROM saved_views")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -331,7 +342,8 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     """
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
-    tables = ["clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events"]
+    tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -340,12 +352,26 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
                 cols = ", ".join(row.keys())
                 marks = ", ".join("?" * len(row))
                 conn.execute(f"INSERT INTO {t} ({cols}) VALUES ({marks})", list(row.values()))
+        if conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0] == 0:
+            from ..database import DEFAULT_EMAIL_TEMPLATES
+
+            conn.executemany("INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", DEFAULT_EMAIL_TEMPLATES)
         return {"status": "replaced", "counts": {t: len(data.get(t, [])) for t in tables}}
 
     clinic_map: dict[int, int] = {}
     contact_map: dict[int, int] = {}
+    group_map: dict[int, int] = {}
+    for row in data.get("clinic_groups", []):
+        old_id = row.pop("id", None)
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        cur = conn.execute(f"INSERT INTO clinic_groups ({cols}) VALUES ({marks})", list(row.values()))
+        if old_id is not None:
+            group_map[old_id] = cur.lastrowid
     for row in data.get("clinics", []):
         old_id = row.pop("id", None)
+        if "group_id" in row:
+            row["group_id"] = group_map.get(row.get("group_id"))
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         cur = conn.execute(f"INSERT INTO clinics ({cols}) VALUES ({marks})", list(row.values()))
@@ -354,6 +380,8 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     for row in data.get("contacts", []):
         old_id = row.pop("id", None)
         row["clinic_id"] = clinic_map.get(row.get("clinic_id"))
+        if "group_id" in row:
+            row["group_id"] = group_map.get(row.get("group_id"))
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         cur = conn.execute(f"INSERT INTO contacts ({cols}) VALUES ({marks})", list(row.values()))
@@ -368,7 +396,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         conn.execute(f"INSERT INTO appointments ({cols}) VALUES ({marks})", list(row.values()))
-    for table in ("clinic_notes", "clinic_events", "tasks"):
+    for table in ("clinic_notes", "clinic_events", "tasks", "clinic_locations", "attachments"):
         for row in data.get(table, []):
             row.pop("id", None)
             if row.get("clinic_id") is not None and row.get("clinic_id") not in clinic_map:
@@ -377,6 +405,21 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
                 row["clinic_id"] = clinic_map[row["clinic_id"]]
             if "contact_id" in row:
                 row["contact_id"] = contact_map.get(row.get("contact_id"))
+            cols = ", ".join(row.keys())
+            marks = ", ".join("?" * len(row))
+            conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(row.values()))
+    for row in data.get("clinic_links", []):
+        row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map or row.get("other_clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["other_clinic_id"] = clinic_map[row["other_clinic_id"]]
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO clinic_links ({cols}) VALUES ({marks})", list(row.values()))
+    for table in ("email_templates", "saved_views"):
+        for row in data.get(table, []):
+            row.pop("id", None)
             cols = ", ".join(row.keys())
             marks = ", ".join("?" * len(row))
             conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(row.values()))

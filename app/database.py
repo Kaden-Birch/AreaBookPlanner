@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./data/areabook.db")
+ATTACHMENTS_DIR = os.environ.get("ATTACHMENTS_DIR") or str(Path(DATABASE_PATH).parent / "attachments")
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -110,6 +111,69 @@ CREATE TABLE IF NOT EXISTS clinic_events (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS clinic_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS clinic_locations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id   INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    address     TEXT,
+    city        TEXT DEFAULT 'Calgary',
+    province    TEXT DEFAULT 'AB',
+    postal_code TEXT,
+    phone       TEXT,
+    lat         REAL,
+    lng         REAL,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS clinic_links (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id        INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    other_clinic_id  INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    link_type        TEXT NOT NULL DEFAULT 'other',
+    notes            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id    INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    filename     TEXT NOT NULL,
+    stored_name  TEXT NOT NULL,
+    content_type TEXT,
+    size         INTEGER NOT NULL DEFAULT 0,
+    kind         TEXT NOT NULL DEFAULT 'document',
+    caption      TEXT,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS email_templates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS saved_views (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    page        TEXT NOT NULL DEFAULT 'map',
+    state       TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_locations_clinic ON clinic_locations(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_links_clinic ON clinic_links(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_links_other ON clinic_links(other_clinic_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_clinic ON attachments(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_clinic ON tasks(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
 CREATE INDEX IF NOT EXISTS idx_events_clinic ON clinic_events(clinic_id);
@@ -138,8 +202,57 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("outcome_reason", "TEXT"),
         ("outcome_notes", "TEXT"),
         ("outcome_date", "TEXT"),
+        ("shorthand", "TEXT"),
+        ("archived", "INTEGER NOT NULL DEFAULT 0"),
+        ("archived_at", "TEXT"),
+        ("group_id", "INTEGER REFERENCES clinic_groups(id) ON DELETE SET NULL"),
+    ],
+    "contacts": [
+        ("extension", "TEXT"),
+        ("use_main_line", "INTEGER NOT NULL DEFAULT 0"),
+        ("group_id", "INTEGER REFERENCES clinic_groups(id) ON DELETE SET NULL"),
+    ],
+    "appointments": [
+        ("reminder_minutes", "INTEGER"),
+        ("rep", "TEXT"),
+    ],
+    "tasks": [
+        ("due_time", "TEXT"),
+        ("reminder_minutes", "INTEGER"),
+        ("rep", "TEXT"),
+    ],
+    "clinic_notes": [
+        ("kind", "TEXT NOT NULL DEFAULT 'note'"),
+    ],
+    "clinic_events": [
+        ("from_value", "TEXT"),
+        ("to_value", "TEXT"),
     ],
 }
+
+DEFAULT_EMAIL_TEMPLATES = [
+    (
+        "Introduction",
+        "ChinookIT - IT support for {clinic_name}",
+        "Hi {contact_first_name},\n\nThanks for taking the time to chat today. ChinookIT looks after IT for medical "
+        "clinics across Calgary - networks, backups, EMR support and fast on-site response.\n\n"
+        "I'd love to set up a short visit to see how things are set up at {clinic_name} and where we could help.\n\n"
+        "Best regards,\n{rep_name}\nChinookIT",
+    ),
+    (
+        "Quote follow-up",
+        "Following up on our quote for {clinic_name}",
+        "Hi {contact_first_name},\n\nJust checking in on the quote I sent over for {clinic_name}. Happy to walk through "
+        "any questions or adjust the scope if it would help.\n\nWould a quick call this week work?\n\n"
+        "Thanks,\n{rep_name}\nChinookIT",
+    ),
+    (
+        "Thanks for the visit",
+        "Great to meet you at {clinic_name}",
+        "Hi {contact_first_name},\n\nThanks for showing me around {clinic_name} today. I'll put together the "
+        "information we discussed and send it over shortly.\n\nBest,\n{rep_name}\nChinookIT",
+    ),
+]
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:
@@ -150,6 +263,10 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
     # Keep the pipeline consistent with the relationship for pre-existing rows.
     conn.execute("UPDATE clinics SET stage = 'won' WHERE relationship = 'current_client' AND stage <> 'won'")
+    if conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0] == 0:
+        conn.executemany(
+            "INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", DEFAULT_EMAIL_TEMPLATES
+        )
 
 
 def init_db() -> None:

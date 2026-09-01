@@ -45,6 +45,29 @@ LOST_REASONS = {
     "other": "Other",
 }
 
+LINK_TYPES = {
+    "referral": "Referral",
+    "same_owner": "Same owner",
+    "same_building": "Same building",
+    "manager_moved": "Manager moved between",
+    "shared_staff": "Shared staff",
+    "other": "Other",
+}
+
+# One-tap note presets. Key -> note text.
+QUICK_LOGS = {
+    "left_card": "Left a business card",
+    "left_voicemail": "Left a voicemail",
+    "spoke_reception": "Spoke to reception",
+    "spoke_manager": "Spoke to the clinic manager",
+    "sent_quote": "Sent a quote",
+    "sent_email": "Sent an email",
+    "not_interested": "Not interested right now",
+    "call_back": "Asked to call back later",
+}
+
+REMINDER_OPTIONS = [15, 30, 45, 60]
+
 RELATIONSHIP_LABELS = {
     "current_client": "Current client",
     "interested": "Interested",
@@ -117,6 +140,8 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
     clinic["color_label"] = COLOR_LABELS[clinic["color"]]
     clinic["relationship_label"] = RELATIONSHIP_LABELS.get(clinic["relationship"], clinic["relationship"])
     clinic["tag_list"] = [t.strip() for t in (clinic.get("tags") or "").split(",") if t.strip()]
+    clinic["archived"] = bool(clinic.get("archived"))
+    clinic["is_client"] = clinic["relationship"] == "current_client"
     stage = clinic.get("stage") or "prospect"
     clinic["stage"] = stage
     clinic["stage_label"] = STAGE_LABELS.get(stage, stage)
@@ -133,8 +158,36 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
 DEFAULT_PROBABILITY = {"prospect": 10, "contacted": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
 
 
-def log_event(conn: sqlite3.Connection, clinic_id: int, event_type: str, title: str, detail: str | None = None) -> None:
+def log_event(
+    conn: sqlite3.Connection, clinic_id: int, event_type: str, title: str, detail: str | None = None,
+    from_value: str | None = None, to_value: str | None = None,
+) -> None:
     conn.execute(
-        "INSERT INTO clinic_events (clinic_id, event_type, title, detail) VALUES (?, ?, ?, ?)",
-        (clinic_id, event_type, title, detail),
+        "INSERT INTO clinic_events (clinic_id, event_type, title, detail, from_value, to_value) VALUES (?, ?, ?, ?, ?, ?)",
+        (clinic_id, event_type, title, detail, from_value, to_value),
     )
+
+
+def normalize_name(s: str | None) -> str:
+    """Lower-case, strip punctuation and filler words so 'The Crowfoot Medical Clinic' ~ 'crowfoot medical'."""
+    import re
+
+    s = (s or "").lower()
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    words = [w for w in s.split() if w not in _FILLER]
+    return " ".join(words)
+
+
+_FILLER = {"the", "clinic", "medical", "centre", "center", "family", "practice", "ltd", "inc", "and", "of", "dr", "office"}
+
+
+def normalize_address(s: str | None) -> str:
+    import re
+
+    s = (s or "").lower()
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = re.sub(r"\b(north|south)\s*(east|west)\b", lambda m: m.group(1)[0] + m.group(2)[0], s)
+    repl = {"street": "st", "avenue": "ave", "road": "rd", "drive": "dr", "crescent": "cres", "trail": "tr",
+            "boulevard": "blvd", "northwest": "nw", "northeast": "ne", "southwest": "sw", "southeast": "se", "suite": "", "unit": ""}
+    words = [repl.get(w, w) for w in s.split()]
+    return " ".join(w for w in words if w)

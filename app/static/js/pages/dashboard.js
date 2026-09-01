@@ -16,6 +16,7 @@ export async function render(container) {
         <button class="btn btn-primary" id="add-clinic">+ Clinic</button>
         <button class="btn" id="add-appt">+ Appointment</button>
         <button class="btn" id="add-task">+ Task</button>
+        <a class="btn" href="#/analytics">Analytics</a>
       </div>
     </div>
 

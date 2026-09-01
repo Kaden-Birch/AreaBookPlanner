@@ -48,8 +48,8 @@ async function load() {
           <tr>
             <td>${c.is_primary ? '<span class="star" title="Primary contact">★</span> ' : ''}<strong>${esc(c.full_name)}</strong>${c.title ? `<div class="muted small">${esc(c.title)}</div>` : ''}</td>
             <td><span class="badge">${esc(c.role_label)}</span></td>
-            <td>${c.clinic_id ? `<a href="#/clinics/${c.clinic_id}">${esc(c.clinic_name)}</a>` : '<span class="muted">—</span>'}</td>
-            <td class="nowrap">${c.phone ? `<a href="tel:${attr(c.phone)}">${esc(c.phone)}</a>` : ''}</td>
+            <td>${c.clinic_id ? `<a href="#/clinics/${c.clinic_id}">${esc(c.clinic_name)}</a>` : '<span class="muted">—</span>'}${c.shared_with_group ? ` <span class="badge badge-purple" title="Shared across ${esc(c.group_name || 'group')}">Group</span>` : ''}</td>
+            <td class="nowrap">${c.phone ? `<a href="tel:${attr(c.phone)}${c.extension ? ',' + attr(c.extension) : ''}">${esc(c.phone_display)}</a>` : (c.extension ? `ext. ${esc(c.extension)}` : '')}</td>
             <td class="nowrap">${c.mobile ? `<a href="tel:${attr(c.mobile)}">${esc(c.mobile)}</a>` : ''}</td>
             <td>${c.email ? `<a href="mailto:${attr(c.email)}">${esc(c.email)}</a>` : ''}</td>
             <td class="small muted">${esc(c.notes || '')}</td>

@@ -1,0 +1,503 @@
+"""Groups, attachments, search, reminders, analytics, saved views, email templates,
+CSV import and bulk geocoding."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sqlite3
+import threading
+import time
+import urllib.parse
+import urllib.request
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from ..database import ATTACHMENTS_DIR, db_dependency, get_db, row_to_dict, rows_to_list
+from ..logic import (
+    IN_PERSON_TYPES, LINK_TYPES, OPEN_STAGES, QUICK_LOGS, REMINDER_OPTIONS, STAGE_LABELS, enrich_clinic,
+    log_event, now_iso,
+)
+from ..schemas import BulkGeocodeRequest, ClinicIn, GroupIn, ImportRequest, SavedViewIn, TemplateIn
+from .clinics import CLINIC_COLUMNS, _sync_stage_and_relationship, find_duplicates
+from .misc import NOMINATIM_URL, USER_AGENT, CALGARY_VIEWBOX
+
+router = APIRouter(prefix="/api", tags=["extras"])
+
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+# ---- Groups / chains --------------------------------------------------------
+
+@router.get("/groups")
+def list_groups(conn: sqlite3.Connection = Depends(db_dependency)):
+    rows = rows_to_list(conn.execute(
+        """SELECT g.*, (SELECT COUNT(*) FROM clinics c WHERE c.group_id = g.id) AS member_count
+           FROM clinic_groups g ORDER BY g.name COLLATE NOCASE"""))
+    for g in rows:
+        g["members"] = rows_to_list(conn.execute(
+            "SELECT id, name, relationship, shorthand FROM clinics WHERE group_id = ? ORDER BY name COLLATE NOCASE", (g["id"],)))
+    return rows
+
+
+@router.post("/groups", status_code=201)
+def create_group(payload: GroupIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("INSERT INTO clinic_groups (name, notes) VALUES (?, ?)", (payload.name.strip(), payload.notes))
+    return row_to_dict(conn.execute("SELECT * FROM clinic_groups WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.put("/groups/{group_id}")
+def update_group(group_id: int, payload: GroupIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("UPDATE clinic_groups SET name = ?, notes = ? WHERE id = ?", (payload.name.strip(), payload.notes, group_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return row_to_dict(conn.execute("SELECT * FROM clinic_groups WHERE id = ?", (group_id,)).fetchone())
+
+
+@router.delete("/groups/{group_id}", status_code=204)
+def delete_group(group_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM clinic_groups WHERE id = ?", (group_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return None
+
+
+# ---- Locations across all clinics (for the map) ----------------------------
+
+@router.get("/locations")
+def all_locations(conn: sqlite3.Connection = Depends(db_dependency)):
+    rows = rows_to_list(conn.execute(
+        """SELECT l.*, c.name AS clinic_name, c.relationship, c.shorthand
+           FROM clinic_locations l JOIN clinics c ON c.id = l.clinic_id
+           WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL"""))
+    for r in rows:
+        parent = enrich_clinic(conn, {"id": r["clinic_id"], "relationship": r["relationship"], "stage": "prospect", "tags": None})
+        r["color"] = parent["color"]
+        r["color_label"] = parent["color_label"]
+    return rows
+
+
+# ---- Attachments (documents & photos) --------------------------------------
+
+def _safe_name(name: str) -> str:
+    name = os.path.basename(name or "file")
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or "file"
+    return name[:120]
+
+
+@router.get("/clinics/{clinic_id}/attachments")
+def list_attachments(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    return rows_to_list(conn.execute("SELECT * FROM attachments WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,)))
+
+
+@router.post("/clinics/{clinic_id}/attachments", status_code=201)
+async def upload_attachment(
+    clinic_id: int, file: UploadFile = File(...), caption: str | None = Form(default=None),
+    kind: str | None = Form(default=None), conn: sqlite3.Connection = Depends(db_dependency),
+):
+    if conn.execute("SELECT 1 FROM clinics WHERE id = ?", (clinic_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Clinic not found")
+    data = await file.read()
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="File is larger than 25 MB")
+    if not data:
+        raise HTTPException(status_code=422, detail="Empty file")
+    content_type = file.content_type or "application/octet-stream"
+    if kind not in ("document", "photo"):
+        kind = "photo" if content_type.startswith("image/") else "document"
+    filename = _safe_name(file.filename or "file")
+    cur = conn.execute(
+        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, filename, "", content_type, len(data), kind, caption),
+    )
+    stored = f"{cur.lastrowid}_{filename}"
+    Path(ATTACHMENTS_DIR).mkdir(parents=True, exist_ok=True)
+    (Path(ATTACHMENTS_DIR) / stored).write_bytes(data)
+    conn.execute("UPDATE attachments SET stored_name = ? WHERE id = ?", (stored, cur.lastrowid))
+    log_event(conn, clinic_id, "attachment", f"{'Photo' if kind == 'photo' else 'Document'} added: {filename}", caption)
+    return row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.get("/attachments/{att_id}/file")
+def get_attachment_file(att_id: int, download: bool = False, conn: sqlite3.Connection = Depends(db_dependency)):
+    row = row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (att_id,)).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    path = Path(ATTACHMENTS_DIR) / row["stored_name"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File is missing from disk")
+    headers = {"Content-Disposition": f'{"attachment" if download else "inline"}; filename="{row["filename"]}"'}
+    return FileResponse(path, media_type=row["content_type"] or "application/octet-stream", headers=headers)
+
+
+@router.delete("/attachments/{att_id}", status_code=204)
+def delete_attachment(att_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    row = row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (att_id,)).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    conn.execute("DELETE FROM attachments WHERE id = ?", (att_id,))
+    try:
+        (Path(ATTACHMENTS_DIR) / row["stored_name"]).unlink(missing_ok=True)
+    except OSError:
+        pass
+    return None
+
+
+# ---- Global search ----------------------------------------------------------
+
+@router.get("/search")
+def search(q: str, limit: int = 8, conn: sqlite3.Connection = Depends(db_dependency)):
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"clinics": [], "contacts": [], "notes": [], "tasks": [], "locations": []}
+    like = f"%{q}%"
+    clinics = [
+        enrich_clinic(conn, c) for c in rows_to_list(conn.execute(
+            """SELECT * FROM clinics WHERE name LIKE ? OR shorthand LIKE ? OR address LIKE ? OR tags LIKE ? OR postal_code LIKE ?
+               ORDER BY CASE WHEN shorthand = ? THEN 0 WHEN name LIKE ? THEN 1 ELSE 2 END, name COLLATE NOCASE LIMIT ?""",
+            (like, like, like, like, like, q.upper(), f"{q}%", limit)))
+    ]
+    contacts = rows_to_list(conn.execute(
+        """SELECT c.id, c.first_name, c.last_name, c.role, c.email, c.phone, c.clinic_id, cl.name AS clinic_name
+           FROM contacts c LEFT JOIN clinics cl ON cl.id = c.clinic_id
+           WHERE c.first_name LIKE ? OR c.last_name LIKE ? OR (c.first_name || ' ' || c.last_name) LIKE ? OR c.email LIKE ? OR c.title LIKE ?
+           ORDER BY c.last_name COLLATE NOCASE LIMIT ?""", (like, like, like, like, like, limit)))
+    notes = rows_to_list(conn.execute(
+        """SELECT n.id, n.body, n.created_at, n.clinic_id, cl.name AS clinic_name FROM clinic_notes n
+           JOIN clinics cl ON cl.id = n.clinic_id WHERE n.body LIKE ? ORDER BY n.created_at DESC LIMIT ?""", (like, limit)))
+    tasks = rows_to_list(conn.execute(
+        """SELECT t.id, t.title, t.due_date, t.done, t.clinic_id, cl.name AS clinic_name FROM tasks t
+           LEFT JOIN clinics cl ON cl.id = t.clinic_id WHERE t.title LIKE ? OR t.notes LIKE ? ORDER BY t.done, t.due_date LIMIT ?""", (like, like, limit)))
+    locations = rows_to_list(conn.execute(
+        """SELECT l.id, l.name, l.address, l.clinic_id, cl.name AS clinic_name FROM clinic_locations l
+           JOIN clinics cl ON cl.id = l.clinic_id WHERE l.name LIKE ? OR l.address LIKE ? LIMIT ?""", (like, like, limit)))
+    return {
+        "clinics": [{"id": c["id"], "name": c["name"], "shorthand": c["shorthand"], "address": c["address"], "color": c["color"], "color_label": c["color_label"]} for c in clinics],
+        "contacts": contacts, "notes": notes, "tasks": tasks, "locations": locations,
+    }
+
+
+# ---- Reminders (browser notifications) --------------------------------------
+
+@router.get("/reminders")
+def reminders(horizon_minutes: int = 120, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Appointments and tasks starting within the horizon (plus a little grace behind).
+
+    The browser decides when to fire: at the event time, and reminder_minutes before it.
+    """
+    now = datetime.now().replace(second=0, microsecond=0)
+    lo = (now - timedelta(minutes=15)).isoformat(timespec="minutes")
+    hi = (now + timedelta(minutes=horizon_minutes)).isoformat(timespec="minutes")
+    items = []
+    for a in rows_to_list(conn.execute(
+        """SELECT a.id, a.title, a.start_time, a.reminder_minutes, a.clinic_id, cl.name AS clinic_name, cl.address
+           FROM appointments a JOIN clinics cl ON cl.id = a.clinic_id
+           WHERE a.status = 'scheduled' AND a.start_time >= ? AND a.start_time <= ?""", (lo, hi))):
+        items.append({
+            "kind": "appointment", "id": a["id"], "title": a["title"], "clinic_id": a["clinic_id"],
+            "clinic_name": a["clinic_name"], "at": a["start_time"][:16], "reminder_minutes": a["reminder_minutes"],
+            "url": f"#/clinics/{a['clinic_id']}", "body": a["address"] or "",
+        })
+    for t in rows_to_list(conn.execute(
+        """SELECT t.id, t.title, t.due_date, t.due_time, t.reminder_minutes, t.clinic_id, cl.name AS clinic_name
+           FROM tasks t LEFT JOIN clinics cl ON cl.id = t.clinic_id
+           WHERE t.done = 0 AND t.due_date IS NOT NULL AND t.due_date >= ? AND t.due_date <= ?""", (lo[:10], hi[:10]))):
+        at = f"{t['due_date']}T{t['due_time'] or '09:00'}"
+        if lo <= at <= hi:
+            items.append({
+                "kind": "task", "id": t["id"], "title": t["title"], "clinic_id": t["clinic_id"],
+                "clinic_name": t["clinic_name"], "at": at, "reminder_minutes": t["reminder_minutes"],
+                "url": f"#/clinics/{t['clinic_id']}" if t["clinic_id"] else "#/tasks", "body": t["clinic_name"] or "Task due",
+            })
+    return {"now": now.isoformat(timespec="minutes"), "items": items, "options": REMINDER_OPTIONS}
+
+
+# ---- Analytics ----------------------------------------------------------------
+
+def _week_start(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+@router.get("/analytics")
+def analytics(weeks: int = 12, months: int = 12, conn: sqlite3.Connection = Depends(db_dependency)):
+    today = date.today()
+    now = now_iso()
+    placeholders = ",".join("?" * len(IN_PERSON_TYPES))
+    visits = rows_to_list(conn.execute(
+        f"""SELECT a.start_time, a.rep, a.clinic_id, a.appt_type FROM appointments a
+            WHERE a.appt_type IN ({placeholders}) AND a.status NOT IN ('cancelled','no_show') AND a.start_time <= ?""",
+        (*IN_PERSON_TYPES, now)))
+    all_appts = rows_to_list(conn.execute(
+        "SELECT rep, appt_type, status, start_time FROM appointments WHERE start_time <= ?", (now,)))
+
+    # Visits per week
+    first_week = _week_start(today) - timedelta(weeks=weeks - 1)
+    by_week = {(first_week + timedelta(weeks=i)).isoformat(): 0 for i in range(weeks)}
+    for v in visits:
+        d = _week_start(date.fromisoformat(v["start_time"][:10])).isoformat()
+        if d in by_week:
+            by_week[d] += 1
+    # Visits per month + new clinics per month + won/lost per month
+    month_keys = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        month_keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    month_keys.reverse()
+    visits_month = {k: 0 for k in month_keys}
+    for v in visits:
+        k = v["start_time"][:7]
+        if k in visits_month:
+            visits_month[k] += 1
+    clinics = [enrich_clinic(conn, c) for c in rows_to_list(conn.execute("SELECT * FROM clinics"))]
+    new_month = {k: 0 for k in month_keys}
+    won_month = {k: 0 for k in month_keys}
+    lost_month = {k: 0 for k in month_keys}
+    for c in clinics:
+        k = (c["created_at"] or "")[:7]
+        if k in new_month:
+            new_month[k] += 1
+        if c["stage"] in ("won", "lost") and c["outcome_date"]:
+            k = c["outcome_date"][:7]
+            if k in won_month:
+                (won_month if c["stage"] == "won" else lost_month)[k] += 1
+
+    won = sum(1 for c in clinics if c["stage"] == "won")
+    lost = sum(1 for c in clinics if c["stage"] == "lost")
+    open_deals = sum(1 for c in clinics if c["stage"] in OPEN_STAGES)
+
+    # Time in stage from event history
+    durations: dict[str, list[float]] = defaultdict(list)
+    events = rows_to_list(conn.execute(
+        "SELECT clinic_id, from_value, to_value, created_at FROM clinic_events WHERE event_type = 'stage_change' AND from_value IS NOT NULL ORDER BY clinic_id, created_at"))
+    by_clinic: dict[int, list[dict]] = defaultdict(list)
+    for e in events:
+        by_clinic[e["clinic_id"]].append(e)
+    created_by_id = {c["id"]: c["created_at"] for c in clinics}
+    for cid, evs in by_clinic.items():
+        start = created_by_id.get(cid)
+        for e in evs:
+            try:
+                s = datetime.fromisoformat((start or e["created_at"]).replace("Z", "+00:00"))
+                t = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00"))
+                durations[e["from_value"]].append(max(0.0, (t - s).total_seconds() / 86400))
+            except ValueError:
+                pass
+            start = e["created_at"]
+    time_in_stage = [
+        {"stage": s, "label": STAGE_LABELS[s], "avg_days": round(sum(durations[s]) / len(durations[s]), 1) if durations[s] else None, "n": len(durations[s])}
+        for s in OPEN_STAGES
+    ]
+
+    # Activity by rep
+    reps: dict[str, dict] = defaultdict(lambda: {"visits": 0, "calls": 0, "notes": 0, "tasks_done": 0, "appointments": 0})
+    for a in all_appts:
+        r = a["rep"] or "Unassigned"
+        if a["status"] in ("cancelled", "no_show"):
+            continue
+        reps[r]["appointments"] += 1
+        if a["appt_type"] in IN_PERSON_TYPES:
+            reps[r]["visits"] += 1
+        elif a["appt_type"] == "call":
+            reps[r]["calls"] += 1
+    for n in rows_to_list(conn.execute("SELECT author FROM clinic_notes")):
+        reps[n["author"] or "Unassigned"]["notes"] += 1
+    for t in rows_to_list(conn.execute("SELECT rep FROM tasks WHERE done = 1")):
+        reps[t["rep"] or "Unassigned"]["tasks_done"] += 1
+    by_rep = [{"rep": k, **v, "total": v["appointments"] + v["notes"] + v["tasks_done"]} for k, v in reps.items()]
+    by_rep.sort(key=lambda x: -x["total"])
+
+    # This month vs last month visits
+    this_m = month_keys[-1]
+    last_m = month_keys[-2] if len(month_keys) > 1 else None
+    return {
+        "visits_by_week": [{"week": k, "count": v} for k, v in by_week.items()],
+        "visits_by_month": [{"month": k, "count": v} for k, v in visits_month.items()],
+        "new_clinics_by_month": [{"month": k, "count": v} for k, v in new_month.items()],
+        "outcomes_by_month": [{"month": k, "won": won_month[k], "lost": lost_month[k]} for k in month_keys],
+        "conversion": {"won": won, "lost": lost, "open": open_deals,
+                       "rate": round(won / (won + lost) * 100, 1) if (won + lost) else None},
+        "time_in_stage": time_in_stage,
+        "by_rep": by_rep,
+        "totals": {
+            "visits_this_month": visits_month[this_m],
+            "visits_last_month": visits_month[last_m] if last_m else 0,
+            "visits_all_time": len(visits),
+            "clinics_total": len(clinics),
+            "clients": sum(1 for c in clinics if c["relationship"] == "current_client"),
+        },
+        "funnel": [{"stage": s, "label": STAGE_LABELS[s], "count": sum(1 for c in clinics if c["stage"] == s)} for s in STAGE_LABELS],
+    }
+
+
+# ---- Saved views -------------------------------------------------------------
+
+@router.get("/views")
+def list_views(page: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    sql = "SELECT * FROM saved_views"
+    params: list = []
+    if page:
+        sql += " WHERE page = ?"
+        params.append(page)
+    rows = rows_to_list(conn.execute(sql + " ORDER BY name COLLATE NOCASE", params))
+    for r in rows:
+        r["state"] = json.loads(r["state"])
+    return rows
+
+
+@router.post("/views", status_code=201)
+def create_view(payload: SavedViewIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("INSERT INTO saved_views (name, page, state) VALUES (?, ?, ?)", (payload.name.strip(), payload.page, json.dumps(payload.state)))
+    row = row_to_dict(conn.execute("SELECT * FROM saved_views WHERE id = ?", (cur.lastrowid,)).fetchone())
+    row["state"] = json.loads(row["state"])
+    return row
+
+
+@router.delete("/views/{view_id}", status_code=204)
+def delete_view(view_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM saved_views WHERE id = ?", (view_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="View not found")
+    return None
+
+
+# ---- Email templates ---------------------------------------------------------
+
+@router.get("/templates")
+def list_templates(conn: sqlite3.Connection = Depends(db_dependency)):
+    return rows_to_list(conn.execute("SELECT * FROM email_templates ORDER BY name COLLATE NOCASE"))
+
+
+@router.post("/templates", status_code=201)
+def create_template(payload: TemplateIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", (payload.name.strip(), payload.subject, payload.body))
+    return row_to_dict(conn.execute("SELECT * FROM email_templates WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.put("/templates/{tpl_id}")
+def update_template(tpl_id: int, payload: TemplateIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("UPDATE email_templates SET name = ?, subject = ?, body = ? WHERE id = ?", (payload.name.strip(), payload.subject, payload.body, tpl_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return row_to_dict(conn.execute("SELECT * FROM email_templates WHERE id = ?", (tpl_id,)).fetchone())
+
+
+@router.delete("/templates/{tpl_id}", status_code=204)
+def delete_template(tpl_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM email_templates WHERE id = ?", (tpl_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return None
+
+
+# ---- Misc metadata for the UI -----------------------------------------------
+
+@router.get("/meta/extras")
+def meta_extras():
+    return {"link_types": LINK_TYPES, "quick_logs": QUICK_LOGS, "reminder_options": REMINDER_OPTIONS}
+
+
+# ---- CSV import ---------------------------------------------------------------
+
+IMPORT_FIELDS = [c for c in CLINIC_COLUMNS if c not in ("group_id",)]
+
+
+@router.post("/import/clinics")
+def import_clinics(payload: ImportRequest, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Bulk-create clinics from already-mapped rows (the UI does the CSV parsing/mapping)."""
+    created, skipped, errors = [], [], []
+    for i, raw in enumerate(payload.rows):
+        row = {k: v for k, v in raw.items() if k in IMPORT_FIELDS}
+        if not str(row.get("name") or "").strip():
+            errors.append({"row": i + 1, "error": "Missing name"})
+            continue
+        try:
+            data = ClinicIn(**row).model_dump()
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"row": i + 1, "error": str(exc).splitlines()[0][:200]})
+            continue
+        if payload.skip_duplicates:
+            dup = find_duplicates(conn, data["name"], data["address"], data["postal_code"])
+            if dup:
+                skipped.append({"row": i + 1, "name": data["name"], "match": dup[0]["name"], "match_id": dup[0]["id"], "reasons": dup[0]["reasons"]})
+                continue
+        _sync_stage_and_relationship(data, None)
+        cols = ", ".join(CLINIC_COLUMNS)
+        marks = ", ".join("?" * len(CLINIC_COLUMNS))
+        cur = conn.execute(f"INSERT INTO clinics ({cols}) VALUES ({marks})", [data.get(c) for c in CLINIC_COLUMNS])
+        log_event(conn, cur.lastrowid, "created", "Clinic imported from CSV")
+        created.append({"id": cur.lastrowid, "name": data["name"], "needs_geocode": data["lat"] is None and bool(data["address"])})
+    return {"created": created, "skipped": skipped, "errors": errors}
+
+
+# ---- Bulk geocoding (background job) ----------------------------------------
+
+_geo_lock = threading.Lock()
+_geo_state: dict = {"running": False, "total": 0, "done": 0, "updated": 0, "failed": [], "started_at": None, "finished_at": None}
+
+
+def _geocode_one(q: str) -> tuple[float, float] | None:
+    params = {"q": q, "format": "jsonv2", "limit": 1, "countrycodes": "ca", "viewbox": CALGARY_VIEWBOX, "bounded": 0}
+    req = urllib.request.Request(f"{NOMINATIM_URL}?{urllib.parse.urlencode(params)}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            results = json.loads(resp.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if not results:
+        return None
+    return float(results[0]["lat"]), float(results[0]["lon"])
+
+
+def _bulk_geocode_worker(ids: list[int]) -> None:
+    try:
+        for cid in ids:
+            with get_db() as conn:
+                c = conn.execute("SELECT id, name, address, city, province, postal_code FROM clinics WHERE id = ?", (cid,)).fetchone()
+            if not c:
+                continue
+            q = ", ".join(p for p in [c["address"], c["city"], c["province"], c["postal_code"]] if p)
+            hit = _geocode_one(q) if q else None
+            with _geo_lock:
+                _geo_state["done"] += 1
+                if hit:
+                    with get_db() as conn:
+                        conn.execute("UPDATE clinics SET lat = ?, lng = ?, updated_at = ? WHERE id = ?", (hit[0], hit[1], now_iso(), cid))
+                    _geo_state["updated"] += 1
+                else:
+                    _geo_state["failed"].append({"id": c["id"], "name": c["name"], "address": q})
+            time.sleep(1.1)  # Nominatim usage policy: max 1 request/second
+    finally:
+        with _geo_lock:
+            _geo_state["running"] = False
+            _geo_state["finished_at"] = now_iso()
+
+
+@router.post("/geocode/bulk", status_code=202)
+def start_bulk_geocode(payload: BulkGeocodeRequest | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    with _geo_lock:
+        if _geo_state["running"]:
+            raise HTTPException(status_code=409, detail="A geocoding run is already in progress")
+        sql = "SELECT id FROM clinics WHERE (lat IS NULL OR lng IS NULL) AND address IS NOT NULL AND address <> ''"
+        params: list = []
+        if payload and payload.clinic_ids:
+            sql += " AND id IN (%s)" % ",".join("?" * len(payload.clinic_ids))
+            params += payload.clinic_ids
+        ids = [r[0] for r in conn.execute(sql, params).fetchall()]
+        _geo_state.update({"running": bool(ids), "total": len(ids), "done": 0, "updated": 0, "failed": [],
+                           "started_at": now_iso(), "finished_at": None if ids else now_iso()})
+    if ids:
+        threading.Thread(target=_bulk_geocode_worker, args=(ids,), daemon=True).start()
+    return dict(_geo_state)
+
+
+@router.get("/geocode/bulk")
+def bulk_geocode_status():
+    with _geo_lock:
+        return dict(_geo_state)

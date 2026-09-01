@@ -7,6 +7,10 @@ import * as contactsPage from './pages/contacts.js';
 import * as calendarPage from './pages/calendar.js';
 import * as pipelinePage from './pages/pipeline.js';
 import * as tasksPage from './pages/tasks.js';
+import * as analyticsPage from './pages/analytics.js';
+import * as settingsPage from './pages/settings.js';
+import { initNotifications } from './notifications.js';
+import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
 import { navigate, toast, toggleTheme, getTheme } from './ui.js';
 
@@ -19,6 +23,8 @@ const routes = [
   { pattern: /^\/calendar$/, page: calendarPage, nav: 'calendar' },
   { pattern: /^\/pipeline$/, page: pipelinePage, nav: 'pipeline' },
   { pattern: /^\/tasks$/, page: tasksPage, nav: 'tasks' },
+  { pattern: /^\/analytics$/, page: analyticsPage, nav: 'analytics' },
+  { pattern: /^\/settings$/, page: settingsPage, nav: 'settings' },
 ];
 
 let current = null;
@@ -58,6 +64,9 @@ const themeBtn = document.getElementById('theme-toggle');
 const syncThemeBtn = () => { themeBtn.textContent = getTheme() === 'dark' ? '☀' : '☾'; };
 themeBtn.onclick = () => { toggleTheme(); syncThemeBtn(); };
 syncThemeBtn();
+
+initNotifications();
+initSearch();
 
 // Surface API failures that escape page code.
 window.addEventListener('unhandledrejection', (e) => {

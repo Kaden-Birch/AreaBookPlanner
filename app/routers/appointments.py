@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/appointments", tags=["appointments"])
 
 APPT_COLUMNS = [
     "clinic_id", "contact_id", "title", "appt_type", "status", "start_time", "end_time",
-    "location", "notes", "outcome",
+    "location", "notes", "outcome", "reminder_minutes", "rep",
 ]
 
 TYPE_LABELS = {

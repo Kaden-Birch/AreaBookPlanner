@@ -59,10 +59,50 @@ export const clinics = {
   update: (id, data) => api.put(`/api/clinics/${id}`, data),
   setLocation: (id, lat, lng) => api.patch(`/api/clinics/${id}/location`, { lat, lng }),
   remove: (id) => api.del(`/api/clinics/${id}`),
-  addNote: (id, body) => api.post(`/api/clinics/${id}/notes`, { body }),
+  addNote: (id, body, kind = 'note', author = null) => api.post(`/api/clinics/${id}/notes`, { body, kind, author }),
   removeNote: (id, noteId) => api.del(`/api/clinics/${id}/notes/${noteId}`),
   setStage: (id, body) => api.patch(`/api/clinics/${id}/stage`, body),
   timeline: (id) => api.get(`/api/clinics/${id}/timeline`),
+  archive: (id, archived) => api.patch(`/api/clinics/${id}/archive`, { archived }),
+  quickLog: (id, preset, author, detail) => api.post(`/api/clinics/${id}/quick-log`, { preset, author, detail }),
+  duplicates: (params) => api.get('/api/clinics/duplicates', params),
+  addLink: (id, data) => api.post(`/api/clinics/${id}/links`, data),
+  removeLink: (id, linkId) => api.del(`/api/clinics/${id}/links/${linkId}`),
+};
+
+export const locations = {
+  all: () => api.get('/api/locations'),
+  list: (clinicId) => api.get(`/api/clinics/${clinicId}/locations`),
+  create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/locations`, data),
+  update: (clinicId, id, data) => api.put(`/api/clinics/${clinicId}/locations/${id}`, data),
+  remove: (clinicId, id) => api.del(`/api/clinics/${clinicId}/locations/${id}`),
+};
+
+export const groups = {
+  list: () => api.get('/api/groups'),
+  create: (data) => api.post('/api/groups', data),
+};
+
+export const attachments = {
+  upload: async (clinicId, file, caption, kind) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (caption) fd.append('caption', caption);
+    if (kind) fd.append('kind', kind);
+    const res = await fetch(`/api/clinics/${clinicId}/attachments`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(extractError(data) || `${res.status} ${res.statusText}`);
+    return data;
+  },
+  remove: (id) => api.del(`/api/attachments/${id}`),
+  fileUrl: (id, download = false) => `/api/attachments/${id}/file${download ? '?download=true' : ''}`,
+};
+
+export const templates = { list: () => api.get('/api/templates') };
+export const views = {
+  list: (page) => api.get('/api/views', { page }),
+  create: (data) => api.post('/api/views', data),
+  remove: (id) => api.del(`/api/views/${id}`),
 };
 
 export const tasks = {

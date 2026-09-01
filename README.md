@@ -51,6 +51,41 @@ and is stored in a single SQLite file.
   (OSRM) with a straight-line estimate as fallback.
 - **Clustering & heat map** – pins group into colour-proportioned clusters when zoomed
   out; an optional heat layer shows clinic density (weighted by deal value).
+- **Client-specific profiles** – current clients show a **shorthand code** (e.g. `COC`)
+  instead of a priority, a "client since" date that can be back-dated to when they
+  signed on, and no "log a visit" button. Won clients can be **dismissed from the
+  pipeline board** so the Won column doesn't fill up with long-standing customers.
+- **Sister locations** – add secondary sites to a clinic. They appear on the map as
+  dashed pins that clearly say "secondary location of …" and link back to the main
+  profile, which lists every site.
+- **Groups / chains and connections** – put multi-location clinics in a group with
+  contacts shared across it, and link clinics that share an owner, a building, or a
+  manager who moved (referral / network links).
+- **Contacts with extensions** – "Use the clinic's main line with an extension" fills
+  the phone from the clinic and only asks for the extension; it stays in sync when the
+  clinic's number changes.
+- **Desktop notifications** – the app asks once whether it may send browser
+  notifications, then reminds you when an appointment or task is starting and, if you
+  choose 15 / 30 / 45 / 60 minutes, ahead of time. Reminders fire while a tab is open
+  and need a secure page (`localhost` or https).
+- **Quick-log buttons** – one tap adds a dated note ("Left a business card", "Spoke to
+  the clinic manager", "Not interested right now"…), from the profile or a map pin.
+- **Email templates** – pick a template on a contact to open a prefilled email in your
+  mail app (placeholders for names, clinic, shorthand, your name); the email is logged.
+- **Documents & photos** – attach proposals, contracts, storefront or business-card
+  photos to a clinic (phones can shoot straight into it). Stored on disk next to the
+  database, up to 25 MB each.
+- **Global search** – `⌘K` / `Ctrl+K` (or `/`) searches clinics, shorthand codes,
+  contacts, locations, tasks and notes.
+- **Saved map views** – save a filter combination ("NW prospects due for a visit") and
+  reopen it from the map or Settings.
+- **Duplicate detection** – warns while you type if a similar clinic name or the same
+  address already exists; CSV import skips likely duplicates.
+- **CSV import & bulk geocoding** – load a prospect list from a spreadsheet with
+  column matching and a preview, then geocode every unmapped clinic in one go.
+- **Analytics** – visits per week and month, deals won vs lost, new clinics per month,
+  conversion rate, average time in each stage, and activity by rep (set your name under
+  Settings).
 - **Dark mode** – toggle in the top bar; remembers your choice and respects the OS
   setting by default.
 - **Dashboard** – totals, forecast, pipeline summary, colour breakdown, tasks due,
@@ -67,7 +102,7 @@ docker compose up -d --build
 Then open <http://localhost:8080>.
 
 Data lives in the `areabook-data` Docker volume (`/data/areabook.db` inside the
-container). Set `TZ` in `docker-compose.yml` to your local timezone (default
+container; uploaded documents and photos go to `/data/attachments`). Set `TZ` in `docker-compose.yml` to your local timezone (default
 `America/Edmonton`) so "today" and "last 3 months" line up with your clock.
 
 Map tiles, address lookup and drive-time routing use public OpenStreetMap services
@@ -113,6 +148,16 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `PATCH /api/clinics/{id}/stage` | Move along the pipeline (with won/lost reason) |
 | `GET /api/clinics/{id}/timeline` | Merged activity feed |
 | `GET/POST /api/tasks`, `GET/PUT/PATCH/DELETE /api/tasks/{id}` | Tasks / reminders |
+| `PATCH /api/clinics/{id}/archive` | Dismiss / restore a won client on the pipeline board |
+| `GET /api/clinics/duplicates?name=&address=` | Similar existing clinics |
+| `…/clinics/{id}/locations`, `…/clinics/{id}/links`, `/api/groups` | Sister sites, connections, groups |
+| `POST /api/clinics/{id}/quick-log` | One-tap dated note |
+| `…/clinics/{id}/attachments`, `/api/attachments/{id}/file` | Documents and photos |
+| `GET /api/search?q=` | Global search |
+| `GET /api/reminders` | Upcoming appointments/tasks for browser notifications |
+| `GET /api/analytics` | Analytics figures |
+| `/api/views`, `/api/templates` | Saved map views, email templates |
+| `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `POST /api/route` | Optimised driving order for a set of clinics |
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
 | `GET/POST /api/clinics/{id}/notes` | Dated note log |

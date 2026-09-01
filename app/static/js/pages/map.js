@@ -1,10 +1,11 @@
 // Map page: the hub. Coloured pins, clustering, heat map, near-me and route planning.
-import { clinics, getMeta, planRoute, driveTime } from '../api.js';
+import { clinics, getMeta, planRoute, driveTime, locations as locationsApi, views as viewsApi } from '../api.js';
 import {
-  esc, attr, dot, fmtDate, fmtMoney, relativeDays, fullAddress, directionsUrl, pinIcon, toast,
+  esc, attr, dot, fmtDate, fmtMoney, relativeDays, fullAddress, directionsUrl, pinIcon, secondaryPinIcon, toast,
   COLOR_ORDER, COLOR_HEX, debounce, navigate, setTitle, haversineKm, getCurrentPosition, fmtKm, fmtMinutes,
+  openModal, formData, shorthandBadge, options,
 } from '../ui.js';
-import { openClinicForm, openAppointmentForm } from '../forms.js';
+import { openClinicForm, openAppointmentForm, quickLog, quickLogButtons } from '../forms.js';
 
 let map = null;
 let markers = new Map();        // clinic id -> L.marker
@@ -14,10 +15,14 @@ let heatLayer = null;
 let routeLayer = null;          // polyline + numbered stops
 let nearLayer = null;           // circle + centre marker
 let allClinics = [];
+let allLocations = [];
+let locationLayer = null;
+let savedViews = [];
+let meta = null;
 let driveCache = { key: null, data: null };
 
 const state = {
-  q: '', colors: new Set(COLOR_ORDER), placing: false, focusId: null,
+  q: '', colors: new Set(COLOR_ORDER), stages: new Set(), showLocations: true, placing: false, focusId: null,
   cluster: true, heat: false,
   // Near-me filter
   near: { on: false, centre: null, mode: 'km', km: 5, min: 15, staleOnly: false, picking: false },
@@ -28,10 +33,13 @@ const state = {
 export async function render(container, params) {
   setTitle('Map');
   container.classList.add('full');
-  const meta = await getMeta();
+  meta = await getMeta();
+  savedViews = await viewsApi.list('map').catch(() => []);
   state.focusId = params.get('focus') ? Number(params.get('focus')) : null;
   state.colors = params.get('color') ? new Set(params.get('color').split(',')) : new Set(COLOR_ORDER);
+  state.stages = new Set();
   if (params.get('route')) { state.route.on = true; state.route.ids = params.get('route').split(',').map(Number); }
+  if (params.get('view')) { const v = savedViews.find(x => String(x.id) === params.get('view')); if (v) applyViewState(v.state); }
 
   container.innerHTML = `
     <div class="map-layout">
@@ -43,8 +51,13 @@ export async function render(container, params) {
               <label><input type="checkbox" data-color="${c}" ${state.colors.has(c) ? 'checked' : ''}>
                 ${dot(c)} ${esc(meta.colors[c])} <span class="count" data-count="${c}"></span></label>`).join('')}
           </div>
+          <div class="flex mt">
+            <select id="stage-filter" class="grow" title="Pipeline stage">${options({ '': 'All stages', open: 'Open deals only', ...meta.stages }, state.stages.size === 4 ? 'open' : (state.stages.size === 1 ? [...state.stages][0] : ''))}</select>
+            <select id="view-select" title="Saved views"><option value="">Views…</option>${savedViews.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}<option value="__save">＋ Save current view</option>${savedViews.length ? '<option value="__manage">Manage views…</option>' : ''}</select>
+          </div>
           <div class="map-tools">
             <button class="btn btn-sm" id="toggle-all">All / none</button>
+            <button class="btn btn-sm ${state.showLocations ? 'active' : ''}" id="loc-btn" title="Show secondary / sister locations (dashed pins)">Sites</button>
             <button class="btn btn-sm" id="fit-btn" title="Zoom to fit all visible pins">Fit</button>
             <button class="btn btn-sm ${state.cluster ? 'active' : ''}" id="cluster-btn" title="Group nearby pins when zoomed out">Cluster</button>
             <button class="btn btn-sm ${state.heat ? 'active' : ''}" id="heat-btn" title="Density heat map of visible clinics">Heat</button>
@@ -74,6 +87,7 @@ export async function render(container, params) {
   });
   routeLayer = L.layerGroup().addTo(map);
   nearLayer = L.layerGroup().addTo(map);
+  locationLayer = L.layerGroup().addTo(map);
   (state.cluster ? clusterLayer : plainLayer).addTo(map);
   markers = new Map();
 
@@ -94,6 +108,20 @@ export async function render(container, params) {
     applyFilters();
   };
   container.querySelector('#fit-btn').onclick = fitVisible;
+  container.querySelector('#loc-btn').onclick = () => { state.showLocations = !state.showLocations; setActive('loc-btn', state.showLocations); applyFilters(); };
+  container.querySelector('#stage-filter').onchange = (e) => {
+    const v = e.target.value;
+    state.stages = v === '' ? new Set() : v === 'open' ? new Set(meta.open_stages) : new Set([v]);
+    applyFilters();
+  };
+  container.querySelector('#view-select').onchange = async (e) => {
+    const v = e.target.value;
+    e.target.value = '';
+    if (v === '__save') return saveCurrentView();
+    if (v === '__manage') return navigate('#/settings');
+    const view = savedViews.find(x => String(x.id) === v);
+    if (view) { applyViewState(view.state); syncControls(); applyFilters(); toast(`View: ${view.name}`); }
+  };
   container.querySelector('#cluster-btn').onclick = () => { state.cluster = !state.cluster; setActive('cluster-btn', state.cluster); swapPinLayer(); };
   container.querySelector('#heat-btn').onclick = () => { state.heat = !state.heat; setActive('heat-btn', state.heat); applyFilters(); };
   container.querySelector('#near-btn').onclick = () => { state.near.on = !state.near.on; setActive('near-btn', state.near.on); document.getElementById('near-panel').classList.toggle('hidden', !state.near.on); if (state.near.on) renderNearPanel(); else { nearLayer.clearLayers(); } applyFilters(); };
@@ -160,8 +188,51 @@ function onMapClick(e) {
   }
 }
 
+function currentViewState() {
+  return { q: state.q, colors: [...state.colors], stages: [...state.stages], showLocations: state.showLocations,
+           near: { on: state.near.on, mode: state.near.mode, km: state.near.km, min: state.near.min, staleOnly: state.near.staleOnly, centre: state.near.centre } };
+}
+function applyViewState(v) {
+  state.q = v.q || '';
+  state.colors = new Set(v.colors && v.colors.length ? v.colors : COLOR_ORDER);
+  state.stages = new Set(v.stages || []);
+  state.showLocations = v.showLocations !== false;
+  if (v.near) Object.assign(state.near, { on: !!v.near.on, mode: v.near.mode || 'km', km: v.near.km || 5, min: v.near.min || 15, staleOnly: !!v.near.staleOnly, centre: v.near.centre || null });
+}
+function syncControls() {
+  const search = document.getElementById('map-search'); if (search) search.value = state.q;
+  document.querySelectorAll('#legend-filter input').forEach(cb => { cb.checked = state.colors.has(cb.dataset.color); });
+  const sf = document.getElementById('stage-filter'); if (sf) sf.value = state.stages.size === meta.open_stages.length ? 'open' : (state.stages.size === 1 ? [...state.stages][0] : '');
+  setActive('loc-btn', state.showLocations);
+  setActive('near-btn', state.near.on);
+  document.getElementById('near-panel').classList.toggle('hidden', !state.near.on);
+  if (state.near.on) { renderNearPanel(); ensureDriveTimes(); }
+}
+function saveCurrentView() {
+  const modal = openModal({
+    title: 'Save this view', size: 'modal-sm',
+    body: `<form id="view-form"><div class="field"><label>Name</label><input name="name" required placeholder="e.g. NW prospects due for a visit"></div>
+      <p class="help">Saves the search, colour and stage filters, and the “near me” settings.</p></form>`,
+    footer: `<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">Save view</button>`,
+  });
+  const form = modal.body.querySelector('#view-form');
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const save = async () => {
+    const { name } = formData(form);
+    if (!name.trim()) return;
+    const v = await viewsApi.create({ name: name.trim(), page: 'map', state: currentViewState() });
+    savedViews.push(v);
+    const sel = document.getElementById('view-select');
+    sel.insertAdjacentHTML('afterbegin', '');
+    sel.querySelector('option[value="__save"]').insertAdjacentHTML('beforebegin', `<option value="${v.id}">${esc(v.name)}</option>`);
+    toast('View saved', 'success'); modal.close();
+  };
+  modal.root.querySelector('[data-act=save]').onclick = save;
+  form.onsubmit = (e) => { e.preventDefault(); save(); };
+}
+
 async function load() {
-  allClinics = await clinics.list();
+  [allClinics, allLocations] = await Promise.all([clinics.list(), locationsApi.all().catch(() => [])]);
   plainLayer.clearLayers();
   clusterLayer.clearLayers();
   markers = new Map();
@@ -169,7 +240,7 @@ async function load() {
   for (const c of allClinics) {
     if (c.lat == null || c.lng == null) continue;
     const overdue = c.next_follow_up && c.next_follow_up < today && c.relationship !== 'do_not_contact';
-    const m = L.marker([c.lat, c.lng], { icon: pinIcon(c.color, overdue ? 'pin-overdue' : ''), title: c.name });
+    const m = L.marker([c.lat, c.lng], { icon: pinIcon(c.color, overdue ? 'pin-overdue' : '', c.shorthand || ''), title: c.name });
     m.clinic = c;
     m.bindPopup(() => popupHtml(c), { maxWidth: 320 });
     m.on('popupopen', (e) => wirePopup(e.popup.getElement(), c, m));
@@ -204,9 +275,10 @@ function nearMetric(c) {
 
 function matches(c) {
   if (!state.colors.has(c.color)) return false;
+  if (state.stages.size && !state.stages.has(c.stage)) return false;
   if (state.q) {
     const q = state.q.toLowerCase();
-    if (![c.name, c.address, c.postal_code, c.tags, c.clinic_type, c.emr_system, c.notes].some(v => v && String(v).toLowerCase().includes(q))) return false;
+    if (![c.name, c.shorthand, c.address, c.postal_code, c.tags, c.clinic_type, c.emr_system, c.notes].some(v => v && String(v).toLowerCase().includes(q))) return false;
   }
   if (state.near.on && state.near.centre) {
     const m = nearMetric(c);
@@ -243,6 +315,24 @@ function applyFilters() {
     const pts = visible.filter(c => c.lat != null).map(c => [c.lat, c.lng, 0.6 + Math.min(1, (c.deal_value || 0) / 20000)]);
     heatLayer = L.heatLayer(pts, { radius: 35, blur: 25, minOpacity: 0.35, maxZoom: 15 }).addTo(map);
   }
+  // Secondary locations of visible clinics
+  locationLayer.clearLayers();
+  if (state.showLocations) {
+    for (const l of allLocations) {
+      if (!visibleIds.has(l.clinic_id)) continue;
+      const parent = allClinics.find(c => c.id === l.clinic_id);
+      const m = L.marker([l.lat, l.lng], { icon: secondaryPinIcon(l.color), title: `${l.name} (secondary location of ${l.clinic_name})` });
+      m.bindPopup(() => `
+        <div class="popup-title"><span class="dot dot-${esc(l.color)}" style="border-style:dashed"></span>${esc(l.name)}</div>
+        <p><span class="badge">Secondary location</span> of <a href="#/clinics/${l.clinic_id}">${esc(l.clinic_name)}</a>${l.shorthand ? ` <span class="badge badge-shorthand">${esc(l.shorthand)}</span>` : ''}</p>
+        <p class="muted">${esc([l.address, l.city, l.postal_code].filter(Boolean).join(', ')) || 'No address'}</p>
+        ${l.phone ? `<p>☎ <a href="tel:${attr(l.phone)}">${esc(l.phone)}</a></p>` : ''}
+        ${parent && parent.address ? `<p class="small muted">Main location: ${esc(parent.address)}</p>` : ''}
+        <div class="popup-actions"><a class="btn btn-sm btn-primary" href="#/clinics/${l.clinic_id}">Open clinic</a>
+          <a class="btn btn-sm" href="https://www.google.com/maps/dir/?api=1&destination=${l.lat},${l.lng}" target="_blank" rel="noopener">Directions</a></div>`, { maxWidth: 320 });
+      m.addTo(locationLayer);
+    }
+  }
   drawNear();
   renderList(visible);
 }
@@ -262,8 +352,8 @@ function renderList(list) {
       ${routeOn ? `<input type="checkbox" data-route-id="${c.id}" ${state.route.ids.includes(c.id) ? 'checked' : ''} ${c.lat == null ? 'disabled' : ''} title="Add to route">` : ''}
       ${dot(c.color, c.color_label)}
       <div class="grow">
-        <div class="name">${esc(c.name)}</div>
-        <div class="sub">${esc(c.address || 'No address')}${c.lat == null ? ' · <em>not on map</em>' : ''}</div>
+        <div class="name">${c.shorthand ? `<span class="badge badge-shorthand">${esc(c.shorthand)}</span> ` : ''}${esc(c.name)}</div>
+        <div class="sub">${esc(c.address || 'No address')}${c.lat == null ? ' · <em>not on map</em>' : ''}${allLocations.some(l => l.clinic_id === c.id) ? ` · +${allLocations.filter(l => l.clinic_id === c.id).length} site${allLocations.filter(l => l.clinic_id === c.id).length === 1 ? '' : 's'}` : ''}</div>
         <div class="sub">${c.last_visit ? `Last visit ${esc(relativeDays(c.last_visit))}` : 'Never visited'}${c.next_appointment ? ` · Next ${esc(fmtDate(c.next_appointment.start_time))}` : ''}</div>
       </div>
       ${metricText ? `<span class="metric">${metricText}</span>` : ''}
@@ -321,7 +411,7 @@ function clusterIcon(cluster) {
 
 function popupHtml(c) {
   return `
-    <div class="popup-title">${dot(c.color, c.color_label)}${esc(c.name)}</div>
+    <div class="popup-title">${dot(c.color, c.color_label)}${shorthandBadge(c)} ${esc(c.name)}</div>
     <p><span class="badge badge-${esc(c.color)}">${esc(c.color_label)}</span> <span class="badge badge-stage-${esc(c.stage)}">${esc(c.stage_label)}</span> ${c.clinic_type ? `<span class="badge">${esc(c.clinic_type)}</span>` : ''}</p>
     <p class="muted">${esc(fullAddress(c)) || 'No address'}</p>
     ${c.phone ? `<p>☎ <a href="tel:${attr(c.phone)}">${esc(c.phone)}</a></p>` : ''}
@@ -329,6 +419,7 @@ function popupHtml(c) {
     <p class="small">Last visit: ${c.last_visit ? `${esc(fmtDate(c.last_visit))} (${esc(relativeDays(c.last_visit))})` : 'never'}</p>
     ${c.next_appointment ? `<p class="small">Next: ${esc(c.next_appointment.title)} · ${esc(fmtDate(c.next_appointment.start_time))}</p>` : ''}
     ${c.contact_count ? `<p class="small">${c.contact_count} contact${c.contact_count === 1 ? '' : 's'}</p>` : ''}
+    ${quickLogButtons(meta, ['left_card', 'left_voicemail', 'spoke_manager', 'not_interested'])}
     <div class="popup-actions">
       <a class="btn btn-sm btn-primary" href="#/clinics/${c.id}">Open</a>
       <button class="btn btn-sm" data-act="appt">+ Appt</button>
@@ -340,6 +431,7 @@ function popupHtml(c) {
 
 function wirePopup(el, c, marker) {
   if (!el) return;
+  el.querySelectorAll('[data-quick]').forEach(b => { b.onclick = () => quickLog(c, b.dataset.quick, () => marker.closePopup()); });
   const appt = el.querySelector('[data-act=appt]');
   if (appt) appt.onclick = () => openAppointmentForm({ clinicId: c.id, lockClinic: true, onSaved: load });
   const move = el.querySelector('[data-act=move]');

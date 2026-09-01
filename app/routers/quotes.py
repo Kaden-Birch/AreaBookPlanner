@@ -106,12 +106,16 @@ def clinic_counts(conn: sqlite3.Connection, clinic_id: int) -> dict:
     def n(t):
         return sum(1 for d in devs if d["device_type"] == t)
     servers = [d for d in devs if d["device_type"] == "server"]
-    vms = sum(1 for d in servers if any(k in (d["designation"] or "").lower() for k in ("vm", "virtual")))
-    users = {(d["user_name"] or "").strip().lower() for d in devs if d["device_type"] in ("workstation", "laptop", "wireless", "voip") and d["user_name"]}
+    vm_type = sum(1 for d in devs if d["device_type"] == "vm")
+    # Back-compat: a server tagged as a VM in its designation still counts as a VM.
+    legacy_vms = sum(1 for d in servers if any(k in (d["designation"] or "").lower() for k in ("vm", "virtual")))
+    vms = vm_type + legacy_vms
+    physical = len(servers) - legacy_vms
+    users = {(d["user_name"] or "").strip().lower() for d in devs if d["device_type"] in ("workstation", "laptop", "wireless", "voip", "vm") and d["user_name"]}
     sites = 1 + conn.execute("SELECT COUNT(*) FROM clinic_locations WHERE clinic_id = ?", (clinic_id,)).fetchone()[0]
     counts = {
         "workstations": n("workstation"), "laptops": n("laptop"), "wireless": n("wireless"),
-        "servers_physical": len(servers) - vms, "vms": vms, "servers_all": len(servers),
+        "servers_physical": physical, "vms": vms, "servers_all": physical + vms,
         "firewalls": n("firewall"), "routers": n("router"), "switches": n("switch"), "aps": n("access_point"),
         "phones": n("voip"), "printers": n("printer"), "sites": sites,
         "users": len(users) or n("workstation") + n("laptop"),

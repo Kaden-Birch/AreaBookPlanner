@@ -329,6 +329,7 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "saved_views": rows_to_list(conn.execute("SELECT * FROM saved_views")),
         "devices": rows_to_list(conn.execute("SELECT * FROM devices")),
         "device_tickets": rows_to_list(conn.execute("SELECT * FROM device_tickets")),
+        "device_links": rows_to_list(conn.execute("SELECT * FROM device_links")),
         "quotes": rows_to_list(conn.execute("SELECT * FROM quotes")),
         "price_book": rows_to_list(conn.execute("SELECT * FROM price_book")),
     }
@@ -349,7 +350,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
-              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_tickets", "quotes"]
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_links", "device_tickets", "quotes"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -471,6 +472,15 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         conn.execute(f"INSERT INTO device_tickets ({cols}) VALUES ({marks})", list(row.values()))
+    for row in data.get("device_links", []):
+        row.pop("id", None)
+        if row.get("device_id") not in device_map or row.get("uplink_id") not in device_map:
+            continue
+        row["device_id"] = device_map[row["device_id"]]
+        row["uplink_id"] = device_map[row["uplink_id"]]
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO device_links ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

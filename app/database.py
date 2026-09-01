@@ -188,6 +188,15 @@ CREATE TABLE IF NOT EXISTS devices (
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS device_links (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    uplink_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    link_type   TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS device_tickets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -201,6 +210,8 @@ CREATE TABLE IF NOT EXISTS device_tickets (
 CREATE INDEX IF NOT EXISTS idx_devices_clinic ON devices(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_devices_uplink ON devices(uplink_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_device ON device_tickets(device_id);
+CREATE INDEX IF NOT EXISTS idx_dlinks_device ON device_links(device_id);
+CREATE INDEX IF NOT EXISTS idx_dlinks_uplink ON device_links(uplink_id);
 
 CREATE TABLE IF NOT EXISTS price_book (
     key         TEXT PRIMARY KEY,
@@ -305,6 +316,9 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "appointments": [
         ("reminder_minutes", "INTEGER"),
         ("rep", "TEXT"),
+    ],
+    "devices": [
+        ("off_site", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "tasks": [
         ("due_time", "TEXT"),

@@ -12,16 +12,16 @@ from fastapi.responses import Response
 
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import (
-    DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, USER_DEVICE_TYPES, clinic_shorthand,
-    log_event, now_iso,
+    DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, OS_DEVICE_TYPES, USER_DEVICE_TYPES,
+    clinic_shorthand, log_event, now_iso,
 )
-from ..schemas import DeviceIn, TicketIn
+from ..schemas import ConnectionIn, DeviceIn, EdgeOp, TicketIn
 
 router = APIRouter(prefix="/api", tags=["devices"])
 
 DEVICE_COLUMNS = [
     "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
-    "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "services", "purchase_date",
+    "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "services", "purchase_date",
     "warranty_until", "notes",
 ]
 
@@ -44,8 +44,15 @@ def _decorate(row: dict) -> dict:
     row["type_label"] = t["label"]
     row["icon"] = t["icon"]
     row["is_network"] = t["network"]
+    row["is_vm"] = bool(t.get("vm"))
+    row["off_site"] = bool(row.get("off_site"))
     row["status_label"] = DEVICE_STATUSES.get(row["status"], row["status"])
-    row["link_label"] = LINK_TYPES_NET.get(row.get("link_type") or "", None)
+    if row.get("device_type") == "vm" and row.get("uplink_id"):
+        row["link_type_effective"] = "virtual"
+        row["link_label"] = "Virtual (on host)"
+    else:
+        row["link_type_effective"] = row.get("link_type")
+        row["link_label"] = LINK_TYPES_NET.get(row.get("link_type") or "", None)
     try:
         row["services"] = json.loads(row["services"]) if row.get("services") else []
     except (TypeError, ValueError):
@@ -104,10 +111,16 @@ def _validate(conn: sqlite3.Connection, clinic_id: int, data: dict) -> None:
             raise HTTPException(status_code=422, detail="Location does not belong to this clinic")
     if data.get("ip_address") and not re.fullmatch(r"[0-9a-fA-F:.]{3,45}(/\d{1,3})?", data["ip_address"]):
         raise HTTPException(status_code=422, detail="IP address doesn't look valid")
-    if data.get("uplink_id") is not None and not data.get("link_type"):
-        data["link_type"] = "wireless" if data["device_type"] in ("wireless",) else "ethernet"
+    if data["device_type"] == "vm":
+        data["link_type"] = None  # the VM->host link is virtual; derived in output, not stored
+    elif data.get("uplink_id") is not None and not data.get("link_type"):
+        data["link_type"] = "wireless" if data["device_type"] == "wireless" else "ethernet"
     if data.get("uplink_id") is None:
         data["link_type"] = None
+    if data.get("off_site"):
+        data["off_site"] = 1
+    else:
+        data["off_site"] = 0
 
 
 def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
@@ -124,7 +137,7 @@ def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
         "active": sum(v["active"] for v in by_type.values()),
         "billable": {
             "workstations": by_type["workstation"]["active"] + by_type["laptop"]["active"],
-            "servers": by_type["server"]["active"],
+            "servers": by_type["server"]["active"] + by_type["vm"]["active"],
             "network": sum(by_type[t]["active"] for t in ("firewall", "router", "switch", "access_point")),
             "phones": by_type["voip"]["active"],
             "printers": by_type["printer"]["active"],
@@ -137,7 +150,7 @@ def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
 @router.get("/meta/devices")
 def device_meta():
     return {"types": DEVICE_TYPES, "designations": DEVICE_DESIGNATIONS, "statuses": DEVICE_STATUSES,
-            "link_types": LINK_TYPES_NET, "user_types": list(USER_DEVICE_TYPES)}
+            "link_types": LINK_TYPES_NET, "user_types": list(USER_DEVICE_TYPES), "os_types": list(OS_DEVICE_TYPES)}
 
 
 # ---- Per clinic ---------------------------------------------------------------
@@ -201,24 +214,113 @@ def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     return created if qty > 1 else created[0]
 
 
+def _edge_link_type(d: dict) -> str:
+    if d["device_type"] == "vm":
+        return "virtual"
+    return d.get("link_type") or "ethernet"
+
+
 @router.get("/clinics/{clinic_id}/topology")
 def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
-    """Nodes + edges for the network diagram. Roots are devices with no uplink."""
+    """Nodes + edges for the network diagram.
+
+    The primary uplink forms the on-site tree (roots = on-site devices with no uplink).
+    Off-site devices are returned separately and never joined to the tree. Extra
+    connections (device_links) are returned as overlay edges so a device can show
+    more than one uplink.
+    """
     _clinic_or_404(conn, clinic_id)
     devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
     by_id = {d["id"]: d for d in devices}
+    onsite = [d for d in devices if not d["off_site"]]
     children: dict[int, list[int]] = {d["id"]: [] for d in devices}
-    for d in devices:
-        if d["uplink_id"] in by_id:
+    for d in onsite:
+        if d["uplink_id"] in by_id and not by_id[d["uplink_id"]]["off_site"]:
             children[d["uplink_id"]].append(d["id"])
-    nodes = []
-    for d in devices:
-        nodes.append({k: d.get(k) for k in ("id", "name", "device_type", "type_label", "icon", "is_network", "designation", "ip_address",
-                                             "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model")}
-                     | {"children": children[d["id"]]})
-    roots = [d["id"] for d in devices if d["uplink_id"] not in by_id]
-    edges = [{"from": d["uplink_id"], "to": d["id"], "link_type": d["link_type"] or "ethernet"} for d in devices if d["uplink_id"] in by_id]
-    return {"nodes": nodes, "roots": roots, "edges": edges}
+    node_keys = ("id", "name", "device_type", "type_label", "icon", "is_network", "is_vm", "off_site", "designation",
+                 "ip_address", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model")
+    nodes = [{k: d.get(k) for k in node_keys} | {"children": children[d["id"]]} for d in onsite]
+    offsite_nodes = [{k: d.get(k) for k in node_keys} | {"children": []} for d in devices if d["off_site"]]
+    roots = [d["id"] for d in onsite if d["uplink_id"] not in by_id or by_id[d["uplink_id"]]["off_site"]]
+    edges = [{"from": d["uplink_id"], "to": d["id"], "link_type": _edge_link_type(d), "primary": True}
+             for d in onsite if d["uplink_id"] in by_id and not by_id[d["uplink_id"]]["off_site"]]
+    for l in rows_to_list(conn.execute(
+        """SELECT dl.* FROM device_links dl JOIN devices d ON d.id = dl.device_id WHERE d.clinic_id = ?""", (clinic_id,))):
+        if l["device_id"] in by_id and l["uplink_id"] in by_id:
+            edges.append({"from": l["uplink_id"], "to": l["device_id"], "link_type": l["link_type"] or "ethernet", "primary": False, "link_id": l["id"]})
+    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes}
+
+
+# ---- Extra connections (multiple uplinks / edge cases) ---------------------------
+
+@router.post("/devices/{device_id}/connections", status_code=201)
+def add_connection(device_id: int, payload: ConnectionIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    d = _get_or_404(conn, device_id)
+    up = row_to_dict(conn.execute("SELECT id, clinic_id, name FROM devices WHERE id = ?", (payload.uplink_id,)).fetchone())
+    if up is None or up["clinic_id"] != d["clinic_id"]:
+        raise HTTPException(status_code=422, detail="Uplink must be a device at the same clinic")
+    if payload.uplink_id == device_id:
+        raise HTTPException(status_code=422, detail="A device cannot connect to itself")
+    if d["uplink_id"] == payload.uplink_id:
+        raise HTTPException(status_code=422, detail="That is already the primary uplink")
+    dup = conn.execute("SELECT 1 FROM device_links WHERE device_id = ? AND uplink_id = ?", (device_id, payload.uplink_id)).fetchone()
+    if dup:
+        raise HTTPException(status_code=422, detail="These devices are already connected")
+    conn.execute("INSERT INTO device_links (device_id, uplink_id, link_type, notes) VALUES (?, ?, ?, ?)",
+                 (device_id, payload.uplink_id, payload.link_type, payload.notes))
+    return get_device(device_id, conn)
+
+
+@router.delete("/devices/{device_id}/connections/{link_id}", status_code=204)
+def remove_connection(device_id: int, link_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM device_links WHERE id = ? AND device_id = ?", (link_id, device_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return None
+
+
+@router.post("/clinics/{clinic_id}/connect")
+def connect_devices(clinic_id: int, payload: EdgeOp, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Draw a line child->parent from the topology. Sets the primary uplink if the child
+    has none; otherwise records an extra connection. Returns the mode used."""
+    _clinic_or_404(conn, clinic_id)
+    child = row_to_dict(conn.execute("SELECT * FROM devices WHERE id = ? AND clinic_id = ?", (payload.child_id, clinic_id)).fetchone())
+    parent = row_to_dict(conn.execute("SELECT * FROM devices WHERE id = ? AND clinic_id = ?", (payload.parent_id, clinic_id)).fetchone()) if payload.parent_id else None
+    if child is None or parent is None:
+        raise HTTPException(status_code=422, detail="Both devices must belong to this clinic")
+    if payload.child_id == payload.parent_id:
+        raise HTTPException(status_code=422, detail="A device cannot connect to itself")
+    is_vm = child["device_type"] == "vm"
+    link_type = payload.link_type or ("virtual" if is_vm else ("wireless" if child["device_type"] == "wireless" else "ethernet"))
+    if child["uplink_id"] is None and not child["off_site"]:
+        _check_uplink(conn, clinic_id, payload.child_id, payload.parent_id)
+        conn.execute("UPDATE devices SET uplink_id = ?, link_type = ?, updated_at = ? WHERE id = ?",
+                     (payload.parent_id, None if is_vm else link_type, now_iso(), payload.child_id))
+        return {"mode": "primary"}
+    if child["uplink_id"] == payload.parent_id or conn.execute("SELECT 1 FROM device_links WHERE device_id = ? AND uplink_id = ?", (payload.child_id, payload.parent_id)).fetchone():
+        raise HTTPException(status_code=422, detail="Those devices are already connected")
+    conn.execute("INSERT INTO device_links (device_id, uplink_id, link_type) VALUES (?, ?, ?)", (payload.child_id, payload.parent_id, link_type))
+    return {"mode": "extra"}
+
+
+@router.post("/clinics/{clinic_id}/disconnect")
+def disconnect_devices(clinic_id: int, payload: EdgeOp, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Break a line between two devices: clears the primary uplink if that is the link,
+    otherwise removes the matching extra connection."""
+    _clinic_or_404(conn, clinic_id)
+    child = row_to_dict(conn.execute("SELECT * FROM devices WHERE id = ? AND clinic_id = ?", (payload.child_id, clinic_id)).fetchone())
+    if child is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if child["uplink_id"] == payload.parent_id:
+        conn.execute("UPDATE devices SET uplink_id = NULL, link_type = NULL, updated_at = ? WHERE id = ?", (now_iso(), payload.child_id))
+        return {"removed": "primary"}
+    cur = conn.execute("DELETE FROM device_links WHERE device_id = ? AND uplink_id = ?", (payload.child_id, payload.parent_id))
+    if cur.rowcount == 0:
+        # also try the reverse direction just in case the caller passed them swapped
+        cur = conn.execute("DELETE FROM device_links WHERE device_id = ? AND uplink_id = ?", (payload.parent_id, payload.child_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="No such connection")
+    return {"removed": "extra"}
 
 
 @router.get("/clinics/{clinic_id}/devices.csv")
@@ -257,6 +359,16 @@ def get_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)
         seen.add(up["id"])
         cur = up
     d["uplink_chain"] = chain  # nearest first
+    d["connections"] = rows_to_list(conn.execute(
+        """SELECT dl.id, dl.link_type, dl.notes, u.id AS uplink_id, u.name AS uplink_name, u.device_type AS uplink_type
+           FROM device_links dl JOIN devices u ON u.id = dl.uplink_id WHERE dl.device_id = ? ORDER BY dl.id""", (device_id,)))
+    for cn in d["connections"]:
+        cn["uplink_icon"] = DEVICE_TYPES.get(cn["uplink_type"], DEVICE_TYPES["other"])["icon"]
+    d["extra_downlinks"] = rows_to_list(conn.execute(
+        """SELECT dl.id, dl.link_type, d2.id AS device_id, d2.name, d2.device_type FROM device_links dl
+           JOIN devices d2 ON d2.id = dl.device_id WHERE dl.uplink_id = ? ORDER BY dl.id""", (device_id,)))
+    for dn in d["extra_downlinks"]:
+        dn["icon"] = DEVICE_TYPES.get(dn["device_type"], DEVICE_TYPES["other"])["icon"]
     return d
 
 

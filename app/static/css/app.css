@@ -621,12 +621,17 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-svg { display: block; font-family: inherit; }
 .topo-edge { fill: none; stroke: var(--faint); stroke-width: 2; }
 .topo-edge.wireless { stroke-dasharray: 6 5; stroke: var(--primary); }
+.topo-edge.virtual { stroke-dasharray: 2 4; stroke: #7c5cd6; }
+.topo-edge.extra { stroke-dasharray: 8 4; stroke: var(--overdue-ring); stroke-width: 2; }
+.topo-edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.topo-wrap.editing .topo-edge-hit:hover { stroke: rgba(255,122,0,.25); }
 .topo-node { cursor: pointer; }
 .topo-node rect.box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; rx: 9; }
 .topo-node:hover rect.box { stroke: var(--primary); stroke-width: 2; }
 .topo-node rect.accent { rx: 2; }
 .topo-node .accent-network { fill: var(--c-interested); }
 .topo-node .accent-server { fill: #7c5cd6; }
+.topo-node .accent-vm { fill: #a98be6; }
 .topo-node .accent-endpoint { fill: var(--c-client); }
 .topo-node .accent-phone { fill: #eda100; }
 .topo-node .accent-printer { fill: #8a8f98; }
@@ -636,6 +641,9 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-node text { fill: var(--text); font-size: 12px; }
 .topo-node text.sub { fill: var(--muted); font-size: 11px; }
 .topo-node text.icon { font-size: 18px; }
+.topo-node.is-vm rect.box { fill: var(--surface-2); stroke-dasharray: 0; }
+.topo-node.is-vm rect.box { stroke: #a98be6; }
+[data-theme="dark"] .topo-node.is-vm rect.box { fill: #241f38; }
 .topo-node text.badge { font-size: 10px; fill: var(--muted); }
 .topo-node.selected rect.box { stroke: var(--primary); stroke-width: 2.5; }
 .topo-wan rect { fill: var(--surface-3); stroke: var(--border); rx: 9; }
@@ -644,6 +652,10 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; align-items: center; }
 .topo-legend .line { display: inline-block; width: 26px; border-top: 2px solid var(--faint); vertical-align: middle; margin-right: 4px; }
 .topo-legend .line.wireless { border-top-style: dashed; border-color: var(--primary); }
+.topo-legend .line.virtual { border-top-style: dotted; border-color: #7c5cd6; }
+.topo-legend .line.extra { border-top-style: dashed; border-color: var(--overdue-ring); }
+.topo-hint { position: sticky; top: 44px; left: 8px; z-index: 5; display: inline-block; margin: 0 8px 4px; background: var(--primary-soft); color: var(--primary-soft-text); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+.topo-svg .topo-node { cursor: pointer; }
 
 /* Device detail modal */
 .device-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }

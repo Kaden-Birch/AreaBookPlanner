@@ -84,8 +84,11 @@ EQUIPMENT = [  # (temp key, payload, uplink temp key)
     ("fw", {"device_type": "firewall", "manufacturer": "Fortinet", "model": "FortiGate 60F", "ip_address": "192.168.10.1", "designation": "Edge firewall"}, None),
     ("sw", {"device_type": "switch", "manufacturer": "Ubiquiti", "model": "USW-24-PoE", "ip_address": "192.168.10.2", "designation": "PoE switch"}, "fw"),
     ("ap", {"device_type": "access_point", "manufacturer": "Ubiquiti", "model": "U6-Lite", "ip_address": "192.168.10.3"}, "sw"),
-    ("srv", {"device_type": "server", "designation": "Windows Server", "manufacturer": "Dell", "model": "PowerEdge T350", "ip_address": "192.168.10.10", "os": "Windows Server 2022",
-             "services": ["Active Directory", "DNS / DHCP", "File shares", "EMR (Telus Wolf) server", "Backup agent"]}, "sw"),
+    ("srv", {"device_type": "server", "designation": "Hypervisor / host", "manufacturer": "Dell", "model": "PowerEdge T350", "ip_address": "192.168.10.10", "os": "VMware ESXi 8"}, "sw"),
+    ("vm1", {"device_type": "vm", "designation": "Domain controller", "ip_address": "192.168.10.11", "os": "Windows Server 2022",
+             "services": ["Active Directory", "DNS / DHCP", "File shares"]}, "srv"),
+    ("vm2", {"device_type": "vm", "designation": "EMR server", "ip_address": "192.168.10.12", "os": "Windows Server 2022",
+             "services": ["EMR (Telus Wolf) server", "SQL Server", "Backup agent"]}, "srv"),
     ("v1", {"device_type": "voip", "user_name": "Reception", "ip_address": "192.168.10.51", "designation": "Reception console"}, "sw"),
     ("w1", {"device_type": "workstation", "user_name": "Reception", "designation": "Front desk", "ip_address": "192.168.10.21", "os": "Windows 11 Pro", "manufacturer": "Dell", "model": "OptiPlex 7010"}, "v1"),
     ("v2", {"device_type": "voip", "user_name": "Sarah Nguyen", "ip_address": "192.168.10.52"}, "sw"),
@@ -96,8 +99,9 @@ EQUIPMENT = [  # (temp key, payload, uplink temp key)
     ("l1", {"device_type": "laptop", "user_name": "Dr. Patel", "ip_address": "192.168.10.61", "os": "Windows 11 Pro", "link_type": "wireless"}, "ap"),
     ("m1", {"device_type": "wireless", "user_name": "Dr. Patel", "designation": "Cell phone", "link_type": "wireless"}, "ap"),
     ("old", {"device_type": "workstation", "designation": "Old lab PC", "status": "retired", "notes": "Replaced Jan 2026, kept as spare parts."}, None),
+    ("home", {"device_type": "laptop", "user_name": "Dr. Patel", "designation": "Home office", "off_site": True, "os": "Windows 11 Pro", "notes": "Connects via VPN from home."}, None),
 ]
-TICKETS = [("srv", {"title": "Backup job failing on Sundays", "url": "https://tickets.example.com/4412", "ticket_date": "2026-06-14"}),
+TICKETS = [("vm2", {"title": "Backup job failing on Sundays", "url": "https://tickets.example.com/4412", "ticket_date": "2026-06-14"}),
            ("p1", {"title": "Paper jams on tray 2", "ticket_date": "2026-07-02"})]
 
 

@@ -101,6 +101,13 @@ and is stored in a single SQLite file.
   notes, services (for servers) and linked tickets (title + link). A list view groups
   by type; a topology view draws the network from the WAN down, dashed for wireless.
   Active counts per type are summarised for billing later.
+- **Virtual machines** are a first-class device type: a VM's uplink is the host server
+  it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
+  link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
+  separate "Off-site devices" section instead of the network tree. In the topology you
+  can switch on **Edit connections** to draw or remove links between any two devices,
+  so a device with more than one uplink can be represented accurately; the primary
+  uplink still comes from the device form.
 - **Quoting** – a price book under Settings (managed IT tiers priced per device or per
   user, VM / physical server / firewall / switch / AP / site management, basic and BDR
   backup, M365 backup, PrimeEMR flat or per user, hourly support rates, onboarding fee,

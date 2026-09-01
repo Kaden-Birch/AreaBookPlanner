@@ -1,9 +1,9 @@
 // Equipment page for one clinic: list view and network topology view.
 import { clinics, devices } from '../api.js';
-import { esc, attr, options, debounce, setTitle, shorthandBadge, dot } from '../ui.js';
+import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
 
-let state = { view: 'list', q: '', type: '', status: '', zoom: 1 };
+let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null };
 let clinic = null, meta = null;
 
 export async function render(container, params, routeParams) {
@@ -85,11 +85,11 @@ function renderList(body, list, data) {
       <tr class="group-row"><td colspan="7">${esc(meta.types[t].icon)} ${esc(plural(meta.types[t].label, groups[t].length))} <span class="muted">(${groups[t].length})</span><button class="btn btn-sm" data-add-type="${t}">+ Add ${esc(meta.types[t].label.toLowerCase())}</button></td></tr>
       ${groups[t].map(d => `
         <tr class="clickable ${d.status}" data-id="${d.id}">
-          <td class="name">${esc(d.name)}${d.location_name ? ` <span class="muted small">· ${esc(d.location_name)}</span>` : ''}</td>
+          <td class="name">${d.is_vm ? '🧊 ' : ''}${esc(d.name)}${d.off_site ? ' <span class="badge badge-purple">off-site</span>' : ''}${d.location_name ? ` <span class="muted small">· ${esc(d.location_name)}</span>` : ''}</td>
           <td>${esc([d.designation, [d.manufacturer, d.model].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}${d.device_type === 'server' && d.services.length ? `<div class="muted small">${esc(d.services.slice(0, 4).join(', '))}${d.services.length > 4 ? '…' : ''}</div>` : ''}${d.os ? `<div class="muted small">${esc(d.os)}</div>` : ''}</td>
           <td>${esc(d.user_name || '')}</td>
           <td class="mono">${esc(d.ip_address || '')}</td>
-          <td>${d.uplink_name ? `<span class="link-icon" title="${d.link_type === 'wireless' ? 'Wireless' : 'Wired'}">${d.link_type === 'wireless' ? '📶' : '🔌'}</span> ${esc(d.uplink_icon || '')} ${esc(d.uplink_name)}` : '<span class="muted">—</span>'}${d.downlink_count ? ` <span class="badge" title="Devices plugged into this">${d.downlink_count} ↓</span>` : ''}</td>
+          <td>${d.uplink_name ? `<span class="link-icon" title="${d.link_label || ''}">${d.is_vm ? '🧊' : (d.link_type === 'wireless' ? '📶' : '🔌')}</span> ${esc(d.uplink_icon || '')} ${esc(d.uplink_name)}` : '<span class="muted">—</span>'}${d.downlink_count ? ` <span class="badge" title="Devices plugged into this">${d.downlink_count} ↓</span>` : ''}</td>
           <td><span class="badge ${d.status === 'active' ? 'badge-green' : d.status === 'spare' ? 'badge-yellow' : 'badge-grey'}">${esc(d.status_label)}</span>${d.ticket_count ? ` <span class="badge badge-red" title="Linked tickets">🎫 ${d.ticket_count}</span>` : ''}</td>
           <td class="actions"><button class="btn btn-sm" data-edit="${d.id}">Edit</button></td>
         </tr>`).join('')}`).join('')}
@@ -103,16 +103,16 @@ function renderList(body, list, data) {
 
 const NODE_W = 172, NODE_H = 56, GAP_X = 18, GAP_Y = 46;
 
+function nodeDim(n) { return n.is_vm ? { w: 132, h: 42 } : { w: NODE_W, h: NODE_H }; }
+
 async function renderTopology(body) {
   const topo = await devices.topology(clinic.id);
-  const byId = Object.fromEntries(topo.nodes.map(n => [n.id, n]));
-  if (!topo.nodes.length) { body.innerHTML = '<div class="card empty">Nothing to draw yet. Add a firewall or router first, then plug other devices into it via “Uplink device”.</div>'; return; }
+  const byId = Object.fromEntries([...topo.nodes, ...(topo.offsite || [])].map(n => [n.id, n]));
+  if (!topo.nodes.length && !(topo.offsite || []).length) { body.innerHTML = '<div class="card empty">Nothing to draw yet. Add a firewall or router first, then plug other devices into it via “Uplink device”.</div>'; return; }
 
-  // Roots that are network gear hang off a virtual WAN node; everything else is "standalone".
   const netRoots = topo.roots.filter(id => byId[id].is_network);
   const otherRoots = topo.roots.filter(id => !byId[id].is_network);
 
-  // Layout: leaf-count based x positions, depth based y.
   const widths = {};
   const leafWidth = (id) => {
     const n = byId[id];
@@ -133,66 +133,107 @@ async function renderTopology(body) {
   netRoots.forEach(id => { leafWidth(id); place(id, x, wanDepth); x += widths[id]; });
   const mainWidth = Math.max(x, NODE_W + GAP_X);
   const mainDepth = Math.max(0, ...Object.values(pos).map(p => p.y)) + NODE_H;
-  // Standalone section below
   let y2 = mainDepth + (Object.keys(pos).length ? 70 : 20);
   let x2 = 0;
   const sectionY = y2;
   if (otherRoots.length) y2 += 26;
   const standaloneDepthStart = y2;
   otherRoots.forEach(id => { leafWidth(id); place(id, x2, 0); x2 += widths[id]; });
-  // shift standalone roots' subtree down
   const shift = (id, dy) => { pos[id].y += dy; byId[id].children.forEach(c => shift(c, dy)); };
   otherRoots.forEach(id => shift(id, standaloneDepthStart));
-  const W = Math.max(mainWidth, x2) + 40;
-  const H = Math.max(...Object.values(pos).map(p => p.y)) + NODE_H + 30;
+
+  // Off-site devices: a simple wrapped grid in its own band.
+  const offsite = topo.offsite || [];
+  const offY = Math.max(...Object.values(pos).map(p => p.y), 0) + NODE_H + (offsite.length ? 80 : 0);
+  const perRow = Math.max(1, Math.floor((Math.max(mainWidth, x2) || (NODE_W + GAP_X)) / (NODE_W + GAP_X)));
+  offsite.forEach((n, i) => { pos[n.id] = { x: (i % perRow) * (NODE_W + GAP_X), y: offY + 26 + Math.floor(i / perRow) * (NODE_H + GAP_Y) }; });
+
+  const W = Math.max(mainWidth, x2, offsite.length ? perRow * (NODE_W + GAP_X) : 0) + 40;
+  const H = Math.max(...Object.values(pos).map(p => p.y), 0) + NODE_H + 30;
   const ox = 20, oy = 20;
+  const cx = (id) => ox + pos[id].x + NODE_W / 2;
+  const boxTop = (id) => oy + pos[id].y + (NODE_H - nodeDim(byId[id]).h) / 2;
+  const boxBot = (id) => boxTop(id) + nodeDim(byId[id]).h;
 
   let svg = '';
-  // WAN node
   if (netRoots.length) {
     const wx = mainWidth / 2 - 70;
     svg += `<g class="topo-wan" transform="translate(${ox + wx},${oy})"><rect width="140" height="30"/><text x="70" y="19" text-anchor="middle">🌐 Internet / WAN</text></g>`;
-    for (const id of netRoots) svg += edge({ x: wx + 70, y: 30 }, { x: pos[id].x + NODE_W / 2, y: pos[id].y }, 'ethernet');
+    for (const id of netRoots) svg += edge({ x: wx + 70 + ox, y: oy + 30 }, { x: cx(id), y: boxTop(id) }, 'ethernet', {});
   }
   if (otherRoots.length) svg += `<text class="topo-section" x="${ox}" y="${oy + sectionY + 12}">Not connected to the network (no uplink set)</text>`;
+  if (offsite.length) svg += `<text class="topo-section" x="${ox}" y="${oy + offY + 14}">📍 Off-site devices</text>`;
+  // edges (primary tree + extra overlay)
   for (const e of topo.edges) {
     if (!pos[e.from] || !pos[e.to]) continue;
-    svg += edge({ x: pos[e.from].x + NODE_W / 2, y: pos[e.from].y + NODE_H }, { x: pos[e.to].x + NODE_W / 2, y: pos[e.to].y }, e.link_type);
+    svg += edge({ x: cx(e.from), y: boxBot(e.from) }, { x: cx(e.to), y: boxTop(e.to) }, e.link_type, e);
   }
-  for (const n of topo.nodes) {
+  for (const n of [...topo.nodes, ...offsite]) {
     const p = pos[n.id];
     if (!p) continue;
+    const { w, h } = nodeDim(n);
+    const bx = ox + p.x + (NODE_W - w) / 2, by = oy + p.y + (NODE_H - h) / 2;
     const sub = deviceSubtitle(n);
-    const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
-    svg += `<g class="topo-node ${n.status === 'retired' ? 'retired' : ''}" data-id="${n.id}" transform="translate(${ox + p.x},${oy + p.y})">
-      <title>${attr(n.name)}${sub ? ' · ' + attr(sub) : ''}${n.uplink_id ? ` · ${n.link_type === 'wireless' ? 'wireless' : 'wired'} to ${attr(byId[n.uplink_id] ? byId[n.uplink_id].name : '')}` : ''}</title>
-      <rect class="box" width="${NODE_W}" height="${NODE_H}"/>
-      <rect class="accent ${accentClass(n.device_type, meta)}" x="0" y="8" width="4" height="${NODE_H - 16}"/>
-      <text class="icon" x="14" y="36">${esc(n.icon)}</text>
-      <text x="44" y="22" font-weight="600">${esc(trunc(n.name, 17))}</text>
-      <text class="sub" x="44" y="40">${esc(trunc(sub, 21))}</text>
-      ${n.ticket_count ? `<text class="badge" x="${NODE_W - 8}" y="14" text-anchor="end">🎫${n.ticket_count}</text>` : ''}
-      ${n.uplink_id && n.link_type === 'wireless' ? `<text class="badge" x="${NODE_W - 8}" y="${NODE_H - 8}" text-anchor="end">📶</text>` : ''}
+    const trunc = (str, m) => (str && str.length > m ? str.slice(0, m - 1) + '…' : str || '');
+    const isVm = n.is_vm;
+    const cls = [`topo-node`, n.status === 'retired' ? 'retired' : '', isVm ? 'is-vm' : '', state.source === n.id ? 'selected' : ''].join(' ');
+    svg += `<g class="${cls}" data-id="${n.id}" transform="translate(${bx},${by})">
+      <title>${attr(n.name)}${sub ? ' · ' + attr(sub) : ''}${n.uplink_id && byId[n.uplink_id] ? ` · ${isVm ? 'virtual, on' : (n.link_type === 'wireless' ? 'wireless to' : 'wired to')} ${attr(byId[n.uplink_id].name)}` : ''}</title>
+      <rect class="box" width="${w}" height="${h}" rx="9"/>
+      <rect class="accent ${accentClass(n.device_type, meta)}" x="0" y="8" width="4" height="${h - 16}"/>
+      <text class="icon" x="${isVm ? 12 : 14}" y="${isVm ? 27 : 36}" style="font-size:${isVm ? 14 : 18}px">${esc(n.icon)}</text>
+      <text x="${isVm ? 34 : 44}" y="${isVm ? 18 : 22}" font-weight="600" style="font-size:${isVm ? 11 : 12}px">${esc(trunc(n.name, isVm ? 14 : 17))}</text>
+      <text class="sub" x="${isVm ? 34 : 44}" y="${isVm ? 33 : 40}" style="font-size:${isVm ? 10 : 11}px">${esc(trunc(sub, isVm ? 16 : 21))}</text>
+      ${n.ticket_count ? `<text class="badge" x="${w - 8}" y="14" text-anchor="end">🎫${n.ticket_count}</text>` : ''}
+      ${n.uplink_id && n.link_type === 'wireless' ? `<text class="badge" x="${w - 8}" y="${h - 8}" text-anchor="end">📶</text>` : ''}
     </g>`;
   }
   body.innerHTML = `
-    <div class="topo-wrap" id="topo-wrap">
-      <div class="topo-tools"><button class="btn btn-sm" id="zoom-out">−</button><button class="btn btn-sm" id="zoom-reset">${Math.round(state.zoom * 100)}%</button><button class="btn btn-sm" id="zoom-in">+</button></div>
+    <div class="topo-wrap ${state.edit ? 'editing' : ''}" id="topo-wrap">
+      <div class="topo-tools">
+        <button class="btn btn-sm" id="zoom-out">−</button><button class="btn btn-sm" id="zoom-reset">${Math.round(state.zoom * 100)}%</button><button class="btn btn-sm" id="zoom-in">+</button>
+        <button class="btn btn-sm ${state.edit ? 'active' : ''}" id="edit-conn" title="Draw or remove connections between devices">${state.edit ? '✓ Done editing' : '✎ Edit connections'}</button>
+      </div>
+      ${state.edit ? `<div class="topo-hint" id="topo-hint">${state.source ? `Now click the device that <strong>${esc(byId[state.source] ? byId[state.source].name : '')}</strong> connects up to (its uplink). Or click a line to remove it.` : 'Click a device, then its uplink, to connect them. Click a line to remove it. The primary uplink is kept unless you remove it.'}</div>` : ''}
       <svg class="topo-svg" viewBox="0 0 ${W + ox} ${H + oy}" width="${(W + ox) * state.zoom}" height="${(H + oy) * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
     </div>
     <div class="topo-legend">
-      <span><span class="line"></span>Wired</span><span><span class="line wireless"></span>Wireless</span>
-      <span>Left stripe: <span style="color:var(--c-interested)">■</span> network · <span style="color:#7c5cd6">■</span> server · <span style="color:var(--c-client)">■</span> workstation/laptop · <span style="color:#eda100">■</span> phone/mobile · <span style="color:#8a8f98">■</span> printer</span>
-      <span>Click a device for details. Dashed box = retired.</span>
+      <span><span class="line"></span>Wired</span><span><span class="line wireless"></span>Wireless</span><span><span class="line virtual"></span>VM → host</span><span><span class="line extra"></span>Extra link</span>
+      <span>Left stripe: <span style="color:var(--c-interested)">■</span> network · <span style="color:#7c5cd6">■</span> server/VM · <span style="color:var(--c-client)">■</span> workstation/laptop · <span style="color:#eda100">■</span> phone · <span style="color:#8a8f98">■</span> printer</span>
+      <span>🧊 = smaller box is a VM. Click a device for details.</span>
     </div>`;
-  body.querySelectorAll('.topo-node').forEach(g => { g.onclick = () => openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); });
-  const setZoom = (z) => { state.zoom = Math.min(2, Math.max(0.4, z)); load(); };
+  body.querySelectorAll('.topo-node').forEach(g => {
+    g.onclick = async () => {
+      const id = Number(g.dataset.id);
+      if (!state.edit) { openDeviceDetail({ deviceId: id, clinic, onChanged: load }); return; }
+      if (state.source === null) { state.source = id; renderTopology(body); return; }
+      if (state.source === id) { state.source = null; renderTopology(body); return; }
+      try { const r = await devices.connect(clinic.id, { child_id: state.source, parent_id: id }); toast(r.mode === 'primary' ? 'Primary uplink set' : 'Extra connection added', 'success'); }
+      catch (e) { toast(e.message, 'error'); }
+      state.source = null; renderTopology(body);
+    };
+  });
+  body.querySelectorAll('.topo-edge-hit').forEach(h => {
+    h.onclick = async () => {
+      if (!state.edit) return;
+      const from = Number(h.dataset.from), to = Number(h.dataset.to);
+      if (!(await confirmDialog(`Remove the connection ${byId[to] ? byId[to].name : ''} → ${byId[from] ? byId[from].name : ''}?`, { okLabel: 'Remove', danger: true }))) return;
+      try { await devices.disconnect(clinic.id, { child_id: to, parent_id: from }); toast('Connection removed'); }
+      catch (e) { toast(e.message, 'error'); }
+      renderTopology(body);
+    };
+  });
+  const setZoom = (z) => { state.zoom = Math.min(2, Math.max(0.4, z)); renderTopology(body); };
   body.querySelector('#zoom-in').onclick = () => setZoom(state.zoom + 0.2);
   body.querySelector('#zoom-out').onclick = () => setZoom(state.zoom - 0.2);
   body.querySelector('#zoom-reset').onclick = () => setZoom(1);
+  body.querySelector('#edit-conn').onclick = () => { state.edit = !state.edit; state.source = null; renderTopology(body); };
 }
 
-function edge(a, b, type) {
+function edge(a, b, type, e) {
   const my = (a.y + b.y) / 2;
-  return `<path class="topo-edge ${type === 'wireless' ? 'wireless' : ''}" d="M${a.x + 20},${a.y + 20} V${my + 20} H${b.x + 20} V${b.y + 20}"/>`;
+  const cls = ['topo-edge', type === 'wireless' ? 'wireless' : '', type === 'virtual' ? 'virtual' : '', e && e.primary === false ? 'extra' : ''].join(' ');
+  const d = `M${a.x},${a.y} C${a.x},${my} ${b.x},${my} ${b.x},${b.y}`;
+  const hit = (e && e.from != null && e.to != null) ? `<path class="topo-edge-hit" data-from="${e.from}" data-to="${e.to}" d="${d}"/>` : '';
+  return `<path class="${cls}" d="${d}"/>${hit}`;
 }

@@ -2,9 +2,12 @@
 import { devices } from './api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, navigate, toDateInput } from './ui.js';
 
+export function linkGlyph(t) { return t === 'wireless' ? '📶' : t === 'virtual' ? '🧊' : '🔌'; }
+
 export function accentClass(type, meta) {
   const t = meta.types[type] || meta.types.other;
   if (t.network) return 'accent-network';
+  if (type === 'vm') return 'accent-vm';
   if (type === 'server') return 'accent-server';
   if (type === 'voip' || type === 'wireless') return 'accent-phone';
   if (type === 'printer') return 'accent-printer';
@@ -51,12 +54,14 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
         <div class="field"><label>Status</label><select name="status">${options(meta.statuses, d.status)}</select></div>
         ${locations.length ? `<div class="field"><label>Location / site</label><select name="location_id"><option value="">Main</option>${locations.map(l => `<option value="${l.id}" ${String(l.id) === String(d.location_id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>` : ''}
       </div>
+      <div class="field"><label class="checkbox"><input type="checkbox" name="off_site" ${d.off_site ? 'checked' : ''}> Off-site device <span class="muted">(shown in its own section, not wired into the network diagram)</span></label></div>
       <div class="form-section"><h3>Network</h3>
         <div class="field-row">
-          <div class="field" style="grid-column: span 2"><label>Uplink device (what it plugs into)</label><select name="uplink_id" id="dev-uplink">${uplinkOptions(all, d.uplink_id, device ? device.id : null)}</select>
-            <div class="help">e.g. a workstation → its VoIP phone → the switch → the firewall.</div></div>
-          <div class="field"><label>Link</label>
-            <div class="flex mt" style="gap:14px"><label class="checkbox"><input type="radio" name="link_type" value="ethernet" ${d.link_type !== 'wireless' ? 'checked' : ''}> 🔌 Wired</label><label class="checkbox"><input type="radio" name="link_type" value="wireless" ${d.link_type === 'wireless' ? 'checked' : ''}> 📶 Wireless</label></div></div>
+          <div class="field" style="grid-column: span 2"><label id="uplink-label">Uplink device (what it plugs into)</label><select name="uplink_id" id="dev-uplink">${uplinkOptions(all, d.uplink_id, device ? device.id : null)}</select>
+            <div class="help" id="uplink-help">e.g. a workstation → its VoIP phone → the switch → the firewall.</div></div>
+          <div class="field" id="link-field"><label>Link</label>
+            <div class="flex mt" style="gap:14px"><label class="checkbox"><input type="radio" name="link_type" value="ethernet" ${d.link_type !== 'wireless' ? 'checked' : ''}> 🔌 Wired</label><label class="checkbox"><input type="radio" name="link_type" value="wireless" ${d.link_type === 'wireless' ? 'checked' : ''}> 📶 Wireless</label></div>
+            <div class="help hidden" id="virtual-help">🧊 Virtual link to its host server</div></div>
           <div class="field"><label>IP address</label><input name="ip_address" value="${attr(d.ip_address)}" placeholder="192.168.1.20" class="mono"></div>
           <div class="field"><label>MAC address</label><input name="mac_address" value="${attr(d.mac_address)}" placeholder="AA:BB:CC:DD:EE:FF"></div>
         </div>
@@ -86,8 +91,24 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     form.querySelector('#desig-label').textContent = t === 'server' ? 'Server role / designation' : 'Designation';
     form.querySelector('.user-field').classList.toggle('hidden', !meta.user_types.includes(t));
     form.querySelector('.services-field').classList.toggle('hidden', t !== 'server');
-    form.querySelector('.os-field').classList.toggle('hidden', !['workstation', 'laptop', 'server', 'wireless', 'other'].includes(t));
+    form.querySelector('.os-field').classList.toggle('hidden', !(meta.os_types || ['workstation', 'laptop', 'server', 'vm', 'wireless', 'other']).includes(t));
     if (t === 'wireless' && !isEdit) form.querySelector('[name=link_type][value=wireless]').checked = true;
+    // VM: uplink is the host server; the link is virtual (hide the wired/wireless radios)
+    const isVm = t === 'vm';
+    form.querySelector('#link-field').classList.toggle('hidden', isVm);
+    form.querySelector('#virtual-help').classList.toggle('hidden', !isVm);
+    form.querySelector('#uplink-label').textContent = isVm ? 'Host server (what this VM runs on)' : 'Uplink device (what it plugs into)';
+    form.querySelector('#uplink-help').textContent = isVm ? 'Pick the physical server or hypervisor that hosts this VM.' : 'e.g. a workstation → its VoIP phone → the switch → the firewall.';
+    if (isVm) {
+      const sel = form.querySelector('#dev-uplink');
+      const cur = sel.value;
+      const hosts = all.filter(x => x.device_type === 'server' && x.id !== (device ? device.id : null));
+      const rest = all.filter(x => x.device_type !== 'server' && x.id !== (device ? device.id : null));
+      sel.innerHTML = `<option value="">— None —</option>` +
+        (hosts.length ? `<optgroup label="Host servers">${hosts.map(x => `<option value="${x.id}">${esc(x.icon)} ${esc(x.name)}</option>`).join('')}</optgroup>` : '') +
+        (rest.length ? `<optgroup label="Other devices">${rest.map(x => `<option value="${x.id}">${esc(x.icon)} ${esc(x.name)}</option>`).join('')}</optgroup>` : '');
+      sel.value = cur;
+    }
     try {
       const nn = await devices.nextName(clinic.id, t);
       nameEl.placeholder = `auto: ${nn.name}`;
@@ -108,7 +129,8 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     const data = formData(form);
     data.uplink_id = data.uplink_id ? Number(data.uplink_id) : null;
     data.location_id = data.location_id ? Number(data.location_id) : null;
-    data.link_type = form.querySelector('[name=link_type]:checked').value;
+    data.link_type = typeSel.value === 'vm' ? 'virtual' : form.querySelector('[name=link_type]:checked').value;
+    data.off_site = form.querySelector('[name=off_site]').checked;
     if (!isEdit) data.quantity = Math.max(1, Number(data.quantity) || 1);
     try {
       const saved = isEdit ? await devices.update(device.id, data) : await devices.create(clinic.id, data);
@@ -137,6 +159,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
         <span class="badge">${esc(d.type_label)}</span>
         ${d.designation ? `<span class="badge badge-purple">${esc(d.designation)}</span>` : ''}
         <span class="badge ${d.status === 'active' ? 'badge-green' : d.status === 'spare' ? 'badge-yellow' : 'badge-grey'}">${esc(d.status_label)}</span>
+        ${d.off_site ? '<span class="badge badge-purple">Off-site</span>' : ''}
         ${d.location_name ? `<span class="badge">📍 ${esc(d.location_name)}</span>` : ''}
         ${d.ticket_count ? `<span class="badge badge-red">🎫 ${d.ticket_count} ticket${d.ticket_count === 1 ? '' : 's'}</span>` : ''}
         ${warrantyOver ? '<span class="badge badge-overdue">Warranty expired</span>' : ''}
@@ -144,8 +167,9 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
       <div class="chain mb">
         ${[...d.uplink_chain].reverse().map(u => `<span class="node" data-open="${u.id}" title="Open ${attr(u.name)}">${esc(u.icon)} ${esc(u.name)}</span><span>→</span>`).join('')}
         <span class="node me">${esc(d.icon)} ${esc(d.name)}</span>
-        ${d.uplink_id ? `<span class="muted">· ${d.link_type === 'wireless' ? '📶 wireless' : '🔌 wired'} to ${esc(d.uplink_name)}</span>` : '<span class="muted">· no uplink</span>'}
+        ${d.uplink_id ? `<span class="muted">· ${linkGlyph(d.link_type_effective)} ${esc(d.link_label || '')} to ${esc(d.uplink_name)}</span>` : `<span class="muted">· ${d.off_site ? 'off-site, not on the network' : 'no uplink'}</span>`}
       </div>
+      ${(d.connections && d.connections.length) ? `<div class="chain mb"><span class="muted">Also connected to:</span> ${d.connections.map(cn => `<span class="node" data-open="${cn.uplink_id}">${esc(cn.uplink_icon)} ${esc(cn.uplink_name)}</span> <button class="btn btn-link btn-sm" data-del-conn="${cn.id}" title="Remove this connection">✕</button>`).join(' ')}</div>` : ''}
       <div class="grid-2">
         <div>
           <dl class="kv">
@@ -164,8 +188,11 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
           ${d.notes ? `<pre class="wrap">${esc(d.notes)}</pre>` : '<p class="muted small">No notes.</p>'}
         </div>
         <div>
-          <h3>Devices plugged into this (${d.downlinks.length})</h3>
-          ${d.downlinks.length ? d.downlinks.map(x => `<div class="downlink-row" data-open="${x.id}"><span>${esc(x.icon)}</span><strong>${esc(x.name)}</strong><span class="muted small">${esc(deviceSubtitle(x))}</span><span class="link-icon">${x.link_type === 'wireless' ? '📶' : '🔌'}</span></div>`).join('') : '<p class="muted small">Nothing uses this device as an uplink.</p>'}
+          <h3>Devices plugged into this (${d.downlinks.length + (d.extra_downlinks ? d.extra_downlinks.length : 0)})</h3>
+          ${d.downlinks.length ? d.downlinks.map(x => `<div class="downlink-row" data-open="${x.id}"><span>${esc(x.icon)}</span><strong>${esc(x.name)}</strong><span class="muted small">${esc(deviceSubtitle(x))}</span><span class="link-icon">${linkGlyph(x.device_type === 'vm' ? 'virtual' : x.link_type)}</span></div>`).join('') : ''}
+          ${(d.extra_downlinks || []).map(x => `<div class="downlink-row" data-open="${x.device_id}"><span>${esc(x.icon)}</span><strong>${esc(x.name)}</strong><span class="muted small">secondary connection</span><span class="link-icon">${linkGlyph(x.link_type)}</span></div>`).join('')}
+          ${(!d.downlinks.length && !(d.extra_downlinks || []).length) ? '<p class="muted small">Nothing uses this device as an uplink.</p>' : ''}
+          <div class="mt"><button class="btn btn-sm" id="add-conn">+ Connect to another device</button></div>
           <h3 class="mt">Tickets (${d.tickets.length})</h3>
           <div id="ticket-list">${d.tickets.length ? d.tickets.map(t => ticketRow(t)).join('') : '<p class="muted small">No tickets linked yet.</p>'}</div>
           <form id="ticket-form" class="mt">
@@ -210,6 +237,32 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
   modal.body.querySelectorAll('[data-del-ticket]').forEach(b => {
     b.onclick = async () => { if (!(await confirmDialog('Remove this ticket link?'))) return; await devices.removeTicket(d.id, Number(b.dataset.delTicket)); reopen(d.id); };
   });
+  modal.body.querySelectorAll('[data-del-conn]').forEach(b => {
+    b.onclick = async () => { await devices.removeConnection(d.id, Number(b.dataset.delConn)); toast('Connection removed'); reopen(d.id); };
+  });
+  const addConn = modal.body.querySelector('#add-conn');
+  if (addConn) addConn.onclick = async () => {
+    const { devices: all } = await devices.list(clinic.id);
+    const options2 = all.filter(x => x.id !== d.id && x.id !== d.uplink_id).map(x => `${x.icon} ${x.name}`);
+    const pick = openModal({
+      title: `Connect ${d.name} to…`, size: 'modal-sm',
+      body: `<form id="conn-form"><div class="field"><label>Also connects up to</label>
+        <input list="conn-list" name="target" placeholder="Start typing a device…" autocomplete="off" required>
+        <datalist id="conn-list">${all.filter(x => x.id !== d.id && x.id !== d.uplink_id).map(x => `<option value="${attr(x.icon + ' ' + x.name)}">`).join('')}</datalist></div>
+        <p class="help">Use this for edge cases like a second uplink. The primary uplink stays as it is.</p></form>`,
+      footer: `<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">Connect</button>`,
+    });
+    pick.root.querySelector('[data-act=cancel]').onclick = () => pick.close();
+    const doIt = async () => {
+      const val = pick.body.querySelector('[name=target]').value.trim();
+      const target = all.find(x => `${x.icon} ${x.name}` === val || x.name === val);
+      if (!target) { showFormError(pick.body.querySelector('#conn-form'), 'Pick a device from the list.'); return; }
+      try { await devices.addConnection(d.id, { uplink_id: target.id }); toast('Connected', 'success'); pick.close(); reopen(d.id); }
+      catch (e) { showFormError(pick.body.querySelector('#conn-form'), e.message); }
+    };
+    pick.root.querySelector('[data-act=save]').onclick = doIt;
+    pick.body.querySelector('#conn-form').onsubmit = (e) => { e.preventDefault(); doIt(); };
+  };
   return modal;
 }
 

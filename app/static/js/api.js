@@ -131,6 +131,10 @@ export const devices = {
   remove: (id) => api.del(`/api/devices/${id}`),
   addTicket: (id, data) => api.post(`/api/devices/${id}/tickets`, data),
   removeTicket: (id, ticketId) => api.del(`/api/devices/${id}/tickets/${ticketId}`),
+  addConnection: (id, data) => api.post(`/api/devices/${id}/connections`, data),
+  removeConnection: (id, linkId) => api.del(`/api/devices/${id}/connections/${linkId}`),
+  connect: (clinicId, data) => api.post(`/api/clinics/${clinicId}/connect`, data),
+  disconnect: (clinicId, data) => api.post(`/api/clinics/${clinicId}/disconnect`, data),
 };
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {

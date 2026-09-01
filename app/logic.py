@@ -83,6 +83,7 @@ DEVICE_TYPES = {
     "switch":       {"label": "Switch",          "prefix": "SW", "icon": "🔀", "network": True},
     "access_point": {"label": "Access point",    "prefix": "AP", "icon": "📶", "network": True},
     "server":       {"label": "Server",          "prefix": "S",  "icon": "🗄",  "network": False},
+    "vm":           {"label": "Virtual machine",  "prefix": "VM", "icon": "🧊", "network": False, "vm": True},
     "workstation":  {"label": "Workstation",     "prefix": "W",  "icon": "🖥",  "network": False},
     "laptop":       {"label": "Laptop",          "prefix": "L",  "icon": "💻", "network": False},
     "wireless":     {"label": "Wireless device", "prefix": "M",  "icon": "📱", "network": False},
@@ -91,7 +92,8 @@ DEVICE_TYPES = {
     "other":        {"label": "Other",           "prefix": "O",  "icon": "📦", "network": False},
 }
 DEVICE_DESIGNATIONS = {
-    "server": ["Windows Server", "Linux", "Virtual machine (VM)", "Hypervisor", "Domain controller", "File / storage", "Backup", "Database", "EMR server", "NAS", "Other"],
+    "server": ["Windows Server", "Linux", "Hypervisor / host", "Domain controller", "File / storage", "Backup", "Database", "EMR server", "NAS", "Other"],
+    "vm": ["Windows Server", "Linux", "Domain controller", "File / storage", "Application", "Database", "EMR server", "Terminal server", "Backup", "Other"],
     "wireless": ["Cell phone", "Tablet", "Laptop (wireless only)", "Other"],
     "voip": ["Desk phone", "Cordless", "Conference phone", "Reception console"],
     "printer": ["Multifunction", "Laser", "Label printer", "Scanner"],
@@ -107,6 +109,8 @@ DEVICE_STATUSES = {"active": "Active", "spare": "Spare", "retired": "Retired"}
 LINK_TYPES_NET = {"ethernet": "Wired (Ethernet)", "wireless": "Wireless"}
 # Types whose "user" field makes sense
 USER_DEVICE_TYPES = ("workstation", "laptop", "wireless", "voip")
+# Devices whose "operating system" field is meaningful.
+OS_DEVICE_TYPES = ("workstation", "laptop", "server", "vm", "wireless", "other")
 
 
 def clinic_shorthand(clinic: dict) -> str:

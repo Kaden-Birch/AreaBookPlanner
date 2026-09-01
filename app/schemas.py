@@ -277,8 +277,9 @@ class DeviceIn(BaseModel):
     os: Optional[str] = None
     user_name: Optional[str] = None
     uplink_id: Optional[int] = None
-    link_type: Optional[Literal["ethernet", "wireless"]] = None
+    link_type: Optional[Literal["ethernet", "wireless", "virtual"]] = None
     status: DeviceStatus = "active"
+    off_site: bool = False
     services: Optional[list[str]] = None
     purchase_date: Optional[str] = None
     warranty_until: Optional[str] = None
@@ -290,6 +291,7 @@ class DeviceIn(BaseModel):
         "user_name", "uplink_id", "link_type", "purchase_date", "warranty_until", "notes", mode="before",
     )(_blank_to_none)
 
+
     @field_validator("services", mode="before")
     @classmethod
     def _services(cls, v):
@@ -298,6 +300,22 @@ class DeviceIn(BaseModel):
         if isinstance(v, str):
             v = v.replace(",", "\n").splitlines()
         return [str(x).strip() for x in v if str(x).strip()] or None
+
+
+class ConnectionIn(BaseModel):
+    """Add a secondary uplink (extra topology link) to a device."""
+    uplink_id: int
+    link_type: Optional[Literal["ethernet", "wireless", "virtual"]] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("link_type", "notes", mode="before")(_blank_to_none)
+
+
+class EdgeOp(BaseModel):
+    """Connect or disconnect two devices from the topology view. child links up to parent."""
+    child_id: int
+    parent_id: Optional[int] = None
+    link_type: Optional[Literal["ethernet", "wireless", "virtual"]] = None
 
 
 class TicketIn(BaseModel):

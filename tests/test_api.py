@@ -551,3 +551,61 @@ def test_pricebook_and_quotes(client):
     backup = client.get("/api/export/backup.json").json()
     assert backup["quotes"] and backup["price_book"]
     assert client.post("/api/import/backup", json=backup).status_code == 200
+
+
+def test_vm_offsite_connections(client):
+    cid = client.post("/api/clinics", json={"name": "VM Clinic", "shorthand": "VMC"}).json()["id"]
+    fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall"}).json()
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "uplink_id": fw["id"]}).json()
+    host = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Hypervisor / host", "uplink_id": sw["id"]}).json()
+    # VM type: auto name VMC-VM001, uplink is the host, link_type virtual
+    vm = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "vm", "designation": "EMR server", "uplink_id": host["id"], "os": "Windows Server 2022", "user_name": "EMR"}).json()
+    assert vm["name"] == "VMC-VM001" and vm["is_vm"] is True and vm["link_type_effective"] == "virtual" and vm["uplink_name"] == host["name"]
+    vm2 = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "vm", "uplink_id": host["id"]}).json()
+    assert vm2["name"] == "VMC-VM002"
+    # off-site device (a laptop at home) - not attached to the tree
+    off = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "laptop", "off_site": True, "user_name": "Dr. Home"}).json()
+    assert off["off_site"] is True
+    ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "uplink_id": sw["id"]}).json()
+
+    topo = client.get(f"/api/clinics/{cid}/topology").json()
+    node_ids = {n["id"] for n in topo["nodes"]}
+    assert off["id"] not in node_ids
+    assert [o["id"] for o in topo["offsite"]] == [off["id"]]
+    vm_node = next(n for n in topo["nodes"] if n["id"] == vm["id"])
+    assert vm_node["is_vm"] is True and vm_node["uplink_id"] == host["id"]
+    assert any(e["from"] == host["id"] and e["to"] == vm["id"] and e["link_type"] == "virtual" for e in topo["edges"])
+
+    # extra connection: give the workstation a second uplink to the firewall directly
+    r = client.post(f"/api/devices/{ws['id']}/connections", json={"uplink_id": fw["id"]})
+    assert r.status_code == 201, r.text
+    assert r.json()["connections"][0]["uplink_name"] == fw["name"]
+    assert client.post(f"/api/devices/{ws['id']}/connections", json={"uplink_id": ws['id']}).status_code == 422
+    assert client.post(f"/api/devices/{ws['id']}/connections", json={"uplink_id": sw['id']}).status_code == 422  # already primary
+    topo = client.get(f"/api/clinics/{cid}/topology").json()
+    extra = [e for e in topo["edges"] if not e["primary"]]
+    assert len(extra) == 1 and extra[0]["from"] == fw["id"] and extra[0]["to"] == ws["id"]
+    link_id = client.get(f"/api/devices/{ws['id']}").json()["connections"][0]["id"]
+    assert client.delete(f"/api/devices/{ws['id']}/connections/{link_id}").status_code == 204
+    assert client.get(f"/api/devices/{ws['id']}").json()["connections"] == []
+
+    # topology connect/disconnect: a device with no uplink -> sets primary; a second call -> extra
+    lone = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "printer"}).json()
+    assert client.post(f"/api/clinics/{cid}/connect", json={"child_id": lone["id"], "parent_id": sw["id"]}).json()["mode"] == "primary"
+    assert client.get(f"/api/devices/{lone['id']}").json()["uplink_id"] == sw["id"]
+    assert client.post(f"/api/clinics/{cid}/connect", json={"child_id": lone["id"], "parent_id": fw["id"]}).json()["mode"] == "extra"
+    assert client.post(f"/api/clinics/{cid}/disconnect", json={"child_id": lone["id"], "parent_id": fw["id"]}).json()["removed"] == "extra"
+    assert client.post(f"/api/clinics/{cid}/disconnect", json={"child_id": lone["id"], "parent_id": sw["id"]}).json()["removed"] == "primary"
+    assert client.get(f"/api/devices/{lone['id']}").json()["uplink_id"] is None
+
+    # quote counts: 1 physical server (host) + 2 VMs; VM user counted
+    counts = client.get(f"/api/clinics/{cid}/quote-defaults").json()["counts"]
+    assert counts["servers_physical"] == 1 and counts["vms"] == 2 and counts["servers_all"] == 3
+    assert "emr" in {u.lower() for u in ["EMR"]}  # sanity
+    assert counts["devices_managed"] == counts["workstations"] + counts["laptops"] + 3
+
+    # backup round-trips device_links
+    client.post(f"/api/devices/{ws['id']}/connections", json={"uplink_id": fw["id"]})
+    backup = client.get("/api/export/backup.json").json()
+    assert backup["device_links"]
+    assert client.post("/api/import/backup", json=backup).status_code == 200

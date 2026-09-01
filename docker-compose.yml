@@ -1,0 +1,16 @@
+services:
+  areabook:
+    build: .
+    container_name: areabook-planner
+    ports:
+      - "8080:8080"
+    volumes:
+      # All clinic / contact / appointment data lives in this SQLite database.
+      - areabook-data:/data
+    environment:
+      # Local timezone used for "today", "last 3 months", etc.
+      - TZ=America/Edmonton
+    restart: unless-stopped
+
+volumes:
+  areabook-data:

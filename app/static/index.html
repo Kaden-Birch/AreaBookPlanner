@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Area Book Planner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%232b6fd6'/><circle cx='50' cy='50' r='16' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-dot"></span>
+      <span>Area Book Planner</span>
+    </a>
+    <nav class="topnav" id="topnav">
+      <a href="#/" data-route="">Dashboard</a>
+      <a href="#/map" data-route="map">Map</a>
+      <a href="#/clinics" data-route="clinics">Clinics</a>
+      <a href="#/contacts" data-route="contacts">Contacts</a>
+      <a href="#/calendar" data-route="calendar">Calendar</a>
+    </nav>
+    <div class="topbar-right">
+      <button class="btn btn-primary" id="global-add-clinic">+ Clinic</button>
+      <button class="btn" id="global-add-appointment">+ Appointment</button>
+    </div>
+  </header>
+  <main id="app" class="page"></main>
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

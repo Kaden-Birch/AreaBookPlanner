@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Seed a few demo clinics around Calgary so the app has something to show.
+
+Usage:
+    python scripts/seed_demo.py                       # writes straight to the SQLite DB
+    python scripts/seed_demo.py --url http://localhost:8080   # uses the HTTP API instead
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+CLINICS = [
+    {"name": "Crowfoot Medical Clinic", "address": "400 Crowfoot Cres NW", "postal_code": "T3G 5H6",
+     "lat": 51.1235, "lng": -114.2065, "relationship": "current_client", "clinic_type": "Family practice",
+     "emr_system": "Telus Wolf", "provider_count": 8, "tags": "NW, client", "phone": "403-555-0100"},
+    {"name": "Beltline Family Practice", "address": "1121 12 Ave SW", "postal_code": "T2R 0J3",
+     "lat": 51.0413, "lng": -114.0794, "relationship": "interested", "clinic_type": "Family practice",
+     "emr_system": "Accuro", "provider_count": 5, "tags": "downtown", "next_follow_up": (datetime.now() + timedelta(days=3)).date().isoformat()},
+    {"name": "Marlborough Walk-In", "address": "1240 36 St NE", "postal_code": "T2A 6L1",
+     "lat": 51.0552, "lng": -113.9836, "relationship": "prospect", "clinic_type": "Walk-in clinic",
+     "it_provider": "In-house", "provider_count": 4, "tags": "NE, walk-in"},
+    {"name": "Southcentre Dental", "address": "100 Anderson Rd SE", "postal_code": "T2J 3V1",
+     "lat": 50.9615, "lng": -114.0715, "relationship": "prospect", "clinic_type": "Dental",
+     "provider_count": 3, "tags": "SE, dental"},
+    {"name": "Westbrook Physiotherapy", "address": "1200 37 St SW", "postal_code": "T3C 1S2",
+     "lat": 51.0378, "lng": -114.1319, "relationship": "prospect", "clinic_type": "Physiotherapy",
+     "provider_count": 2, "tags": "SW"},
+    {"name": "Bowness Medical Centre", "address": "6400 Bowness Rd NW", "postal_code": "T3B 0E3",
+     "lat": 51.0867, "lng": -114.1855, "relationship": "do_not_contact", "clinic_type": "Medical centre",
+     "notes": "Locked into a 5-year contract with another provider. Asked not to be contacted.", "tags": "NW"},
+]
+
+CONTACTS = [
+    ("Crowfoot Medical Clinic", {"first_name": "Sarah", "last_name": "Nguyen", "role": "manager", "title": "Office Manager", "phone": "403-555-0101", "email": "sarah@example.com", "is_primary": True}),
+    ("Crowfoot Medical Clinic", {"first_name": "Raj", "last_name": "Patel", "role": "doctor", "title": "MD, Lead Physician"}),
+    ("Beltline Family Practice", {"first_name": "Emily", "last_name": "Chen", "role": "receptionist", "phone": "403-555-0202"}),
+    ("Marlborough Walk-In", {"first_name": "Tom", "last_name": "Baker", "role": "owner", "mobile": "403-555-0303", "is_primary": True}),
+]
+
+def _dt(days: int, hour: int = 10) -> str:
+    d = datetime.now() + timedelta(days=days)
+    return d.replace(hour=hour, minute=0, second=0, microsecond=0).isoformat(timespec="minutes")
+
+APPOINTMENTS = [
+    ("Crowfoot Medical Clinic", {"title": "Quarterly check-in", "appt_type": "visit", "start_time": _dt(-20), "status": "completed", "outcome": "All good, discussed adding a second server."}),
+    ("Crowfoot Medical Clinic", {"title": "Server upgrade planning", "appt_type": "visit", "start_time": _dt(5, 9), "end_time": _dt(5, 10)}),
+    ("Beltline Family Practice", {"title": "Intro visit", "appt_type": "visit", "start_time": _dt(-12), "status": "completed", "outcome": "Met Emily; manager wants a quote for managed backups."}),
+    ("Beltline Family Practice", {"title": "Present quote", "appt_type": "demo", "start_time": _dt(3, 14), "end_time": _dt(3, 15), "notes": "Bring backup pricing sheet."}),
+    ("Marlborough Walk-In", {"title": "Drop-in visit", "appt_type": "visit", "start_time": _dt(-40), "status": "completed", "outcome": "Tom was busy; left a card."}),
+    ("Southcentre Dental", {"title": "Drop-in visit", "appt_type": "visit", "start_time": _dt(-150), "status": "completed", "outcome": "Not interested right now, revisit next year."}),
+]
+
+NOTES = [
+    ("Beltline Family Practice", "Emily says the office manager (Dana) is in Tue-Thu mornings."),
+    ("Marlborough Walk-In", "Their current IT person is retiring in the spring."),
+]
+
+
+def seed_via_api(base: str) -> None:
+    def post(path, body):
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read())
+
+    ids = {}
+    for c in CLINICS:
+        ids[c["name"]] = post("/api/clinics", c)["id"]
+    for name, ct in CONTACTS:
+        post("/api/contacts", {**ct, "clinic_id": ids[name]})
+    for name, a in APPOINTMENTS:
+        post("/api/appointments", {**a, "clinic_id": ids[name]})
+    for name, body in NOTES:
+        post(f"/api/clinics/{ids[name]}/notes", {"body": body})
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments via {base}")
+
+
+def seed_direct() -> None:
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        ids = {}
+        for c in CLINICS:
+            ids[c["name"]] = client.post("/api/clinics", json=c).json()["id"]
+        for name, ct in CONTACTS:
+            client.post("/api/contacts", json={**ct, "clinic_id": ids[name]})
+        for name, a in APPOINTMENTS:
+            client.post("/api/appointments", json={**a, "clinic_id": ids[name]})
+        for name, body in NOTES:
+            client.post(f"/api/clinics/{ids[name]}/notes", json={"body": body})
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", help="Base URL of a running server, e.g. http://localhost:8080")
+    args = ap.parse_args()
+    if args.url:
+        seed_via_api(args.url.rstrip("/"))
+    else:
+        seed_direct()

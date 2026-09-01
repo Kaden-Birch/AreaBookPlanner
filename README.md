@@ -101,6 +101,16 @@ and is stored in a single SQLite file.
   notes, services (for servers) and linked tickets (title + link). A list view groups
   by type; a topology view draws the network from the WAN down, dashed for wireless.
   Active counts per type are summarised for billing later.
+- **Quoting** – a price book under Settings (managed IT tiers priced per device or per
+  user, VM / physical server / firewall / switch / AP / site management, basic and BDR
+  backup, M365 backup, PrimeEMR flat or per user, hourly support rates, onboarding fee,
+  plus your own custom items; blank = $0). "Generate quote" on a clinic's Equipment card
+  pre-fills quantities from the topology; the rep picks the plan, toggles per-device or
+  per-user pricing, sets the number of supported users, tweaks any quantity or price,
+  adds discount and tax, and gets live totals. The quote document prints or saves as
+  PDF, exports CSV, tracks status (sending it moves the clinic to Proposal; accepting
+  offers to mark it Won), and can set the clinic's deal value. All quotes are listed
+  under Quotes.
 - **Dark mode** – toggle in the top bar; remembers your choice and respects the OS
   setting by default.
 - **Dashboard** – totals, forecast, pipeline summary, colour breakdown, tasks due,
@@ -177,6 +187,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `/api/views`, `/api/templates` | Saved map views, email templates |
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory |
+| `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `POST /api/route` | Optimised driving order for a set of clinics |
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
 | `GET/POST /api/clinics/{id}/notes` | Dated note log |

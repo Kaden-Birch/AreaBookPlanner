@@ -100,6 +100,24 @@ export const attachments = {
 
 export const templates = { list: () => api.get('/api/templates') };
 
+export const pricebook = {
+  get: () => api.get('/api/pricebook'),
+  save: (items) => api.put('/api/pricebook', { items }),
+  remove: (key) => api.del(`/api/pricebook/${key}`),
+};
+export const quotes = {
+  list: (params) => api.get('/api/quotes', params),
+  get: (id) => api.get(`/api/quotes/${id}`),
+  defaults: (clinicId, params) => api.get(`/api/clinics/${clinicId}/quote-defaults`, params),
+  create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/quotes`, data),
+  update: (id, data) => api.put(`/api/quotes/${id}`, data),
+  setStatus: (id, status) => api.patch(`/api/quotes/${id}/status`, { status }),
+  applyToDeal: (id) => api.post(`/api/quotes/${id}/apply-to-deal`, {}),
+  duplicate: (id) => api.post(`/api/quotes/${id}/duplicate`, {}),
+  remove: (id) => api.del(`/api/quotes/${id}`),
+  csvUrl: (id) => `/api/quotes/${id}/export.csv`,
+};
+
 let deviceMetaPromise = null;
 export const devices = {
   meta: () => (deviceMetaPromise ||= api.get('/api/meta/devices')),

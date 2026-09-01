@@ -1,16 +1,44 @@
 // Settings: your name, notifications, email templates, groups, CSV import, bulk geocoding, saved views, data.
-import { api, getMeta, clinics, settings as settingsApi } from '../api.js';
+import { api, getMeta, clinics, settings as settingsApi, pricebook } from '../api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, setTitle, getRepName, setRepName, options } from '../ui.js';
 import * as notif from '../notifications.js';
 
 export async function render(container) {
   setTitle('Settings');
-  const [templates, groups, views, geo, ai] = await Promise.all([
-    api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(),
+  const [templates, groups, views, geo, ai, pb] = await Promise.all([
+    api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(), pricebook.get(),
   ]);
   const perm = notif.permission();
   container.innerHTML = `
     <div class="page-header"><h1>Settings</h1></div>
+    <div class="card mb">
+      <div class="card-header"><h3>Quote price book</h3><span class="muted small">Monthly prices used to pre-fill every new quote. Blank = $0. Prices can still be changed on each quote.</span>
+        <div class="actions"><button class="btn btn-sm" id="pb-add">+ Custom item</button><button class="btn btn-sm btn-primary" id="pb-save">Save prices</button></div></div>
+      <div class="table-wrap"><table class="table qline-table" id="pb-table">
+        <thead><tr><th>Item</th><th>Category</th><th>Unit</th><th class="right">Price ($)</th><th>Per-user unit</th><th class="right">Per-user price ($)</th><th>Show</th><th></th></tr></thead>
+        <tbody>${pb.items.map((it, i) => `
+          <tr data-i="${i}" data-key="${attr(it.key)}" class="${it.active ? '' : 'excluded'}">
+            <td>${it.custom ? `<input class="wide" data-f="label" value="${attr(it.label)}">` : `<strong>${esc(it.label)}</strong>`}${it.description ? `<div class="unit">${esc(it.description)}</div>` : ''}</td>
+            <td>${it.custom ? `<select data-f="category">${Object.entries(pb.categories).map(([k, v]) => `<option value="${k}" ${it.category === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>` : esc(it.category_label)}</td>
+            <td>${it.custom ? `<select data-f="unit">${Object.entries(pb.units).map(([k, v]) => `<option value="${k}" ${it.unit === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>` : `<span class="unit">${esc(it.unit_label)}</span>`}</td>
+            <td class="right"><input type="number" min="0" step="0.01" data-f="price" value="${it.price ?? ''}" placeholder="0"></td>
+            <td>${it.alt_unit ? `<span class="unit">${esc(it.alt_unit_label)}</span>` : '<span class="muted">—</span>'}</td>
+            <td class="right">${it.alt_unit ? `<input type="number" min="0" step="0.01" data-f="alt_price" value="${it.alt_price ?? ''}" placeholder="0">` : ''}</td>
+            <td><input type="checkbox" data-f="active" ${it.active ? 'checked' : ''} title="Include in new quotes"></td>
+            <td>${it.custom ? `<button class="btn btn-link btn-sm" data-pb-del="${attr(it.key)}">Delete</button>` : ''}</td>
+          </tr>`).join('')}</tbody>
+      </table></div>
+      <div class="form-section"><h3>Quote document</h3>
+        <div class="field-row">
+          <div class="field"><label>Company name</label><input id="co-name" value="${attr(pb.company.name)}"></div>
+          <div class="field"><label>Tax % (GST)</label><input id="co-tax" type="number" min="0" step="0.1" value="${pb.company.tax_pct}"></div>
+          <div class="field"><label>Quotes valid for (days)</label><input id="co-valid" type="number" min="1" value="${pb.company.valid_days}"></div>
+        </div>
+        <div class="field"><label>Company contact block (address, phone, email)</label><textarea id="co-contact" rows="2" placeholder="ChinookIT · Calgary, AB · 403-555-0100 · sales@chinookit.ca">${esc(pb.company.contact)}</textarea></div>
+        <div class="field"><label>Default terms</label><textarea id="co-terms" rows="3">${esc(pb.company.terms)}</textarea></div>
+        <button class="btn" id="co-save">Save quote settings</button>
+      </div>
+    </div>
     <div class="grid-2">
       <div>
         <div class="card">
@@ -95,6 +123,39 @@ export async function render(container) {
     </div>`;
 
   const reload = () => render(container);
+  // Price book
+  const collectPb = () => [...container.querySelectorAll('#pb-table tbody tr')].map(tr => {
+    const it = pb.items[Number(tr.dataset.i)] || {};
+    const get = (f) => { const el = tr.querySelector(`[data-f=${f}]`); return el ? (el.type === 'checkbox' ? el.checked : el.value) : it[f]; };
+    return { key: tr.dataset.key || null, label: get('label'), category: get('category'), unit: get('unit'), alt_unit: it.alt_unit || null, mode_group: it.mode_group || null,
+             price: get('price') === '' ? null : Number(get('price')), alt_price: get('alt_price') === '' || get('alt_price') === undefined ? null : Number(get('alt_price')),
+             description: it.description || null, active: get('active') };
+  });
+  container.querySelector('#pb-save').onclick = async () => {
+    try { await pricebook.save(collectPb()); toast('Prices saved', 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+  };
+  container.querySelector('#pb-add').onclick = () => {
+    const tbody = container.querySelector('#pb-table tbody');
+    const i = pb.items.length;
+    pb.items.push({ key: null, label: '', category: 'extras', unit: 'per_month', custom: true, active: true });
+    tbody.insertAdjacentHTML('beforeend', `<tr data-i="${i}" data-key="">
+      <td><input class="wide" data-f="label" placeholder="Item name, e.g. Dark web monitoring"></td>
+      <td><select data-f="category">${Object.entries(pb.categories).map(([k, v]) => `<option value="${k}" ${k === 'extras' ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></td>
+      <td><select data-f="unit">${Object.entries(pb.units).map(([k, v]) => `<option value="${k}" ${k === 'per_month' ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></td>
+      <td class="right"><input type="number" min="0" step="0.01" data-f="price" placeholder="0"></td><td></td><td></td>
+      <td><input type="checkbox" data-f="active" checked></td><td></td></tr>`);
+    tbody.lastElementChild.querySelector('[data-f=label]').focus();
+  };
+  container.querySelectorAll('[data-pb-del]').forEach(b => {
+    b.onclick = async () => { if (!(await confirmDialog('Delete this custom price item?'))) return; await pricebook.remove(b.dataset.pbDel); reload(); };
+  });
+  container.querySelector('#co-save').onclick = async () => {
+    try {
+      await settingsApi.update({ company_name: container.querySelector('#co-name').value, company_contact: container.querySelector('#co-contact').value,
+        quote_terms: container.querySelector('#co-terms').value, quote_tax_pct: Number(container.querySelector('#co-tax').value), quote_valid_days: Number(container.querySelector('#co-valid').value) });
+      toast('Quote settings saved', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  };
   container.querySelector('#save-rep').onclick = () => { setRepName(container.querySelector('#rep-name').value.trim()); toast('Name saved', 'success'); };
   container.querySelector('#ai-save').onclick = async () => {
     const key = container.querySelector('#ai-key').value.trim();

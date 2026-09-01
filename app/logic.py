@@ -91,7 +91,7 @@ DEVICE_TYPES = {
     "other":        {"label": "Other",           "prefix": "O",  "icon": "📦", "network": False},
 }
 DEVICE_DESIGNATIONS = {
-    "server": ["Windows Server", "Linux", "Domain controller", "File / storage", "Backup", "Hypervisor", "Database", "EMR server", "NAS", "Other"],
+    "server": ["Windows Server", "Linux", "Virtual machine (VM)", "Hypervisor", "Domain controller", "File / storage", "Backup", "Database", "EMR server", "NAS", "Other"],
     "wireless": ["Cell phone", "Tablet", "Laptop (wireless only)", "Other"],
     "voip": ["Desk phone", "Cordless", "Conference phone", "Reception console"],
     "printer": ["Multifunction", "Laser", "Label printer", "Scanner"],
@@ -243,3 +243,79 @@ def normalize_address(s: str | None) -> str:
             "boulevard": "blvd", "northwest": "nw", "northeast": "ne", "southwest": "sw", "southeast": "se", "suite": "", "unit": ""}
     words = [repl.get(w, w) for w in s.split()]
     return " ".join(w for w in words if w)
+
+
+# ---- Quoting ------------------------------------------------------------------
+
+QUOTE_CATEGORIES = {
+    "plan": "Managed IT plan",
+    "infra": "Infrastructure",
+    "backup": "Backup & recovery",
+    "emr": "EMR",
+    "extras": "Add-ons",
+    "rates": "Support rates",
+    "onetime": "One-time",
+}
+
+# Units drive both the label and where the quantity comes from (see QTY_SOURCES).
+UNIT_LABELS = {
+    "per_device": "per managed device / month",
+    "per_user": "per user / month",
+    "per_vm": "per VM / month",
+    "per_server": "per physical server / month",
+    "per_server_all": "per server or VM / month",
+    "per_firewall": "per firewall / month",
+    "per_switch": "per switch / month",
+    "per_ap": "per access point / month",
+    "per_site": "per site / month",
+    "per_phone": "per phone / month",
+    "per_printer": "per printer / month",
+    "per_month": "flat / month",
+    "per_hour": "per hour",
+    "one_time": "one-time",
+}
+
+PRICE_BOOK_DEFAULTS = [
+    {"key": "plan_basic", "label": "Basic monitoring / light managed IT", "category": "plan", "unit": "per_device", "alt_unit": "per_user", "mode_group": "plan",
+     "description": "Monitoring, patching and remote helpdesk during business hours."},
+    {"key": "plan_standard", "label": "Standard fully managed IT", "category": "plan", "unit": "per_device", "alt_unit": "per_user", "mode_group": "plan",
+     "description": "Unlimited remote support, patching, monitoring, vendor management."},
+    {"key": "plan_healthcare", "label": "Healthcare-focused managed IT", "category": "plan", "unit": "per_device", "alt_unit": "per_user", "mode_group": "plan",
+     "description": "Standard plan plus EMR vendor liaison, privacy/compliance support and clinic-hours priority."},
+    {"key": "plan_security", "label": "High-security / 24×7 SOC / multi-site healthcare", "category": "plan", "unit": "per_device", "alt_unit": "per_user", "mode_group": "plan",
+     "description": "Healthcare plan plus 24×7 security operations, EDR/MDR and multi-site coverage."},
+    {"key": "vm", "label": "Windows/Linux VM", "category": "infra", "unit": "per_vm"},
+    {"key": "server", "label": "Physical server / hypervisor", "category": "infra", "unit": "per_server"},
+    {"key": "firewall", "label": "Firewall", "category": "infra", "unit": "per_firewall"},
+    {"key": "switch", "label": "Managed switch", "category": "infra", "unit": "per_switch"},
+    {"key": "ap", "label": "Wireless AP", "category": "infra", "unit": "per_ap"},
+    {"key": "site", "label": "General network/site management", "category": "infra", "unit": "per_site"},
+    {"key": "backup_basic", "label": "Basic server backup", "category": "backup", "unit": "per_server_all"},
+    {"key": "backup_bdr", "label": "Proper BDR / rapid-recovery backup", "category": "backup", "unit": "per_server_all"},
+    {"key": "backup_m365", "label": "M365 backup", "category": "backup", "unit": "per_user"},
+    {"key": "primeemr", "label": "PrimeEMR", "category": "emr", "unit": "per_month", "alt_unit": "per_user", "mode_group": "emr",
+     "description": "Our EMR: flat monthly rate, or per user."},
+    {"key": "edr", "label": "Endpoint protection / EDR", "category": "extras", "unit": "per_device"},
+    {"key": "email_security", "label": "Email security & spam filtering", "category": "extras", "unit": "per_user"},
+    {"key": "m365_license", "label": "Microsoft 365 licensing", "category": "extras", "unit": "per_user"},
+    {"key": "voip", "label": "VoIP phone service", "category": "extras", "unit": "per_phone"},
+    {"key": "printer_mgmt", "label": "Printer management", "category": "extras", "unit": "per_printer"},
+    {"key": "breakfix", "label": "Break/fix support", "category": "rates", "unit": "per_hour"},
+    {"key": "project", "label": "Project / senior engineering / emergency work", "category": "rates", "unit": "per_hour"},
+    {"key": "onsite", "label": "On-site technician", "category": "rates", "unit": "per_hour"},
+    {"key": "onboarding", "label": "Onboarding / setup fee", "category": "onetime", "unit": "one_time"},
+]
+
+# Which count fills the quantity for a unit.
+QTY_SOURCES = {
+    "per_device": "devices_managed", "per_user": "users", "per_vm": "vms", "per_server": "servers_physical",
+    "per_server_all": "servers_all", "per_firewall": "firewalls", "per_switch": "switches", "per_ap": "aps",
+    "per_site": "sites", "per_phone": "phones", "per_printer": "printers", "per_month": "one", "one_time": "one", "per_hour": "zero",
+}
+# Items included by default when a quote is generated.
+DEFAULT_INCLUDED = {"plan_standard", "vm", "server", "firewall", "switch", "ap", "site", "backup_basic", "backup_m365", "primeemr", "breakfix", "project", "onsite", "onboarding"}
+DEFAULT_QUOTE_TERMS = (
+    "Monthly services are billed in advance and require 30 days' notice to cancel. Hourly work is billed in "
+    "15-minute increments. Hardware, licensing and third-party costs are passed through at cost unless listed. "
+    "Prices exclude GST unless shown."
+)

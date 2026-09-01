@@ -11,6 +11,9 @@ import * as analyticsPage from './pages/analytics.js';
 import * as settingsPage from './pages/settings.js';
 import * as callSheetPage from './pages/call-sheet.js';
 import * as equipmentPage from './pages/equipment.js';
+import * as quoteBuilder from './pages/quote-builder.js';
+import * as quoteView from './pages/quote-view.js';
+import * as quotesList from './pages/quotes.js';
 import { initNotifications } from './notifications.js';
 import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
@@ -22,6 +25,10 @@ const routes = [
   { pattern: /^\/clinics$/, page: clinicsPage, nav: 'clinics' },
   { pattern: /^\/clinics\/(?<id>\d+)$/, page: clinicDetail, nav: 'clinics' },
   { pattern: /^\/clinics\/(?<id>\d+)\/equipment$/, page: equipmentPage, nav: 'clinics' },
+  { pattern: /^\/clinics\/(?<clinicId>\d+)\/quote$/, page: quoteBuilder, nav: 'quotes' },
+  { pattern: /^\/quotes\/(?<quoteId>\d+)\/edit$/, page: quoteBuilder, nav: 'quotes' },
+  { pattern: /^\/quotes\/(?<id>\d+)$/, page: quoteView, nav: 'quotes' },
+  { pattern: /^\/quotes$/, page: quotesList, nav: 'quotes' },
   { pattern: /^\/contacts$/, page: contactsPage, nav: 'contacts' },
   { pattern: /^\/calendar$/, page: calendarPage, nav: 'calendar' },
   { pattern: /^\/pipeline$/, page: pipelinePage, nav: 'pipeline' },

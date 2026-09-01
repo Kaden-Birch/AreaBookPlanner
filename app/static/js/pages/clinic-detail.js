@@ -120,11 +120,19 @@ export async function render(container, params, routeParams) {
 
         <div class="card">
           <div class="card-header"><h3>Equipment (${clinic.equipment.total})</h3>
-            <div class="actions"><button class="btn btn-sm" id="btn-device">+ Device</button><a class="btn btn-sm btn-primary" href="#/clinics/${clinic.id}/equipment">Manage</a></div></div>
+            <div class="actions"><button class="btn btn-sm" id="btn-device">+ Device</button><a class="btn btn-sm" href="#/clinics/${clinic.id}/equipment">Manage</a><a class="btn btn-sm btn-primary" href="#/clinics/${clinic.id}/quote" title="Build a monthly services quote from this equipment">💲 Generate quote</a></div></div>
           <div id="equip-chips">${Object.values(clinic.equipment.by_type).length
             ? Object.values(clinic.equipment.by_type).map(b => `<span class="type-chip ${b.active ? '' : 'muted'}">${esc(b.icon)} ${esc(plural(b.label, b.total))} <span class="n">${b.active}${b.total !== b.active ? `/${b.total}` : ''}</span></span>`).join('')
             : '<p class="muted">No equipment recorded. Add the firewall/router first, then the switch, then everything plugged into it.</p>'}</div>
           ${clinic.equipment.total ? `<div class="muted small mt">${clinic.equipment.billable.workstations} workstations/laptops · ${clinic.equipment.billable.servers} servers · ${clinic.equipment.billable.network} network · ${clinic.equipment.billable.phones} phones · ${clinic.equipment.billable.printers} printers · <a href="#/clinics/${clinic.id}/equipment?view=topology">topology</a></div>` : ''}
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Quotes (${clinic.quotes.length})</h3><div class="actions"><a class="btn btn-sm" href="#/clinics/${clinic.id}/quote">+ New quote</a></div></div>
+          ${clinic.quotes.length ? clinic.quotes.map(q => `
+            <div class="loc-row"><div class="body"><div class="name"><a href="#/quotes/${q.id}">${esc(q.number)}</a> · ${esc(q.title)} <span class="badge stamp-${esc(q.status)}" style="border:none;background:var(--surface-3)">${esc(q.status)}</span></div>
+              <div class="sub money">${fmtMoney(q.monthly_total)}/month${q.onetime_total ? ` + ${fmtMoney(q.onetime_total)} one-time` : ''} · ${esc(fmtDate(q.created_at))}${q.valid_until ? ` · valid until ${esc(fmtDateOnly(q.valid_until))}` : ''}</div></div>
+              <div class="actions"><a class="btn btn-sm" href="#/quotes/${q.id}">Open</a></div></div>`).join('') : '<p class="muted">No quotes yet. Map the equipment, then click “Generate quote”.</p>'}
         </div>
 
         <div class="card">

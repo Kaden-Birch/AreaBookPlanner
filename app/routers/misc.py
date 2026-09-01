@@ -329,6 +329,8 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "saved_views": rows_to_list(conn.execute("SELECT * FROM saved_views")),
         "devices": rows_to_list(conn.execute("SELECT * FROM devices")),
         "device_tickets": rows_to_list(conn.execute("SELECT * FROM device_tickets")),
+        "quotes": rows_to_list(conn.execute("SELECT * FROM quotes")),
+        "price_book": rows_to_list(conn.execute("SELECT * FROM price_book")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -347,10 +349,16 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
-              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_tickets"]
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_tickets", "quotes"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
+        if data.get("price_book"):
+            conn.execute("DELETE FROM price_book")
+            for row in data["price_book"]:
+                cols = ", ".join(row.keys())
+                marks = ", ".join("?" * len(row))
+                conn.execute(f"INSERT INTO price_book ({cols}) VALUES ({marks})", list(row.values()))
         for t in tables:
             for row in data.get(t, []):
                 cols = ", ".join(row.keys())
@@ -446,6 +454,15 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     for new_id, old_up in pending_uplinks:
         if old_up in device_map:
             conn.execute("UPDATE devices SET uplink_id = ? WHERE id = ?", (device_map[old_up], new_id))
+    for row in data.get("quotes", []):
+        row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["contact_id"] = contact_map.get(row.get("contact_id"))
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO quotes ({cols}) VALUES ({marks})", list(row.values()))
     for row in data.get("device_tickets", []):
         row.pop("id", None)
         if row.get("device_id") not in device_map:

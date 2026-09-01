@@ -457,3 +457,97 @@ def test_openai_param_retry(monkeypatch):
     assert out["choices"]
     assert "max_tokens" not in calls[-1] and "temperature" not in calls[-1] and calls[-1]["max_completion_tokens"] == 800
     assert len(calls) == 3
+
+
+def test_pricebook_and_quotes(client):
+    pb = client.get("/api/pricebook").json()
+    keys = {i["key"] for i in pb["items"]}
+    assert {"plan_basic", "plan_standard", "plan_healthcare", "plan_security", "breakfix", "project", "onsite", "vm", "server",
+            "firewall", "switch", "ap", "site", "backup_basic", "backup_bdr", "backup_m365", "primeemr"} <= keys
+    assert pb["company"]["name"] == "ChinookIT" and pb["company"]["tax_pct"] == 5
+    # set prices (blank = 0) and add a custom item
+    items = pb["items"]
+    price = {"plan_standard": (95, 120), "plan_healthcare": (120, 150), "firewall": (60, None), "switch": (25, None), "ap": (15, None),
+             "server": (150, None), "vm": (75, None), "site": (100, None), "backup_basic": (40, None), "backup_m365": (4, None),
+             "primeemr": (500, 40), "breakfix": (150, None), "onboarding": (1500, None), "voip": (20, None)}
+    for it in items:
+        if it["key"] in price:
+            it["price"], it["alt_price"] = price[it["key"]]
+    items.append({"label": "Dark web monitoring", "category": "extras", "unit": "per_user", "price": 2})
+    r = client.put("/api/pricebook", json={"items": items})
+    assert r.status_code == 200, r.text
+    saved = {i["key"]: i for i in r.json()["items"]}
+    assert saved["plan_standard"]["price"] == 95 and saved["plan_standard"]["alt_price"] == 120
+    assert saved["custom_dark_web_monitoring"]["custom"] is True
+    assert client.delete("/api/pricebook/plan_basic").status_code == 422
+    assert client.delete("/api/pricebook/custom_dark_web_monitoring").status_code == 204
+    client.put("/api/settings", json={"company_name": "ChinookIT Ltd", "quote_tax_pct": 5, "quote_valid_days": 45})
+
+    # a clinic with a network: fw, sw, 2 aps, 1 physical server, 1 vm, 4 workstations (3 users), 2 phones, printer, 1 extra site
+    cid = client.post("/api/clinics", json={"name": "Quote Clinic", "shorthand": "QC"}).json()["id"]
+    client.post(f"/api/clinics/{cid}/locations", json={"name": "QC South"})
+    fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall"}).json()
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "uplink_id": fw["id"]}).json()
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "access_point", "quantity": 2, "uplink_id": sw["id"]})
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Hypervisor", "uplink_id": sw["id"]})
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Virtual machine (VM)", "os": "Windows Server 2022"})
+    for u in ("Ann", "Bob", "Cy", None):
+        client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "user_name": u, "uplink_id": sw["id"]})
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "voip", "quantity": 2, "uplink_id": sw["id"]})
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "printer", "uplink_id": sw["id"]})
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "status": "retired"})
+
+    d = client.get(f"/api/clinics/{cid}/quote-defaults").json()
+    c = d["counts"]
+    assert c["firewalls"] == 1 and c["switches"] == 1 and c["aps"] == 2 and c["servers_physical"] == 1 and c["vms"] == 1
+    assert c["workstations"] == 4 and c["users"] == 3 and c["devices_managed"] == 6 and c["sites"] == 2 and c["phones"] == 2
+    L = {l["key"]: l for l in d["lines"]}
+    assert L["plan_standard"]["qty"] == 6 and L["plan_standard"]["unit_price"] == 95 and L["plan_standard"]["included"]
+    assert L["plan_healthcare"]["included"] is False
+    assert L["firewall"]["qty"] == 1 and L["ap"]["qty"] == 2 and L["site"]["qty"] == 2 and L["backup_basic"]["qty"] == 2
+    assert L["primeemr"]["qty"] == 1 and L["primeemr"]["unit_price"] == 500
+    assert L["breakfix"]["qty"] == 0 and L["onboarding"]["unit"] == "one_time"
+    assert d["company"]["name"] == "ChinookIT Ltd" and d["valid_until"] > "2026"
+    # per-user + EMR per user
+    d2 = client.get(f"/api/clinics/{cid}/quote-defaults", params={"pricing_mode": "per_user", "emr_mode": "per_user"}).json()
+    L2 = {l["key"]: l for l in d2["lines"]}
+    assert L2["plan_standard"]["unit"] == "per_user" and L2["plan_standard"]["qty"] == 3 and L2["plan_standard"]["unit_price"] == 120
+    assert L2["primeemr"]["unit"] == "per_user" and L2["primeemr"]["qty"] == 3 and L2["primeemr"]["unit_price"] == 40
+
+    # create a quote from defaults, tweak a qty
+    lines = d["lines"]
+    for l in lines:
+        if l["key"] == "plan_standard":
+            l["qty"] = 7
+    body = {"title": d["suggested_title"], "pricing_mode": "per_device", "emr_mode": "flat", "plan_key": "plan_standard", "user_count": 3,
+            "device_count": 7, "counts": c, "lines": lines, "discount_pct": 10, "tax_pct": 5, "terms": d["terms"], "prepared_by": "Kaden", "valid_until": d["valid_until"]}
+    r = client.post(f"/api/clinics/{cid}/quotes", json=body)
+    assert r.status_code == 201, r.text
+    q = r.json()
+    monthly = 7 * 95 + 1 * 75 + 1 * 150 + 60 + 25 + 2 * 15 + 2 * 100 + 2 * 40 + 3 * 4 + 500
+    assert q["totals"]["monthly_subtotal"] == monthly
+    assert q["totals"]["discount"] == round(monthly * 0.1, 2)
+    assert q["totals"]["monthly_total"] == round(monthly * 0.9 * 1.05, 2)
+    assert q["totals"]["onetime_total"] == round(1500 * 1.05, 2)
+    assert q["number"].startswith("Q-") and q["status"] == "draft"
+    # status -> sent moves stage to proposal
+    r = client.patch(f"/api/quotes/{q['id']}/status", json={"status": "sent"})
+    assert r.json()["status"] == "sent" and r.json()["sent_at"]
+    assert client.get(f"/api/clinics/{cid}").json()["stage"] == "proposal"
+    # apply to deal
+    r = client.post(f"/api/quotes/{q['id']}/apply-to-deal").json()
+    assert r["deal_value"] == q["totals"]["annual_total"]
+    assert client.get(f"/api/clinics/{cid}").json()["deal_value"] == q["totals"]["annual_total"]
+    # update, duplicate, csv, list
+    body["discount_pct"] = 0
+    assert client.put(f"/api/quotes/{q['id']}", json=body).json()["totals"]["discount"] == 0
+    dup = client.post(f"/api/quotes/{q['id']}/duplicate").json()
+    assert dup["title"].endswith("(copy)") and dup["status"] == "draft"
+    assert "Monthly total" in client.get(f"/api/quotes/{q['id']}/export.csv").text
+    lst = client.get("/api/quotes", params={"clinic_id": cid}).json()
+    assert len(lst) == 2 and "lines" not in lst[0]
+    assert client.get(f"/api/clinics/{cid}").json()["quotes"][0]["number"] == dup["number"]
+    assert client.delete(f"/api/quotes/{dup['id']}").status_code == 204
+    backup = client.get("/api/export/backup.json").json()
+    assert backup["quotes"] and backup["price_book"]
+    assert client.post("/api/import/backup", json=backup).status_code == 200

@@ -202,6 +202,51 @@ CREATE INDEX IF NOT EXISTS idx_devices_clinic ON devices(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_devices_uplink ON devices(uplink_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_device ON device_tickets(device_id);
 
+CREATE TABLE IF NOT EXISTS price_book (
+    key         TEXT PRIMARY KEY,
+    label       TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    unit        TEXT NOT NULL,
+    alt_unit    TEXT,
+    mode_group  TEXT,
+    price       REAL,
+    alt_price   REAL,
+    description TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    active      INTEGER NOT NULL DEFAULT 1,
+    custom      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS quotes (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id        INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    title            TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','accepted','declined','expired')),
+    pricing_mode     TEXT NOT NULL DEFAULT 'per_device' CHECK (pricing_mode IN ('per_device','per_user')),
+    emr_mode         TEXT NOT NULL DEFAULT 'flat' CHECK (emr_mode IN ('flat','per_user')),
+    plan_key         TEXT,
+    user_count       INTEGER NOT NULL DEFAULT 0,
+    device_count     INTEGER NOT NULL DEFAULT 0,
+    counts           TEXT,
+    lines            TEXT NOT NULL,
+    discount_pct     REAL NOT NULL DEFAULT 0,
+    tax_pct          REAL NOT NULL DEFAULT 0,
+    monthly_subtotal REAL NOT NULL DEFAULT 0,
+    monthly_total    REAL NOT NULL DEFAULT 0,
+    onetime_subtotal REAL NOT NULL DEFAULT 0,
+    onetime_total    REAL NOT NULL DEFAULT 0,
+    notes            TEXT,
+    terms            TEXT,
+    prepared_by      TEXT,
+    contact_id       INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    valid_until      TEXT,
+    sent_at          TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_quotes_clinic ON quotes(clinic_id);
+
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT
@@ -312,6 +357,16 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.executemany(
             "INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", DEFAULT_EMAIL_TEMPLATES
         )
+    # Price book: insert any built-in items that are missing (prices stay as the user set them).
+    from .logic import PRICE_BOOK_DEFAULTS
+
+    existing = {r[0] for r in conn.execute("SELECT key FROM price_book")}
+    for i, item in enumerate(PRICE_BOOK_DEFAULTS):
+        if item["key"] not in existing:
+            conn.execute(
+                "INSERT INTO price_book (key, label, category, unit, alt_unit, mode_group, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (item["key"], item["label"], item["category"], item["unit"], item.get("alt_unit"), item.get("mode_group"), item.get("description"), i * 10),
+            )
 
 
 def init_db() -> None:

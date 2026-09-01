@@ -254,6 +254,11 @@ class RouteRequest(BaseModel):
 class SettingsIn(BaseModel):
     openai_api_key: Optional[str] = None
     openai_model: Optional[str] = None
+    company_name: Optional[str] = None
+    company_contact: Optional[str] = None
+    quote_terms: Optional[str] = None
+    quote_tax_pct: Optional[float] = None
+    quote_valid_days: Optional[int] = None
 
 
 DeviceStatus = Literal["active", "spare", "retired"]
@@ -302,3 +307,59 @@ class TicketIn(BaseModel):
     notes: Optional[str] = None
 
     _blank = field_validator("url", "ticket_date", "notes", mode="before")(_blank_to_none)
+
+
+class PriceItemIn(BaseModel):
+    key: Optional[str] = None
+    label: str = Field(min_length=1, max_length=200)
+    category: str = "extras"
+    unit: str = "per_month"
+    alt_unit: Optional[str] = None
+    mode_group: Optional[str] = None
+    price: Optional[float] = None
+    alt_price: Optional[float] = None
+    description: Optional[str] = None
+    active: bool = True
+
+    _blank = field_validator("key", "alt_unit", "mode_group", "price", "alt_price", "description", mode="before")(_blank_to_none)
+
+
+class PriceBookIn(BaseModel):
+    items: list[PriceItemIn]
+
+
+class QuoteLineIn(BaseModel):
+    key: str
+    label: str
+    category: str = "extras"
+    unit: str = "per_month"
+    qty: float = 0
+    unit_price: float = 0
+    included: bool = True
+    note: Optional[str] = None
+
+    _blank = field_validator("note", mode="before")(_blank_to_none)
+
+
+class QuoteIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    pricing_mode: Literal["per_device", "per_user"] = "per_device"
+    emr_mode: Literal["flat", "per_user"] = "flat"
+    plan_key: Optional[str] = None
+    user_count: int = 0
+    device_count: int = 0
+    counts: Optional[dict] = None
+    lines: list[QuoteLineIn]
+    discount_pct: float = 0
+    tax_pct: float = 0
+    notes: Optional[str] = None
+    terms: Optional[str] = None
+    prepared_by: Optional[str] = None
+    contact_id: Optional[int] = None
+    valid_until: Optional[str] = None
+
+    _blank = field_validator("plan_key", "notes", "terms", "prepared_by", "contact_id", "valid_until", mode="before")(_blank_to_none)
+
+
+class QuoteStatusIn(BaseModel):
+    status: Literal["draft", "sent", "accepted", "declined", "expired"]

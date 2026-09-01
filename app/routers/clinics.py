@@ -201,6 +201,10 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
     from .devices import _summary as device_summary
 
     clinic["equipment"] = device_summary(conn, clinic_id)
+    clinic["quotes"] = rows_to_list(conn.execute(
+        "SELECT id, title, status, monthly_total, onetime_total, valid_until, created_at, pricing_mode FROM quotes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,)))
+    for q in clinic["quotes"]:
+        q["number"] = f"Q-{(q['created_at'] or '')[:4]}-{q['id']:04d}"
     clinic["group"] = None
     clinic["group_members"] = []
     if clinic.get("group_id"):

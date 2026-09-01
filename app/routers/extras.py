@@ -552,6 +552,10 @@ def write_settings(payload: SettingsIn, conn: sqlite3.Connection = Depends(db_de
         set_setting(conn, "openai_api_key", payload.openai_api_key.strip())
     if payload.openai_model is not None:
         set_setting(conn, "openai_model", payload.openai_model.strip() or None)
+    for k in ("company_name", "company_contact", "quote_terms", "quote_tax_pct", "quote_valid_days"):
+        v = getattr(payload, k, None)
+        if v is not None:
+            set_setting(conn, k, str(v).strip())
     return read_settings(conn)
 
 

@@ -733,3 +733,66 @@ details summary { cursor: pointer; font-weight: 600; }
   .quote-doc { border: none; padding: 0; max-width: none; color: #000; background: #fff; }
   .quote-doc tr.cat td { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ==========================================================================
+   Rack elevation
+   ========================================================================== */
+.rack-layout { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 800px) { .rack-layout { grid-template-columns: 1fr; } }
+.rack-picker { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; }
+.rack-room-group { margin-bottom: 10px; }
+.rack-room-group h4 { margin: 6px 6px 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.rack-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 7px 9px; cursor: pointer; color: var(--text); }
+.rack-pick:hover { background: var(--hover); }
+.rack-pick.active { background: var(--primary-soft); border-color: var(--primary); }
+.rack-pick-name { font-weight: 600; }
+.rack-main .card-header { flex-wrap: wrap; }
+.rack-scroll { overflow-x: auto; }
+.rack-svg { display: block; }
+.rack-frame { fill: var(--surface-2); stroke: var(--text); stroke-width: 2; }
+.rack-uline { stroke: var(--border); stroke-width: 1; }
+.rack-unum { fill: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ru-device { cursor: pointer; }
+.ru-box { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+.ru-device:hover .ru-box { stroke: var(--primary); stroke-width: 1.5; }
+.ru-device.retired .ru-box { stroke-dasharray: 4 3; opacity: .6; }
+.ru-accent { opacity: .9; }
+.ru-name { fill: var(--text); font-size: 12px; font-weight: 600; }
+.ru-sub { fill: var(--muted); font-size: 10px; }
+.ru-icon { font-size: 13px; }
+.ru-u { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ru-badge { font-size: 10px; }
+/* fills per type (box tint + accent stripe) */
+.ru-box.fill-network, .thumb-slot.fill-network { fill: color-mix(in srgb, var(--c-interested) 12%, var(--surface)); }
+.ru-box.fill-server, .thumb-slot.fill-server { fill: color-mix(in srgb, #7c5cd6 14%, var(--surface)); }
+.ru-box.fill-vm, .thumb-slot.fill-vm { fill: color-mix(in srgb, #a98be6 14%, var(--surface)); }
+.ru-box.fill-printer, .thumb-slot.fill-printer { fill: color-mix(in srgb, var(--c-stale) 14%, var(--surface)); }
+.ru-box.fill-other, .thumb-slot.fill-other { fill: var(--surface); }
+.ru-accent.fill-network { fill: var(--c-interested); }
+.ru-accent.fill-server { fill: #7c5cd6; }
+.ru-accent.fill-vm { fill: #a98be6; }
+.ru-accent.fill-printer { fill: var(--c-stale); }
+.ru-accent.fill-other { fill: var(--faint); }
+.thumb-slot.fill-network { fill: var(--c-interested); }
+.thumb-slot.fill-server { fill: #7c5cd6; }
+.thumb-slot.fill-printer { fill: var(--c-stale); }
+.thumb-slot.fill-other { fill: var(--faint); }
+.thumb-frame { fill: var(--surface-2); stroke: var(--border); }
+/* cables */
+.rack-cable { fill: none; stroke: var(--c-interested); stroke-width: 1.5; opacity: .8; }
+.rack-cable.wireless { stroke: var(--primary); stroke-dasharray: 5 4; }
+.rack-cable.virtual { stroke: #7c5cd6; stroke-dasharray: 2 3; }
+.rack-chip rect { fill: var(--surface); stroke: var(--border); }
+.rack-chip text { fill: var(--text); font-size: 11px; }
+.rack-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.rack-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.rack-legend .sw.fill-network { background: var(--c-interested); }
+.rack-legend .sw.fill-server { background: #7c5cd6; }
+.rack-legend .sw.fill-printer { background: var(--c-stale); }
+.rack-legend .cable { display: inline-block; width: 22px; border-top: 2px solid var(--c-interested); vertical-align: middle; margin-right: 4px; }
+.rack-legend .cable.wireless { border-top-style: dashed; border-color: var(--primary); }
+.rack-legend .cable.virtual { border-top-style: dotted; border-color: #7c5cd6; }
+.rack-thumbs { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
+.rack-thumb { background: none; border: 1px solid var(--border); border-radius: 10px; padding: 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rack-thumb:hover { border-color: var(--primary); }
+.rack-thumb-label { text-align: center; font-weight: 600; font-size: 13px; display: flex; flex-direction: column; }

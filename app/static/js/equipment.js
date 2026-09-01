@@ -34,6 +34,8 @@ function uplinkOptions(list, selected, excludeId) {
 export async function openDeviceForm({ clinic, device = null, initial = null, onSaved }) {
   const meta = await devices.meta();
   const { devices: all, locations, shorthand } = await devices.list(clinic.id);
+  const rackData = await devices.racks(clinic.id).catch(() => ({ rack_names: [], rooms: [] }));
+  const rackMeta = { racks: rackData.rack_names || [], rooms: rackData.rooms || [] };
   const d = { device_type: 'workstation', status: 'active', ...(device || {}), ...(initial || {}) };
   const isEdit = !!device;
   const typeOpts = Object.entries(meta.types).map(([k, v]) => `<option value="${k}" ${k === d.device_type ? 'selected' : ''}>${esc(v.icon)} ${esc(v.label)}</option>`).join('');
@@ -76,6 +78,14 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
           <div class="field"><label>Warranty until</label><input name="warranty_until" type="date" value="${attr(d.warranty_until)}"></div>
         </div>
       </div>
+      <div class="form-section rack-field"><h3>Rack placement <span class="muted small" style="font-weight:400">— optional; leave blank if it's not rack-mounted</span></h3>
+        <div class="field-row">
+          <div class="field"><label>Room</label><input name="rack_room" list="room-list" value="${attr(d.rack_room)}" placeholder="e.g. Server room"><datalist id="room-list">${(rackMeta.rooms || []).map(r => `<option value="${attr(r)}">`).join('')}</datalist></div>
+          <div class="field"><label>Rack</label><input name="rack" list="rack-list" value="${attr(d.rack)}" placeholder="e.g. Rack A"><datalist id="rack-list">${(rackMeta.racks || []).map(r => `<option value="${attr(r)}">`).join('')}</datalist></div>
+          <div class="field"><label>Bottom RU (U#)</label><input name="rack_position" type="number" min="1" max="60" value="${attr(d.rack_position ?? '')}" placeholder="e.g. 12"><div class="help">The unit number the device sits at (1 = bottom).</div></div>
+          <div class="field"><label>Height (U)</label><input name="rack_units" type="number" min="1" max="48" value="${attr(d.rack_units ?? '')}" id="rack-units" placeholder="1"><div class="help" id="rack-units-help"></div></div>
+        </div>
+      </div>
       <div class="form-section services-field"><h3>Services running on this server</h3>
         <textarea name="services" rows="3" placeholder="One per line, e.g.&#10;Active Directory&#10;File shares (\\\\COC-S001\\shared)&#10;Backup agent">${esc((d.services || []).join('\\n'))}</textarea></div>
       <div class="field mt"><label>Notes</label><textarea name="notes" rows="3" placeholder="Where it sits, quirks, passwords go in the password manager not here…">${esc(d.notes)}</textarea></div>
@@ -93,6 +103,13 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     form.querySelector('.services-field').classList.toggle('hidden', t !== 'server');
     form.querySelector('.os-field').classList.toggle('hidden', !(meta.os_types || ['workstation', 'laptop', 'server', 'vm', 'wireless', 'other']).includes(t));
     if (t === 'wireless' && !isEdit) form.querySelector('[name=link_type][value=wireless]').checked = true;
+    const rackable = !(meta.non_rackable || []).includes(t);
+    form.querySelector('.rack-field').classList.toggle('hidden', !rackable);
+    const du = (meta.default_rack_units || {})[t];
+    const ruHelp = form.querySelector('#rack-units-help');
+    if (ruHelp) ruHelp.textContent = du ? `typical: ${du}U` : '';
+    const ruEl = form.querySelector('#rack-units');
+    if (ruEl && !ruEl.value && du) ruEl.placeholder = String(du);
     // VM: uplink is the host server; the link is virtual (hide the wired/wireless radios)
     const isVm = t === 'vm';
     form.querySelector('#link-field').classList.toggle('hidden', isVm);
@@ -131,6 +148,8 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     data.location_id = data.location_id ? Number(data.location_id) : null;
     data.link_type = typeSel.value === 'vm' ? 'virtual' : form.querySelector('[name=link_type]:checked').value;
     data.off_site = form.querySelector('[name=off_site]').checked;
+    data.rack_position = data.rack_position === '' ? null : Number(data.rack_position);
+    data.rack_units = data.rack_units === '' ? null : Number(data.rack_units);
     if (!isEdit) data.quantity = Math.max(1, Number(data.quantity) || 1);
     try {
       const saved = isEdit ? await devices.update(device.id, data) : await devices.create(clinic.id, data);
@@ -179,6 +198,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
             ${d.os ? `<dt>OS</dt><dd>${esc(d.os)}</dd>` : ''}
             <dt>Hardware</dt><dd>${esc([d.manufacturer, d.model].filter(Boolean).join(' ') || '—')}</dd>
             ${d.serial ? `<dt>Serial</dt><dd class="mono">${esc(d.serial)}</dd>` : ''}
+            ${d.rack ? `<dt>Rack</dt><dd>${esc(d.rack)}${d.rack_room ? ` · ${esc(d.rack_room)}` : ''}${d.rack_position ? ` · U${d.rack_position}${d.rack_units ? `–${d.rack_position + d.rack_units - 1}` : ''}` : ''} <a href="#/clinics/${clinic.id}/racks?rack=${encodeURIComponent(d.rack)}">view rack</a></dd>` : ''}
             ${d.purchase_date ? `<dt>Purchased</dt><dd>${esc(fmtDateOnly(d.purchase_date))}</dd>` : ''}
             ${d.warranty_until ? `<dt>Warranty</dt><dd>${esc(fmtDateOnly(d.warranty_until))}${warrantyOver ? ' <span class="badge badge-overdue">expired</span>' : ''}</dd>` : ''}
             <dt>Added</dt><dd>${esc(fmtDate(d.created_at))}</dd>

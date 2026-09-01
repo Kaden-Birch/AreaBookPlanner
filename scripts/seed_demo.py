@@ -81,10 +81,10 @@ LOCATIONS = [
 
 
 EQUIPMENT = [  # (temp key, payload, uplink temp key)
-    ("fw", {"device_type": "firewall", "manufacturer": "Fortinet", "model": "FortiGate 60F", "ip_address": "192.168.10.1", "designation": "Edge firewall"}, None),
-    ("sw", {"device_type": "switch", "manufacturer": "Ubiquiti", "model": "USW-24-PoE", "ip_address": "192.168.10.2", "designation": "PoE switch"}, "fw"),
-    ("ap", {"device_type": "access_point", "manufacturer": "Ubiquiti", "model": "U6-Lite", "ip_address": "192.168.10.3"}, "sw"),
-    ("srv", {"device_type": "server", "designation": "Hypervisor / host", "manufacturer": "Dell", "model": "PowerEdge T350", "ip_address": "192.168.10.10", "os": "VMware ESXi 8"}, "sw"),
+    ("fw", {"device_type": "firewall", "manufacturer": "Fortinet", "model": "FortiGate 60F", "ip_address": "192.168.10.1", "designation": "Edge firewall", "rack": "Rack A", "rack_room": "Server room", "rack_position": 12, "rack_units": 1}, None),
+    ("sw", {"device_type": "switch", "manufacturer": "Ubiquiti", "model": "USW-24-PoE", "ip_address": "192.168.10.2", "designation": "PoE switch", "rack": "Rack A", "rack_room": "Server room", "rack_position": 11, "rack_units": 1}, "fw"),
+    ("ap", {"device_type": "access_point", "manufacturer": "Ubiquiti", "model": "U6-Lite", "ip_address": "192.168.10.3", "rack": "Rack A", "rack_room": "Server room", "rack_position": 10, "rack_units": 1}, "sw"),
+    ("srv", {"device_type": "server", "designation": "Hypervisor / host", "manufacturer": "Dell", "model": "PowerEdge T350", "ip_address": "192.168.10.10", "os": "VMware ESXi 8", "rack": "Rack A", "rack_room": "Server room", "rack_position": 4, "rack_units": 4}, "sw"),
     ("vm1", {"device_type": "vm", "designation": "Domain controller", "ip_address": "192.168.10.11", "os": "Windows Server 2022",
              "services": ["Active Directory", "DNS / DHCP", "File shares"]}, "srv"),
     ("vm2", {"device_type": "vm", "designation": "EMR server", "ip_address": "192.168.10.12", "os": "Windows Server 2022",

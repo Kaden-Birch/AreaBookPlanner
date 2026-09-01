@@ -111,6 +111,12 @@ LINK_TYPES_NET = {"ethernet": "Wired (Ethernet)", "wireless": "Wireless"}
 USER_DEVICE_TYPES = ("workstation", "laptop", "wireless", "voip")
 # Devices whose "operating system" field is meaningful.
 OS_DEVICE_TYPES = ("workstation", "laptop", "server", "vm", "wireless", "other")
+# Typical rack height (in rack units) by device type, used as the default when adding to a rack.
+DEFAULT_RACK_UNITS = {
+    "server": 2, "switch": 1, "router": 1, "firewall": 1, "access_point": 1, "printer": 0, "other": 1,
+}
+# Device types that are never physically rack-mounted (a VM lives on its host, etc.).
+NON_RACKABLE_TYPES = ("vm", "wireless", "laptop")
 
 
 def clinic_shorthand(clinic: dict) -> str:

@@ -125,6 +125,7 @@ export const devices = {
   nextName: (clinicId, deviceType) => api.get(`/api/clinics/${clinicId}/devices/next-name`, { device_type: deviceType }),
   create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/devices`, data),
   topology: (clinicId) => api.get(`/api/clinics/${clinicId}/topology`),
+  racks: (clinicId) => api.get(`/api/clinics/${clinicId}/racks`),
   csvUrl: (clinicId) => `/api/clinics/${clinicId}/devices.csv`,
   get: (id) => api.get(`/api/devices/${id}`),
   update: (id, data) => api.put(`/api/devices/${id}`, data),

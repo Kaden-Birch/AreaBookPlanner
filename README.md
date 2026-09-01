@@ -108,6 +108,13 @@ and is stored in a single SQLite file.
   can switch on **Edit connections** to draw or remove links between any two devices,
   so a device with more than one uplink can be represented accurately; the primary
   uplink still comes from the device form.
+- **Server racks** – rack-mountable devices can record a room, rack name, bottom rack
+  unit (U#) and height in Us. The Equipment page's **Racks** view lists racks by room
+  and draws each rack to scale: devices sit at their real U positions and heights,
+  empty units show, and every connection is drawn — links to other devices in the rack
+  route as cables down a side rail, while links to devices outside the rack end in a
+  labeled chip (naming the device and its rack). Wired, wireless and VM links are
+  styled distinctly.
 - **Quoting** – a price book under Settings (managed IT tiers priced per device or per
   user, VM / physical server / firewall / switch / AP / site management, basic and BDR
   backup, M365 backup, PrimeEMR flat or per user, hourly support rates, onboarding fee,

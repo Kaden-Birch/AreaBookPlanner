@@ -12,8 +12,8 @@ from fastapi.responses import Response
 
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import (
-    DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, OS_DEVICE_TYPES, USER_DEVICE_TYPES,
-    clinic_shorthand, log_event, now_iso,
+    DEFAULT_RACK_UNITS, DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, NON_RACKABLE_TYPES,
+    OS_DEVICE_TYPES, USER_DEVICE_TYPES, clinic_shorthand, log_event, now_iso,
 )
 from ..schemas import ConnectionIn, DeviceIn, EdgeOp, TicketIn
 
@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api", tags=["devices"])
 
 DEVICE_COLUMNS = [
     "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
-    "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "services", "purchase_date",
-    "warranty_until", "notes",
+    "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "rack", "rack_room",
+    "rack_position", "rack_units", "services", "purchase_date", "warranty_until", "notes",
 ]
 
 SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
@@ -150,7 +150,8 @@ def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
 @router.get("/meta/devices")
 def device_meta():
     return {"types": DEVICE_TYPES, "designations": DEVICE_DESIGNATIONS, "statuses": DEVICE_STATUSES,
-            "link_types": LINK_TYPES_NET, "user_types": list(USER_DEVICE_TYPES), "os_types": list(OS_DEVICE_TYPES)}
+            "link_types": LINK_TYPES_NET, "user_types": list(USER_DEVICE_TYPES), "os_types": list(OS_DEVICE_TYPES),
+            "default_rack_units": DEFAULT_RACK_UNITS, "non_rackable": list(NON_RACKABLE_TYPES)}
 
 
 # ---- Per clinic ---------------------------------------------------------------
@@ -338,6 +339,78 @@ def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_depende
         w.writerow(d)
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", clinic["shorthand"] or clinic["name"])
     return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{safe}-equipment.csv"'})
+
+
+# ---- Racks (physical elevation) -------------------------------------------------
+
+@router.get("/clinics/{clinic_id}/racks")
+def racks(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Group rack-mounted devices into racks, and return the links each rack needs to draw
+    (both endpoints, so a link to a device outside the rack can be shown too)."""
+    _clinic_or_404(conn, clinic_id)
+    all_devs = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.rack, d.rack_position DESC, d.name", (clinic_id,)))]
+    by_id = {d["id"]: d for d in all_devs}
+    # adjacency (primary + extra links), undirected, for drawing rack connections
+    adj: dict[int, list[tuple[int, str]]] = {}
+    def add_adj(a, b, lt):
+        adj.setdefault(a, []).append((b, lt))
+        adj.setdefault(b, []).append((a, lt))
+    for d in all_devs:
+        if d["uplink_id"] in by_id:
+            add_adj(d["id"], d["uplink_id"], "virtual" if d["device_type"] == "vm" else (d["link_type"] or "ethernet"))
+    for l in rows_to_list(conn.execute(
+        """SELECT dl.device_id, dl.uplink_id, dl.link_type FROM device_links dl JOIN devices d ON d.id = dl.device_id WHERE d.clinic_id = ?""", (clinic_id,))):
+        if l["device_id"] in by_id and l["uplink_id"] in by_id:
+            add_adj(l["device_id"], l["uplink_id"], l["link_type"] or "ethernet")
+
+    racks: dict[str, dict] = {}
+    for d in all_devs:
+        if not d.get("rack"):
+            continue
+        key = d["rack"]
+        r = racks.setdefault(key, {"name": key, "room": d.get("rack_room"), "units": 0, "devices": []})
+        if d.get("rack_room") and not r["room"]:
+            r["room"] = d["rack_room"]
+        pos = d.get("rack_position")
+        height = d.get("rack_units") or DEFAULT_RACK_UNITS.get(d["device_type"], 1) or 1
+        r["devices"].append({
+            "id": d["id"], "name": d["name"], "device_type": d["device_type"], "type_label": d["type_label"],
+            "icon": d["icon"], "designation": d["designation"], "ip_address": d["ip_address"], "status": d["status"],
+            "position": pos, "units": height, "model": d.get("model"), "user_name": d.get("user_name"),
+            "ticket_count": d["ticket_count"],
+        })
+        top = (pos or 0) + height - 1
+        if top > r["units"]:
+            r["units"] = top
+    out = []
+    for key, r in sorted(racks.items()):
+        member_ids = {dv["id"] for dv in r["devices"]}
+        r["units"] = max(r["units"], 12)  # a sensible minimum rack height
+        # links touching any device in this rack
+        seen = set()
+        links = []
+        for dv in r["devices"]:
+            for (other, lt) in adj.get(dv["id"], []):
+                pair = tuple(sorted((dv["id"], other)))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                o = by_id.get(other)
+                links.append({
+                    "a": dv["id"], "b": other, "link_type": lt,
+                    "b_in_rack": other in member_ids,
+                    "b_name": o["name"] if o else None, "b_icon": o["icon"] if o else None,
+                    "b_rack": o.get("rack") if o else None,
+                })
+        r["links"] = links
+        r["device_count"] = len(r["devices"])
+        out.append(r)
+    # devices that have a rack position but we still want a room list for the picker
+    rooms = sorted({d["rack_room"] for d in all_devs if d.get("rack_room")})
+    existing_racks = sorted({d["rack"] for d in all_devs if d.get("rack")})
+    return {"racks": out, "rooms": rooms, "rack_names": existing_racks,
+            "unracked_infra": [{"id": d["id"], "name": d["name"], "icon": d["icon"], "device_type": d["device_type"]}
+                               for d in all_devs if not d.get("rack") and d["device_type"] not in NON_RACKABLE_TYPES and d["is_network"] or (not d.get("rack") and d["device_type"] == "server")]}
 
 
 # ---- Single device --------------------------------------------------------------

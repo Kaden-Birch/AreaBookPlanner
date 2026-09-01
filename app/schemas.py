@@ -280,6 +280,10 @@ class DeviceIn(BaseModel):
     link_type: Optional[Literal["ethernet", "wireless", "virtual"]] = None
     status: DeviceStatus = "active"
     off_site: bool = False
+    rack: Optional[str] = None
+    rack_room: Optional[str] = None
+    rack_position: Optional[int] = Field(default=None, ge=1, le=60)
+    rack_units: Optional[int] = Field(default=None, ge=1, le=48)
     services: Optional[list[str]] = None
     purchase_date: Optional[str] = None
     warranty_until: Optional[str] = None
@@ -288,7 +292,8 @@ class DeviceIn(BaseModel):
 
     _blank = field_validator(
         "name", "location_id", "designation", "manufacturer", "model", "serial", "ip_address", "mac_address", "os",
-        "user_name", "uplink_id", "link_type", "purchase_date", "warranty_until", "notes", mode="before",
+        "user_name", "uplink_id", "link_type", "purchase_date", "warranty_until", "notes",
+        "rack", "rack_room", "rack_position", "rack_units", mode="before",
     )(_blank_to_none)
 
 

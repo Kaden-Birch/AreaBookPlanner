@@ -319,6 +319,10 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     ],
     "devices": [
         ("off_site", "INTEGER NOT NULL DEFAULT 0"),
+        ("rack", "TEXT"),
+        ("rack_room", "TEXT"),
+        ("rack_position", "INTEGER"),
+        ("rack_units", "INTEGER"),
     ],
     "tasks": [
         ("due_time", "TEXT"),

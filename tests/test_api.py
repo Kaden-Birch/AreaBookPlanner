@@ -266,9 +266,8 @@ def test_search_reminders_analytics_views_templates_import(client):
     soon = (datetime.now() + timedelta(minutes=30)).replace(second=0, microsecond=0).isoformat(timespec="minutes")
     cid = client.get("/api/clinics").json()[0]["id"]
     client.post("/api/appointments", json={"clinic_id": cid, "title": "Reminder test", "start_time": soon, "reminder_minutes": 15, "rep": "Kaden"})
-    today = datetime.now().date().isoformat()
-    t_time = (datetime.now() + timedelta(minutes=45)).strftime("%H:%M")
-    client.post("/api/tasks", json={"clinic_id": cid, "title": "Timed task", "due_date": today, "due_time": t_time, "reminder_minutes": 30})
+    due = datetime.now() + timedelta(minutes=45)
+    client.post("/api/tasks", json={"clinic_id": cid, "title": "Timed task", "due_date": due.date().isoformat(), "due_time": due.strftime("%H:%M"), "reminder_minutes": 30})
     rem = client.get("/api/reminders").json()
     kinds = {(i["kind"], i["title"]) for i in rem["items"]}
     assert ("appointment", "Reminder test") in kinds and ("task", "Timed task") in kinds
@@ -609,3 +608,42 @@ def test_vm_offsite_connections(client):
     backup = client.get("/api/export/backup.json").json()
     assert backup["device_links"]
     assert client.post("/api/import/backup", json=backup).status_code == 200
+
+
+def test_racks(client):
+    cid = client.post("/api/clinics", json={"name": "Rack Clinic", "shorthand": "RKC"}).json()["id"]
+    dm = client.get("/api/meta/devices").json()
+    assert dm["default_rack_units"]["server"] == 2 and "vm" in dm["non_rackable"]
+    fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall", "rack": "Rack A", "rack_room": "Server room", "rack_position": 12, "rack_units": 1}).json()
+    assert fw["rack"] == "Rack A" and fw["rack_position"] == 12
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "uplink_id": fw["id"], "rack": "Rack A", "rack_room": "Server room", "rack_position": 11}).json()
+    srv = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "uplink_id": sw["id"], "rack": "Rack A", "rack_room": "Server room", "rack_position": 5, "rack_units": 2}).json()
+    # a workstation not in the rack but linked to the switch (external link)
+    ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "uplink_id": sw["id"]}).json()
+    # a second rack in another room
+    ap = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "access_point", "uplink_id": sw["id"], "rack": "Rack B", "rack_room": "Front office", "rack_position": 1}).json()
+
+    data = client.get(f"/api/clinics/{cid}/racks").json()
+    assert [r["name"] for r in data["racks"]] == ["Rack A", "Rack B"]
+    assert set(data["rooms"]) == {"Server room", "Front office"}
+    rackA = data["racks"][0]
+    assert rackA["room"] == "Server room" and rackA["device_count"] == 3
+    assert rackA["units"] >= 12  # min height
+    srv_slot = next(d for d in rackA["devices"] if d["id"] == srv["id"])
+    assert srv_slot["position"] == 5 and srv_slot["units"] == 2
+    # links: switch<->firewall and switch<->server are in-rack; switch<->workstation is external
+    sw_links = [l for l in rackA["links"] if sw["id"] in (l["a"], l["b"])]
+    in_rack = [l for l in sw_links if l["b_in_rack"] or (l["a"] != sw["id"])]
+    ext = [l for l in rackA["links"] if not l["b_in_rack"] and ws["id"] in (l["a"], l["b"])]
+    assert any(not l["b_in_rack"] and l["b_name"] == ws["name"] for l in rackA["links"])
+    assert any(l["b_in_rack"] for l in rackA["links"])
+    # AP link to switch: switch is in Rack A, so from Rack B's view it's an external link naming the other rack
+    rackB = data["racks"][1]
+    aplink = [l for l in rackB["links"] if not l["b_in_rack"]]
+    assert aplink and aplink[0]["b_rack"] == "Rack A"
+
+    # editing a device's rack fields
+    r = client.put(f"/api/devices/{ap['id']}", json={**{k: ap[k] for k in ("device_type", "name", "status")}, "rack": "Rack B", "rack_room": "Front office", "rack_position": 3, "rack_units": 1, "uplink_id": sw["id"]})
+    assert r.status_code == 200 and r.json()["rack_position"] == 3
+    backup = client.get("/api/export/backup.json").json()
+    assert any("rack" in d for d in backup["devices"])

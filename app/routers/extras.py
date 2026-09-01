@@ -2,6 +2,7 @@
 CSV import and bulk geocoding."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -22,7 +23,7 @@ from ..logic import (
     IN_PERSON_TYPES, LINK_TYPES, OPEN_STAGES, QUICK_LOGS, REMINDER_OPTIONS, STAGE_LABELS, enrich_clinic,
     log_event, now_iso,
 )
-from ..schemas import BulkGeocodeRequest, ClinicIn, GroupIn, ImportRequest, SavedViewIn, TemplateIn
+from ..schemas import BulkGeocodeRequest, ClinicIn, GroupIn, ImportRequest, SavedViewIn, SettingsIn, TemplateIn
 from .clinics import CLINIC_COLUMNS, _sync_stage_and_relationship, find_duplicates
 from .misc import NOMINATIM_URL, USER_AGENT, CALGARY_VIEWBOX
 
@@ -501,3 +502,193 @@ def start_bulk_geocode(payload: BulkGeocodeRequest | None = None, conn: sqlite3.
 def bulk_geocode_status():
     with _geo_lock:
         return dict(_geo_state)
+
+
+# ---- Settings (server-side key/value; used for the OpenAI key) --------------
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str | None) -> None:
+    if value is None or value == "":
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+    else:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+
+
+def _mask(key: str | None) -> str | None:
+    if not key:
+        return None
+    return key[:3] + "…" + key[-4:] if len(key) > 8 else "…"
+
+
+@router.get("/settings")
+def read_settings(conn: sqlite3.Connection = Depends(db_dependency)):
+    key = get_setting(conn, "openai_api_key")
+    return {
+        "ai_configured": bool(key),
+        "openai_api_key_masked": _mask(key),
+        "openai_model": get_setting(conn, "openai_model") or DEFAULT_OPENAI_MODEL,
+    }
+
+
+@router.put("/settings")
+def write_settings(payload: SettingsIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    if payload.openai_api_key is not None:
+        set_setting(conn, "openai_api_key", payload.openai_api_key.strip())
+    if payload.openai_model is not None:
+        set_setting(conn, "openai_model", payload.openai_model.strip() or None)
+    return read_settings(conn)
+
+
+# ---- Business card scanner (OpenAI vision) -----------------------------------
+
+CARD_PROMPT = (
+    "You read business cards for a CRM. Extract the person's details and reply with ONLY a JSON object with these keys: "
+    "first_name, last_name, title, phone, extension, mobile, fax, email, website, company, address, notes. "
+    "Use null for anything not on the card. 'phone' is the main office line, 'mobile' a cell number. "
+    "Put any extension (e.g. 'ext. 204', 'x204') in 'extension' as digits only. Keep values exactly as printed."
+)
+
+ROLE_HINTS = [
+    ("manager", ("manager", "administrator", "director", "coordinator", "supervisor")),
+    ("doctor", ("dr.", "dr ", "md", "physician", "doctor", "dds", "dmd", "surgeon", "specialist")),
+    ("nurse", ("nurse", "rn", "lpn", "np")),
+    ("receptionist", ("reception", "front desk", "medical office assistant", "moa")),
+    ("owner", ("owner", "president", "ceo", "founder", "partner", "principal")),
+    ("it", ("it ", "technology", "systems", "network")),
+]
+
+
+def guess_role(title: str | None) -> str:
+    t = (title or "").lower()
+    for role, hints in ROLE_HINTS:
+        if any(h in t for h in hints):
+            return role
+    return "staff"
+
+
+@router.post("/contacts/scan-card")
+async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connection = Depends(db_dependency)):
+    key = get_setting(conn, "openai_api_key")
+    if not key:
+        raise HTTPException(status_code=400, detail="Add your OpenAI API key under Settings → AI to scan business cards.")
+    model = get_setting(conn, "openai_model") or DEFAULT_OPENAI_MODEL
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Empty image")
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image is larger than 20 MB")
+    mime = file.content_type if (file.content_type or "").startswith("image/") else "image/jpeg"
+    b64 = base64.b64encode(data).decode("ascii")
+    body = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 600,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": CARD_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Extract the contact details from this business card."},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"}},
+            ]},
+        ],
+    }
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": USER_AGENT},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "ignore")[:400]
+        try:
+            detail = json.loads(detail).get("error", {}).get("message", detail)
+        except Exception:  # noqa: BLE001
+            pass
+        raise HTTPException(status_code=502, detail=f"OpenAI error ({exc.code}): {detail}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc}") from exc
+    try:
+        text = result["choices"][0]["message"]["content"]
+        parsed = json.loads(text)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response") from exc
+
+    def clean(v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        return v or None
+
+    contact = {k: clean(parsed.get(k)) for k in ("first_name", "last_name", "title", "phone", "extension", "mobile", "fax", "email", "website", "company", "address", "notes")}
+    if contact["extension"]:
+        contact["extension"] = re.sub(r"\D", "", contact["extension"]) or None
+    contact["role"] = guess_role(contact["title"])
+    # Try to match the company to an existing clinic
+    match = None
+    if contact["company"]:
+        from .clinics import find_duplicates
+
+        dups = find_duplicates(conn, contact["company"], contact["address"], None)
+        if dups:
+            match = {"id": dups[0]["id"], "name": dups[0]["name"]}
+    return {"contact": contact, "clinic_match": match, "model": model}
+
+
+# ---- Call sheet (printable day plan) ----------------------------------------
+
+@router.get("/call-sheet")
+def call_sheet(ids: str | None = None, date: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Clinics to visit, in order, with contacts and recent notes. Either explicit ids (route order)
+    or every clinic with an appointment on a date (appointment order)."""
+    items = []
+    appts_by_clinic: dict[int, list[dict]] = defaultdict(list)
+    if ids:
+        id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    elif date:
+        rows = rows_to_list(conn.execute(
+            """SELECT a.*, c.first_name AS contact_first_name, c.last_name AS contact_last_name
+               FROM appointments a LEFT JOIN contacts c ON c.id = a.contact_id
+               WHERE a.status = 'scheduled' AND substr(a.start_time, 1, 10) = ? ORDER BY a.start_time""", (date,)))
+        id_list = []
+        for a in rows:
+            appts_by_clinic[a["clinic_id"]].append(a)
+            if a["clinic_id"] not in id_list:
+                id_list.append(a["clinic_id"])
+    else:
+        raise HTTPException(status_code=422, detail="Pass ids= or date=")
+    for cid in id_list:
+        row = row_to_dict(conn.execute("SELECT * FROM clinics WHERE id = ?", (cid,)).fetchone())
+        if not row:
+            continue
+        c = enrich_clinic(conn, row)
+        contacts = rows_to_list(conn.execute(
+            """SELECT c.*, cl.phone AS clinic_phone FROM contacts c LEFT JOIN clinics cl ON cl.id = c.clinic_id
+               WHERE c.clinic_id = ? OR (c.group_id IS NOT NULL AND c.group_id = ?)
+               ORDER BY c.is_primary DESC, c.last_name COLLATE NOCASE""", (cid, c.get("group_id"))))
+        for ct in contacts:
+            if ct.get("use_main_line") and c.get("phone"):
+                ct["phone"] = c["phone"]
+            ct["phone_display"] = (ct.get("phone") or "") + (f" ext. {ct['extension']}" if ct.get("extension") else "")
+        notes = rows_to_list(conn.execute(
+            "SELECT body, created_at, kind FROM clinic_notes WHERE clinic_id = ? ORDER BY created_at DESC LIMIT 3", (cid,)))
+        tasks = rows_to_list(conn.execute(
+            "SELECT title, due_date, priority FROM tasks WHERE clinic_id = ? AND done = 0 ORDER BY due_date IS NULL, due_date LIMIT 5", (cid,)))
+        last_visit = row_to_dict(conn.execute(
+            """SELECT title, start_time, outcome FROM appointments WHERE clinic_id = ? AND status NOT IN ('cancelled','no_show')
+               AND start_time <= ? ORDER BY start_time DESC LIMIT 1""", (cid, now_iso())).fetchone())
+        items.append({
+            "clinic": c, "contacts": contacts, "recent_notes": notes, "open_tasks": tasks,
+            "appointments": appts_by_clinic.get(cid, []), "last_appointment": last_visit,
+            "locations": rows_to_list(conn.execute("SELECT name, address, phone FROM clinic_locations WHERE clinic_id = ?", (cid,))),
+        })
+    return {"date": date, "items": items, "generated_at": now_iso()}

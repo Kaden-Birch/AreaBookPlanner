@@ -14,6 +14,7 @@ export async function render(container) {
     <div class="page-header">
       <h1>Calendar</h1>
       <div class="actions">
+        <span class="flex" title="Printable list of the clinics you're visiting on a day"><input type="date" id="sheet-date" value="${toDateInput(today)}" style="width:auto"><a class="btn" id="sheet-link" href="#/call-sheet?date=${toDateInput(today)}">🖨 Call sheet</a></span>
         <a class="btn" href="/api/export/appointments.ics" download title="Import into Outlook / Google Calendar">Export .ics</a>
         <button class="btn btn-primary" id="new-appt">+ New appointment</button>
       </div>
@@ -39,6 +40,7 @@ export async function render(container) {
     </div>`;
 
   container.querySelector('#new-appt').onclick = () => openAppointmentForm({ onSaved: load });
+  container.querySelector('#sheet-date').onchange = (e) => { container.querySelector('#sheet-link').href = `#/call-sheet?date=${e.target.value}`; };
   container.querySelector('#prev').onclick = () => { shift(-1); load(); };
   container.querySelector('#next').onclick = () => { shift(1); load(); };
   container.querySelector('#today').onclick = () => { state.year = today.getFullYear(); state.month = today.getMonth(); load(); };

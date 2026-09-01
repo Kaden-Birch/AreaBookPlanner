@@ -8,7 +8,7 @@ import {
 } from '../ui.js';
 import {
   openClinicForm, deleteClinic, openContactForm, openAppointmentForm, openLogVisit, openTaskForm, changeStage,
-  openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker,
+  openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker, openCardScanner,
 } from '../forms.js';
 import { taskRow, wireTaskRows } from './tasks.js';
 
@@ -170,7 +170,7 @@ export async function render(container, params, routeParams) {
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Contacts (${clinic.contacts.length})</h3><div class="actions"><button class="btn btn-sm" id="btn-contact-2">+ Add</button></div></div>
+          <div class="card-header"><h3>Contacts (${clinic.contacts.length})</h3><div class="actions"><button class="btn btn-sm" id="btn-scan-card" title="Photograph a business card and let AI fill in the contact">📇 Scan card</button><button class="btn btn-sm" id="btn-contact-2">+ Add</button></div></div>
           ${clinic.contacts.length ? clinic.contacts.map(ct => `
             <div class="contact-row" data-id="${ct.id}">
               <div class="body">
@@ -251,6 +251,7 @@ export async function render(container, params, routeParams) {
   const newContact = () => openContactForm({ clinicId: clinic.id, onSaved: reload });
   container.querySelector('#btn-contact').onclick = newContact;
   container.querySelector('#btn-contact-2').onclick = newContact;
+  container.querySelector('#btn-scan-card').onclick = () => openCardScanner({ clinicId: clinic.id, onSaved: reload });
   const newTask = () => openTaskForm({ clinicId: clinic.id, onSaved: reload });
   container.querySelector('#btn-task').onclick = newTask;
   container.querySelector('#btn-task-2').onclick = newTask;

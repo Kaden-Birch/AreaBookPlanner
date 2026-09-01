@@ -2,8 +2,8 @@
 import { clinics, getMeta, planRoute, driveTime, locations as locationsApi, views as viewsApi } from '../api.js';
 import {
   esc, attr, dot, fmtDate, fmtMoney, relativeDays, fullAddress, directionsUrl, pinIcon, secondaryPinIcon, toast,
-  COLOR_ORDER, COLOR_HEX, debounce, navigate, setTitle, haversineKm, getCurrentPosition, fmtKm, fmtMinutes,
-  openModal, formData, shorthandBadge, options,
+  COLOR_ORDER, COLOR_HEX, colorKey, debounce, navigate, setTitle, haversineKm, getCurrentPosition, fmtKm, fmtMinutes,
+  openModal, formData, shorthandBadge, options, fmtDateOnly,
 } from '../ui.js';
 import { openClinicForm, openAppointmentForm, quickLog, quickLogButtons } from '../forms.js';
 
@@ -22,7 +22,7 @@ let meta = null;
 let driveCache = { key: null, data: null };
 
 const state = {
-  q: '', colors: new Set(COLOR_ORDER), stages: new Set(), showLocations: true, placing: false, focusId: null,
+  q: '', colors: new Set(COLOR_ORDER), stages: new Set(), overdueOnly: false, showLocations: true, placing: false, focusId: null,
   cluster: true, heat: false,
   // Near-me filter
   near: { on: false, centre: null, mode: 'km', km: 5, min: 15, staleOnly: false, picking: false },
@@ -36,8 +36,9 @@ export async function render(container, params) {
   meta = await getMeta();
   savedViews = await viewsApi.list('map').catch(() => []);
   state.focusId = params.get('focus') ? Number(params.get('focus')) : null;
-  state.colors = params.get('color') ? new Set(params.get('color').split(',')) : new Set(COLOR_ORDER);
+  state.colors = params.get('color') ? new Set(params.get('color').split(',').map(colorKey)) : new Set(COLOR_ORDER);
   state.stages = new Set();
+  state.overdueOnly = params.get('overdue') === '1';
   if (params.get('route')) { state.route.on = true; state.route.ids = params.get('route').split(',').map(Number); }
   if (params.get('view')) { const v = savedViews.find(x => String(x.id) === params.get('view')); if (v) applyViewState(v.state); }
 
@@ -50,6 +51,8 @@ export async function render(container, params) {
             ${COLOR_ORDER.map(c => `
               <label><input type="checkbox" data-color="${c}" ${state.colors.has(c) ? 'checked' : ''}>
                 ${dot(c)} ${esc(meta.colors[c])} <span class="count" data-count="${c}"></span></label>`).join('')}
+            <label title="Pins with an orange ring have a follow-up date that has passed"><input type="checkbox" id="overdue-only" ${state.overdueOnly ? 'checked' : ''}>
+              <span class="ring-sample"></span> Follow-up overdue (ring) <span class="count" id="overdue-count"></span></label>
           </div>
           <div class="flex mt">
             <select id="stage-filter" class="grow" title="Pipeline stage">${options({ '': 'All stages', open: 'Open deals only', ...meta.stages }, state.stages.size === 4 ? 'open' : (state.stages.size === 1 ? [...state.stages][0] : ''))}</select>
@@ -108,6 +111,7 @@ export async function render(container, params) {
     applyFilters();
   };
   container.querySelector('#fit-btn').onclick = fitVisible;
+  container.querySelector('#overdue-only').onchange = (e) => { state.overdueOnly = e.target.checked; applyFilters(); };
   container.querySelector('#loc-btn').onclick = () => { state.showLocations = !state.showLocations; setActive('loc-btn', state.showLocations); applyFilters(); };
   container.querySelector('#stage-filter').onchange = (e) => {
     const v = e.target.value;
@@ -189,13 +193,14 @@ function onMapClick(e) {
 }
 
 function currentViewState() {
-  return { q: state.q, colors: [...state.colors], stages: [...state.stages], showLocations: state.showLocations,
+  return { q: state.q, colors: [...state.colors], stages: [...state.stages], overdueOnly: state.overdueOnly, showLocations: state.showLocations,
            near: { on: state.near.on, mode: state.near.mode, km: state.near.km, min: state.near.min, staleOnly: state.near.staleOnly, centre: state.near.centre } };
 }
 function applyViewState(v) {
   state.q = v.q || '';
-  state.colors = new Set(v.colors && v.colors.length ? v.colors : COLOR_ORDER);
+  state.colors = new Set(v.colors && v.colors.length ? v.colors.map(colorKey) : COLOR_ORDER);
   state.stages = new Set(v.stages || []);
+  state.overdueOnly = !!v.overdueOnly;
   state.showLocations = v.showLocations !== false;
   if (v.near) Object.assign(state.near, { on: !!v.near.on, mode: v.near.mode || 'km', km: v.near.km || 5, min: v.near.min || 15, staleOnly: !!v.near.staleOnly, centre: v.near.centre || null });
 }
@@ -203,6 +208,7 @@ function syncControls() {
   const search = document.getElementById('map-search'); if (search) search.value = state.q;
   document.querySelectorAll('#legend-filter input').forEach(cb => { cb.checked = state.colors.has(cb.dataset.color); });
   const sf = document.getElementById('stage-filter'); if (sf) sf.value = state.stages.size === meta.open_stages.length ? 'open' : (state.stages.size === 1 ? [...state.stages][0] : '');
+  const ov = document.getElementById('overdue-only'); if (ov) ov.checked = state.overdueOnly;
   setActive('loc-btn', state.showLocations);
   setActive('near-btn', state.near.on);
   document.getElementById('near-panel').classList.toggle('hidden', !state.near.on);
@@ -236,11 +242,9 @@ async function load() {
   plainLayer.clearLayers();
   clusterLayer.clearLayers();
   markers = new Map();
-  const today = new Date().toISOString().slice(0, 10);
   for (const c of allClinics) {
     if (c.lat == null || c.lng == null) continue;
-    const overdue = c.next_follow_up && c.next_follow_up < today && c.relationship !== 'do_not_contact';
-    const m = L.marker([c.lat, c.lng], { icon: pinIcon(c.color, overdue ? 'pin-overdue' : '', c.shorthand || ''), title: c.name });
+    const m = L.marker([c.lat, c.lng], { icon: pinIcon(c.color, c.follow_up_overdue ? 'pin-overdue' : '', c.shorthand || ''), title: c.name });
     m.clinic = c;
     m.bindPopup(() => popupHtml(c), { maxWidth: 320 });
     m.on('popupopen', (e) => wirePopup(e.popup.getElement(), c, m));
@@ -276,6 +280,7 @@ function nearMetric(c) {
 function matches(c) {
   if (!state.colors.has(c.color)) return false;
   if (state.stages.size && !state.stages.has(c.stage)) return false;
+  if (state.overdueOnly && !c.follow_up_overdue) return false;
   if (state.q) {
     const q = state.q.toLowerCase();
     if (![c.name, c.shorthand, c.address, c.postal_code, c.tags, c.clinic_type, c.emr_system, c.notes].some(v => v && String(v).toLowerCase().includes(q))) return false;
@@ -284,7 +289,7 @@ function matches(c) {
     const m = nearMetric(c);
     if (m == null) return false;
     if (m > (state.near.mode === 'min' ? state.near.min : state.near.km)) return false;
-    if (state.near.staleOnly && (c.color === 'blue' || c.color === 'red')) return false;
+    if (state.near.staleOnly && (c.color === 'recent' || c.color === 'dnc' || c.color === 'client')) return false;
   }
   return true;
 }
@@ -294,6 +299,7 @@ function applyFilters() {
   COLOR_ORDER.forEach(c => { counts[c] = 0; });
   allClinics.forEach(c => { counts[c.color]++; });
   document.querySelectorAll('[data-count]').forEach(el => { el.textContent = counts[el.dataset.count] || 0; });
+  const oc = document.getElementById('overdue-count'); if (oc) oc.textContent = allClinics.filter(c => c.follow_up_overdue).length;
 
   let visible = allClinics.filter(matches);
   if (state.near.on && state.near.centre) {
@@ -352,7 +358,7 @@ function renderList(list) {
       ${routeOn ? `<input type="checkbox" data-route-id="${c.id}" ${state.route.ids.includes(c.id) ? 'checked' : ''} ${c.lat == null ? 'disabled' : ''} title="Add to route">` : ''}
       ${dot(c.color, c.color_label)}
       <div class="grow">
-        <div class="name">${c.shorthand ? `<span class="badge badge-shorthand">${esc(c.shorthand)}</span> ` : ''}${esc(c.name)}</div>
+        <div class="name">${c.shorthand ? `<span class="badge badge-shorthand">${esc(c.shorthand)}</span> ` : ''}${esc(c.name)}${c.follow_up_overdue ? ` <span class="badge badge-overdue" title="Follow-up was due ${esc(fmtDateOnly(c.next_follow_up))}">Overdue</span>` : ''}</div>
         <div class="sub">${esc(c.address || 'No address')}${c.lat == null ? ' · <em>not on map</em>' : ''}${allLocations.some(l => l.clinic_id === c.id) ? ` · +${allLocations.filter(l => l.clinic_id === c.id).length} site${allLocations.filter(l => l.clinic_id === c.id).length === 1 ? '' : 's'}` : ''}</div>
         <div class="sub">${c.last_visit ? `Last visit ${esc(relativeDays(c.last_visit))}` : 'Never visited'}${c.next_appointment ? ` · Next ${esc(fmtDate(c.next_appointment.start_time))}` : ''}</div>
       </div>
@@ -412,7 +418,7 @@ function clusterIcon(cluster) {
 function popupHtml(c) {
   return `
     <div class="popup-title">${dot(c.color, c.color_label)}${shorthandBadge(c)} ${esc(c.name)}</div>
-    <p><span class="badge badge-${esc(c.color)}">${esc(c.color_label)}</span> <span class="badge badge-stage-${esc(c.stage)}">${esc(c.stage_label)}</span> ${c.clinic_type ? `<span class="badge">${esc(c.clinic_type)}</span>` : ''}</p>
+    <p><span class="badge badge-${esc(c.color)}">${esc(c.color_label)}</span> ${!c.is_client ? `<span class="badge badge-stage-${esc(c.stage)}">${esc(c.stage_label)}</span>` : ''} ${c.clinic_type ? `<span class="badge">${esc(c.clinic_type)}</span>` : ''}${c.follow_up_overdue ? ` <span class="badge badge-overdue">Follow-up overdue since ${esc(fmtDateOnly(c.next_follow_up))}</span>` : ''}</p>
     <p class="muted">${esc(fullAddress(c)) || 'No address'}</p>
     ${c.phone ? `<p>☎ <a href="tel:${attr(c.phone)}">${esc(c.phone)}</a></p>` : ''}
     ${c.deal_value ? `<p class="small money">Deal: ${fmtMoney(c.deal_value)} · ${c.effective_probability}%</p>` : ''}
@@ -545,6 +551,7 @@ function renderRoutePanel() {
       <button class="btn btn-sm btn-primary" id="route-go" ${selected.length < 1 ? 'disabled' : ''}>Optimise ${selected.length ? `(${selected.length})` : ''}</button>
       <button class="btn btn-sm" id="route-clear" ${selected.length ? '' : 'disabled'}>Clear</button>
       ${res ? `<a class="btn btn-sm" href="${attr(res.google_maps_url)}" target="_blank" rel="noopener">Open in Google Maps</a>` : ''}
+      ${selected.length ? `<a class="btn btn-sm" href="#/call-sheet?ids=${(res ? res.stops.map(s => s.id) : r.ids).join(',')}" title="Printable list of these stops with contacts and notes">🖨 Call sheet</a>` : ''}
     </div>
     ${res ? `
       <div class="small mb"><strong>${fmtKm(res.total_km)}</strong> · about <strong>${fmtMinutes(res.total_minutes)}</strong> driving${res.source === 'estimate' ? ' <span class="muted">(estimated)</span>' : ''}${res.stops.length > 10 ? ' <span class="muted">· Google Maps link limited to the first 10 stops</span>' : ''}</div>

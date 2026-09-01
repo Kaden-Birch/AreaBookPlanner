@@ -20,19 +20,19 @@ def client():
 
 def test_marker_colors():
     now = datetime(2026, 9, 1)
-    assert marker_color("do_not_contact", None, now) == "red"
-    assert marker_color("current_client", None, now) == "yellow"
-    assert marker_color("interested", None, now) == "green"
-    assert marker_color("prospect", None, now) == "white"
-    assert marker_color("prospect", (now - timedelta(days=10)).isoformat(), now) == "blue"
-    assert marker_color("prospect", (now - timedelta(days=100)).isoformat(), now) == "grey"
+    assert marker_color("do_not_contact", None, now) == "dnc"
+    assert marker_color("current_client", None, now) == "client"
+    assert marker_color("interested", None, now) == "interested"
+    assert marker_color("prospect", None, now) == "new"
+    assert marker_color("prospect", (now - timedelta(days=10)).isoformat(), now) == "recent"
+    assert marker_color("prospect", (now - timedelta(days=100)).isoformat(), now) == "stale"
 
 
 def test_clinic_contact_appointment_flow(client):
     r = client.post("/api/clinics", json={"name": "Test Clinic", "address": "123 Main St", "lat": 51.0, "lng": -114.0})
     assert r.status_code == 201, r.text
     clinic = r.json()
-    assert clinic["color"] == "white"
+    assert clinic["color"] == "new"
     cid = clinic["id"]
 
     r = client.post("/api/contacts", json={"clinic_id": cid, "first_name": "Jane", "last_name": "Doe", "role": "manager", "is_primary": True})
@@ -46,7 +46,7 @@ def test_clinic_contact_appointment_flow(client):
 
     r = client.get(f"/api/clinics/{cid}")
     detail = r.json()
-    assert detail["color"] == "blue"
+    assert detail["color"] == "recent"
     assert detail["last_visit"] == past
     assert len(detail["contacts"]) == 1 and len(detail["appointments"]) == 1
 
@@ -62,14 +62,15 @@ def test_clinic_contact_appointment_flow(client):
     assert len(client.get(f"/api/clinics/{cid}").json()["note_log"]) == 1
 
     r = client.put(f"/api/clinics/{cid}", json={**{k: v for k, v in detail.items() if k in ("name", "address")}, "relationship": "current_client"})
-    assert r.status_code == 200 and r.json()["color"] == "yellow"
+    assert r.status_code == 200 and r.json()["color"] == "client"
 
     r = client.patch(f"/api/clinics/{cid}/location", json={"lat": 51.1, "lng": -114.1})
     assert r.json()["lat"] == 51.1
 
     assert client.get("/api/clinics", params={"q": "test"}).json()[0]["id"] == cid
-    assert client.get("/api/clinics", params={"color": "yellow"}).json()
-    assert client.get("/api/clinics", params={"color": "red"}).json() == []
+    assert client.get("/api/clinics", params={"color": "client"}).json()
+    assert client.get("/api/clinics", params={"color": "yellow"}).json()  # legacy key still works
+    assert client.get("/api/clinics", params={"color": "dnc"}).json() == []
 
     assert client.get("/api/appointments", params={"upcoming": "true"}).json()[0]["title"] == "Follow up"
     d = client.get("/api/dashboard").json()
@@ -112,7 +113,7 @@ def test_pipeline_tasks_timeline_route(client):
     assert r.status_code == 200 and r.json()["stage"] == "proposal"
     r = client.patch(f"/api/clinics/{cid}/stage", json={"stage": "won", "outcome_reason": "service", "outcome_notes": "Loved the response time"})
     won = r.json()
-    assert won["stage"] == "won" and won["relationship"] == "current_client" and won["color"] == "yellow"
+    assert won["stage"] == "won" and won["relationship"] == "current_client" and won["color"] == "client"
     assert won["outcome_date"] and won["weighted_value"] == 0
 
     # relationship -> current_client implies won, and vice versa is logged
@@ -224,7 +225,7 @@ def test_clients_contacts_locations_links_groups(client):
     loc = r.json()
     assert len(client.get(f"/api/clinics/{sdi_n}").json()["locations"]) == 1
     locs = client.get("/api/locations").json()
-    assert locs[0]["clinic_name"] == "SDI North" and locs[0]["color"] == "white"
+    assert locs[0]["clinic_name"] == "SDI North" and locs[0]["color"] == "new"
     r = client.put(f"/api/clinics/{sdi_n}/locations/{loc['id']}", json={"name": "SDI Downtown (renamed)", "lat": 51.048, "lng": -114.07})
     assert r.json()["name"] == "SDI Downtown (renamed)"
     assert client.delete(f"/api/clinics/{sdi_n}/locations/{loc['id']}").status_code == 204
@@ -327,3 +328,34 @@ def test_search_reminders_analytics_views_templates_import(client):
     backup = client.get("/api/export/backup.json").json()
     assert "clinic_groups" in backup and "attachments" in backup
     assert client.post("/api/import/backup", json=backup).status_code == 200
+
+
+def test_settings_call_sheet_scan(client):
+    st = client.get("/api/settings").json()
+    assert st["ai_configured"] is False
+    r = client.put("/api/settings", json={"openai_api_key": "sk-test-1234567890abcd", "openai_model": "gpt-4o-mini"})
+    assert r.json()["ai_configured"] is True and r.json()["openai_api_key_masked"].endswith("abcd") and "sk-test-1234567890abcd" not in r.text
+    assert client.put("/api/settings", json={"openai_api_key": ""}).json()["ai_configured"] is False
+    # scanning without a key gives a clear error
+    r = client.post("/api/contacts/scan-card", files={"file": ("card.jpg", b"\xff\xd8\xff", "image/jpeg")})
+    assert r.status_code == 400 and "OpenAI API key" in r.json()["detail"]
+    from app.routers.extras import guess_role
+    assert guess_role("Office Manager") == "manager" and guess_role("Dr. Jane Lee, MD") == "doctor" and guess_role("Front Desk") == "receptionist"
+
+    # call sheet by ids and by date
+    ids = [c["id"] for c in client.get("/api/clinics").json()[:2]]
+    sheet = client.get("/api/call-sheet", params={"ids": ",".join(map(str, ids))}).json()
+    assert [i["clinic"]["id"] for i in sheet["items"]] == ids
+    assert "contacts" in sheet["items"][0] and "recent_notes" in sheet["items"][0]
+    day = (datetime.now() + timedelta(days=3)).date().isoformat()
+    client.post("/api/appointments", json={"clinic_id": ids[0], "title": "Sheet visit", "start_time": f"{day}T10:30"})
+    sheet = client.get("/api/call-sheet", params={"date": day}).json()
+    assert sheet["items"] and sheet["items"][0]["appointments"][0]["title"] == "Sheet visit"
+    assert client.get("/api/call-sheet").status_code == 422
+
+    # overdue follow-up flag + dashboard count
+    r = client.post("/api/clinics", json={"name": "Overdue Clinic", "next_follow_up": "2020-01-01"})
+    assert r.json()["follow_up_overdue"] is True
+    assert client.get("/api/dashboard").json()["overdue_follow_ups"] >= 1
+    # backup excludes settings
+    assert "settings" not in client.get("/api/export/backup.json").json()

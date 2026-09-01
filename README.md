@@ -14,15 +14,16 @@ and is stored in a single SQLite file.
 
   | Colour | Meaning |
   |--------|---------|
-  | 🟡 Yellow | Current client |
-  | 🟢 Green | Interested |
-  | 🔵 Blue | Prospect, visited in the last 3 months |
-  | ⚪ Grey | Prospect, visited but not in the last 3 months |
-  | ⚪ White | Prospect, never visited |
+  | 🟢 Green | Current client |
+  | 🔵 Dark blue | Interested |
+  | 🩵 Very pale blue | Prospect, visited recently (last 3 months) |
+  | ⚪ Grey | Prospect, visited before, but not in the last 3 months |
+  | ⚪ White | Prospect, not yet visited |
   | 🔴 Red | Do not contact |
+  | 🟠 Orange ring | Follow-up date has passed (any colour) |
 
-  Yellow, green and red are set on the clinic. Blue / grey / white are worked out
-  automatically from logged visits (in‑person appointments that were not cancelled).
+  Green, dark blue and red are set on the clinic. Pale blue / grey / white are worked
+  out automatically from logged visits (in‑person appointments that were not cancelled).
 - **Clinic profiles** – address, phone, fax, email, website, clinic type, EMR system,
   current IT provider, number of providers, priority, tags, next follow-up date,
   general notes, and a dated **note log** for calls and conversations.
@@ -86,6 +87,12 @@ and is stored in a single SQLite file.
 - **Analytics** – visits per week and month, deals won vs lost, new clinics per month,
   conversion rate, average time in each stage, and activity by rep (set your name under
   Settings).
+- **Call sheet** – print (or save as PDF) a day's stops with addresses, phone numbers,
+  contacts, recent notes and space to scribble: from the route planner, a calendar
+  day, or the filtered clinics list.
+- **Business card scanner** – snap a card and a contact form is prefilled (name, title,
+  phone/extension, mobile, email) and matched to a clinic. Uses OpenAI vision; enter
+  your API key under Settings → AI. The card image is attached to the clinic.
 - **Dark mode** – toggle in the top bar; remembers your choice and respects the OS
   setting by default.
 - **Dashboard** – totals, forecast, pipeline summary, colour breakdown, tasks due,
@@ -154,6 +161,9 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `POST /api/clinics/{id}/quick-log` | One-tap dated note |
 | `…/clinics/{id}/attachments`, `/api/attachments/{id}/file` | Documents and photos |
 | `GET /api/search?q=` | Global search |
+| `GET /api/call-sheet?ids=` / `?date=` | Printable day plan data |
+| `POST /api/contacts/scan-card` | Business card → contact fields (OpenAI) |
+| `GET/PUT /api/settings` | OpenAI key (masked on read) and model |
 | `GET /api/reminders` | Upcoming appointments/tasks for browser notifications |
 | `GET /api/analytics` | Analytics figures |
 | `/api/views`, `/api/templates` | Saved map views, email templates |

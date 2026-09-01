@@ -1,12 +1,12 @@
 // Settings: your name, notifications, email templates, groups, CSV import, bulk geocoding, saved views, data.
-import { api, getMeta, clinics } from '../api.js';
+import { api, getMeta, clinics, settings as settingsApi } from '../api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, setTitle, getRepName, setRepName, options } from '../ui.js';
 import * as notif from '../notifications.js';
 
 export async function render(container) {
   setTitle('Settings');
-  const [templates, groups, views, geo] = await Promise.all([
-    api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'),
+  const [templates, groups, views, geo, ai] = await Promise.all([
+    api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(),
   ]);
   const perm = notif.permission();
   container.innerHTML = `
@@ -18,6 +18,15 @@ export async function render(container) {
           <div class="field"><label>Your name (used for "activity by rep" and email templates)</label>
             <div class="flex"><input id="rep-name" value="${attr(getRepName())}" placeholder="e.g. Kaden" class="grow"><button class="btn" id="save-rep">Save</button></div>
             <div class="help">Stored in this browser only. Notes, appointments and tasks you create are tagged with it.</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>AI · business card scanner</h3></div>
+          <p class="small">Scanning a business card sends the photo to OpenAI, which reads the name, title, phone, extension, mobile and email into a new contact. Your key is stored on this server only and never shown again in full.</p>
+          <div class="field"><label>OpenAI API key</label>
+            <div class="flex"><input id="ai-key" type="password" class="grow" placeholder="${ai.ai_configured ? `Saved (${attr(ai.openai_api_key_masked)}) — paste a new key to replace` : 'sk-…'}" autocomplete="off"><button class="btn" id="ai-save">Save</button>${ai.ai_configured ? '<button class="btn btn-danger" id="ai-clear">Remove</button>' : ''}</div>
+            <div class="help">Get one at platform.openai.com → API keys. Status: <strong>${ai.ai_configured ? 'configured' : 'not configured'}</strong></div></div>
+          <div class="field"><label>Model</label><input id="ai-model" value="${attr(ai.openai_model)}" placeholder="gpt-4o-mini"><div class="help">Any OpenAI model that accepts images. gpt-4o-mini is cheap and accurate for cards.</div></div>
         </div>
 
         <div class="card">
@@ -87,6 +96,15 @@ export async function render(container) {
 
   const reload = () => render(container);
   container.querySelector('#save-rep').onclick = () => { setRepName(container.querySelector('#rep-name').value.trim()); toast('Name saved', 'success'); };
+  container.querySelector('#ai-save').onclick = async () => {
+    const key = container.querySelector('#ai-key').value.trim();
+    const model = container.querySelector('#ai-model').value.trim();
+    const body = { openai_model: model };
+    if (key) body.openai_api_key = key;
+    try { await settingsApi.update(body); toast('AI settings saved', 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const clearBtn = container.querySelector('#ai-clear');
+  if (clearBtn) clearBtn.onclick = async () => { if (!(await confirmDialog('Remove the stored OpenAI API key?', { okLabel: 'Remove' }))) return; await settingsApi.update({ openai_api_key: '' }); toast('Key removed'); reload(); };
   container.querySelector('#notif-enable').onclick = async () => {
     try { const p = await notif.requestPermission(); toast(p === 'granted' ? 'Notifications enabled' : 'Notifications not enabled', p === 'granted' ? 'success' : 'error'); reload(); }
     catch (e) { toast(e.message, 'error'); }

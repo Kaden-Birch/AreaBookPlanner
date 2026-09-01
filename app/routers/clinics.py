@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import (
-    LINK_TYPES, LOST_REASONS, QUICK_LOGS, RELATIONSHIP_LABELS, STAGE_LABELS, WON_REASONS, enrich_clinic,
-    log_event, normalize_address, normalize_name, now_iso,
+    LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, QUICK_LOGS, RELATIONSHIP_LABELS, STAGE_LABELS, WON_REASONS,
+    enrich_clinic, log_event, normalize_address, normalize_name, now_iso,
 )
 from ..schemas import ArchiveIn, ClinicIn, LinkIn, LocationIn, NoteIn, QuickLogIn, StageChange
 
@@ -142,7 +142,7 @@ def list_clinics(
     sql += " ORDER BY name COLLATE NOCASE ASC"
     clinics = [enrich_clinic(conn, c) for c in rows_to_list(conn.execute(sql, params))]
     if color:
-        wanted = set(color.split(","))
+        wanted = {LEGACY_COLOR_KEYS.get(k, k) for k in color.split(",")}
         clinics = [c for c in clinics if c["color"] in wanted]
     return clinics
 

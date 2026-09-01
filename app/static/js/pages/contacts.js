@@ -1,7 +1,7 @@
 // Contacts page: everyone across all clinics.
 import { contacts, clinics, getMeta } from '../api.js';
 import { esc, attr, options, debounce, setTitle } from '../ui.js';
-import { openContactForm } from '../forms.js';
+import { openContactForm, openCardScanner } from '../forms.js';
 
 let state = { q: '', role: '', clinic_id: '' };
 
@@ -15,6 +15,7 @@ export async function render(container) {
       <span class="muted" id="contact-count"></span>
       <div class="actions">
         <a class="btn" href="/api/export/contacts.csv" download>Export CSV</a>
+        <button class="btn" id="scan-card" title="Photograph a business card and let AI fill in the contact">📇 Scan card</button>
         <button class="btn btn-primary" id="add-contact">+ New contact</button>
       </div>
     </div>
@@ -29,6 +30,7 @@ export async function render(container) {
     <div class="table-wrap" id="table"></div>`;
 
   container.querySelector('#add-contact').onclick = () => openContactForm({ onSaved: load });
+  container.querySelector('#scan-card').onclick = () => openCardScanner({ onSaved: load });
   const q = container.querySelector('#q');
   q.addEventListener('input', debounce(() => { state.q = q.value; load(); }, 200));
   ['role', 'clinic_id'].forEach(k => container.querySelector(`#${k}`).addEventListener('change', (e) => { state[k] = e.target.value; load(); }));

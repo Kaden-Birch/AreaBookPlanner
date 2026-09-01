@@ -36,7 +36,8 @@ export async function render(container) {
       <div class="card">
         <div class="card-header"><h3>Clinics by status</h3><div class="actions"><a class="btn btn-sm" href="#/map">Open map</a></div></div>
         <div class="color-bar">${COLOR_ORDER.map(c => `<span style="width:${(d.by_color[c] / total) * 100}%;background:${COLOR_HEX[c]}" title="${esc(meta.colors[c])}: ${d.by_color[c]}"></span>`).join('')}</div>
-        <div class="legend">${COLOR_ORDER.map(c => `<a class="legend-item" href="#/map?color=${c}">${dot(c)} ${esc(meta.colors[c])} <span class="count">${d.by_color[c]}</span></a>`).join('')}</div>
+        <div class="legend">${COLOR_ORDER.map(c => `<a class="legend-item" href="#/map?color=${c}">${dot(c)} ${esc(meta.colors[c])} <span class="count">${d.by_color[c]}</span></a>`).join('')}
+          <a class="legend-item" href="#/map?overdue=1" title="Clinics whose follow-up date has passed"><span class="ring-sample"></span>Follow-up overdue <span class="count">${d.overdue_follow_ups}</span></a></div>
       </div>
     </div>
 

@@ -249,3 +249,8 @@ class RouteRequest(BaseModel):
     clinic_ids: list[int] = Field(min_length=1)
     start: Optional[LatLng] = None
     return_to_start: bool = False
+
+
+class SettingsIn(BaseModel):
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None

@@ -1,5 +1,5 @@
 // Modal forms for clinics, contacts and appointments (shared across pages).
-import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates } from './api.js';
+import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, settings as settingsApi } from './api.js';
 import {
   esc, attr, openModal, confirmDialog, toast, formData, showFormError, options,
   toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl,
@@ -317,10 +317,10 @@ async function clinicOptions(selected) {
     `<option value="${c.id}"${String(c.id) === String(selected) ? ' selected' : ''}>${esc(c.name)}${c.shorthand ? ` (${esc(c.shorthand)})` : ''}</option>`).join('');
 }
 
-export async function openContactForm({ contact = null, clinicId = null, onSaved } = {}) {
+export async function openContactForm({ contact = null, clinicId = null, initial = null, onSaved } = {}) {
   const meta = await getMeta();
-  const c = { role: 'staff', ...(contact || {}) };
-  if (!contact && clinicId) c.clinic_id = clinicId;
+  const c = { role: 'staff', ...(contact || {}), ...(initial || {}) };
+  if (!contact && clinicId && !c.clinic_id) c.clinic_id = clinicId;
   const isEdit = !!contact;
   const clinicOpts = await clinicOptions(c.clinic_id);
 
@@ -876,6 +876,58 @@ export async function openEmailPicker({ contact, clinic, anchor, onSent }) {
       } catch { /* ignore */ }
     };
   });
+}
+
+// ---- Business card scanner (OpenAI vision) ----------------------------------------
+
+export async function openCardScanner({ clinicId = null, onSaved } = {}) {
+  const st = await settingsApi.get().catch(() => ({ ai_configured: false }));
+  const modal = openModal({
+    title: '📇 Scan a business card',
+    size: 'modal-sm',
+    body: `
+      ${st.ai_configured ? '' : '<div class="form-warn mb">No OpenAI API key yet. Add one under <a href="#/settings">Settings → AI</a> to enable scanning.</div>'}
+      <p class="small">Take a photo of the card (or pick an image). The details are read by AI and dropped into a new contact form for you to check before saving.</p>
+      <div class="flex flex-wrap">
+        <label class="btn btn-primary" style="margin:0">📷 Take photo <input type="file" id="card-capture" class="hidden" accept="image/*" capture="environment"></label>
+        <label class="btn" style="margin:0">Choose image… <input type="file" id="card-file" class="hidden" accept="image/*"></label>
+      </div>
+      <div id="card-preview" class="mt hidden"><img id="card-img" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--border)"></div>
+      <div id="card-status" class="mt small muted"></div>`,
+    footer: `<button class="btn" data-act="cancel">Cancel</button>`,
+  });
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const status = modal.body.querySelector('#card-status');
+  const handle = async (file) => {
+    if (!file) return;
+    const prev = modal.body.querySelector('#card-preview');
+    prev.classList.remove('hidden');
+    modal.body.querySelector('#card-img').src = URL.createObjectURL(file);
+    status.textContent = 'Reading the card…';
+    try {
+      const res = await scanCard(file);
+      const ct = res.contact;
+      const initial = {
+        first_name: ct.first_name || '', last_name: ct.last_name || '', title: ct.title || '', role: ct.role || 'staff',
+        phone: ct.phone || '', extension: ct.extension || '', mobile: ct.mobile || '', email: ct.email || '',
+        notes: [ct.company ? `Company on card: ${ct.company}` : null, ct.address ? `Address on card: ${ct.address}` : null, ct.website ? ct.website : null, ct.notes].filter(Boolean).join('\n'),
+        clinic_id: clinicId || (res.clinic_match ? res.clinic_match.id : null),
+      };
+      status.textContent = `Found ${[ct.first_name, ct.last_name].filter(Boolean).join(' ') || 'a contact'}${res.clinic_match && !clinicId ? ` · matched clinic “${res.clinic_match.name}”` : ''}. Opening the contact form…`;
+      modal.close();
+      openContactForm({
+        initial,
+        onSaved: async (saved) => {
+          // Keep the card image with the clinic for reference.
+          const cid = saved && saved.clinic_id;
+          if (cid) { try { await attachments.upload(cid, file, `Business card: ${saved.full_name || ''}`, 'photo'); } catch { /* ignore */ } }
+          onSaved && onSaved(saved);
+        },
+      });
+    } catch (e) { status.innerHTML = `<span class="form-error" style="display:block">${esc(e.message)}</span>`; }
+  };
+  modal.body.querySelector('#card-capture').onchange = (e) => handle(e.target.files[0]);
+  modal.body.querySelector('#card-file').onchange = (e) => handle(e.target.files[0]);
 }
 
 export const debouncedSearch = debounce;

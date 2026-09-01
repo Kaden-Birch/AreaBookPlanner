@@ -16,8 +16,8 @@ from fastapi.responses import PlainTextResponse, Response
 
 from ..database import db_dependency, rows_to_list
 from ..logic import (
-    COLOR_LABELS, DEFAULT_PROBABILITY, LINK_TYPES, LOST_REASONS, OPEN_STAGES, QUICK_LOGS, RELATIONSHIP_LABELS,
-    REMINDER_OPTIONS, STAGE_LABELS, WON_REASONS, enrich_clinic, now_iso,
+    COLOR_LABELS, DEFAULT_PROBABILITY, LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, OPEN_STAGES, QUICK_LOGS,
+    RELATIONSHIP_LABELS, REMINDER_OPTIONS, STAGE_LABELS, WON_REASONS, enrich_clinic, now_iso,
 )
 from ..schemas import RouteRequest
 from .appointments import STATUS_LABELS, TYPE_LABELS
@@ -43,6 +43,7 @@ def meta():
     return {
         "relationships": RELATIONSHIP_LABELS,
         "colors": COLOR_LABELS,
+        "legacy_colors": LEGACY_COLOR_KEYS,
         "contact_roles": ROLE_LABELS,
         "appointment_types": TYPE_LABELS,
         "appointment_statuses": STATUS_LABELS,
@@ -144,7 +145,7 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
     stale = [
         {"id": c["id"], "name": c["name"], "last_visit": c["last_visit"], "color": c["color"], "priority": c["priority"]}
         for c in clinics
-        if c["color"] == "grey" or (c["relationship"] == "interested" and (
+        if c["color"] == "stale" or (c["relationship"] == "interested" and (
             not c["last_visit"] or c["last_visit"] < (datetime.now() - timedelta(days=90)).isoformat()))
     ]
     stale.sort(key=lambda x: (x["last_visit"] or ""))
@@ -219,6 +220,7 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
         "upcoming": upcoming,
         "needs_outcome": needs_outcome,
         "follow_ups": follow_ups,
+        "overdue_follow_ups": sum(1 for c in clinics if c["follow_up_overdue"]),
         "stale": stale[:20],
         "unmapped": unmapped,
     }

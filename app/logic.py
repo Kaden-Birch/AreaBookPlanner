@@ -8,14 +8,22 @@ from datetime import datetime, timedelta
 IN_PERSON_TYPES = ("visit", "demo", "install", "support")
 RECENT_VISIT_DAYS = 90
 
+# Map colour keys are semantic; the actual hues live in the stylesheet / ui.js.
+#   client      green          current client
+#   interested  dark blue      interested
+#   recent      very pale blue prospect visited in the last 3 months
+#   stale       grey           prospect visited, but not in the last 3 months
+#   new         white          prospect never visited
+#   dnc         red            do not contact
 COLOR_LABELS = {
-    "yellow": "Current client",
-    "green": "Interested",
-    "blue": "Visited in last 3 months",
-    "grey": "Visited, not in last 3 months",
-    "white": "Not yet visited",
-    "red": "Do not contact",
+    "client": "Current client",
+    "interested": "Interested",
+    "recent": "Visited recently (last 3 months)",
+    "stale": "Visited before (not in last 3 months)",
+    "new": "Not yet visited",
+    "dnc": "Do not contact",
 }
+LEGACY_COLOR_KEYS = {"yellow": "client", "green": "interested", "blue": "recent", "grey": "stale", "white": "new", "red": "dnc"}
 
 STAGE_LABELS = {
     "prospect": "Prospect",
@@ -83,22 +91,22 @@ def now_iso() -> str:
 def marker_color(relationship: str, last_visit: str | None, now: datetime | None = None) -> str:
     """Map colour per the ChinookIT relationship rules."""
     if relationship == "do_not_contact":
-        return "red"
+        return "dnc"
     if relationship == "current_client":
-        return "yellow"
+        return "client"
     if relationship == "interested":
-        return "green"
+        return "interested"
     # prospect: colour depends on visit recency
     if not last_visit:
-        return "white"
+        return "new"
     now = now or datetime.now()
     try:
         visited = datetime.fromisoformat(last_visit)
     except ValueError:
-        return "white"
+        return "new"
     if now - visited <= timedelta(days=RECENT_VISIT_DAYS):
-        return "blue"
-    return "grey"
+        return "recent"
+    return "stale"
 
 
 def visit_stats(conn: sqlite3.Connection, clinic_id: int) -> dict:
@@ -138,6 +146,8 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
     clinic.update(stats)
     clinic["color"] = marker_color(clinic["relationship"], stats["last_visit"])
     clinic["color_label"] = COLOR_LABELS[clinic["color"]]
+    today = now_iso()[:10]
+    clinic["follow_up_overdue"] = bool(clinic.get("next_follow_up")) and clinic["next_follow_up"] < today and clinic["relationship"] != "do_not_contact"
     clinic["relationship_label"] = RELATIONSHIP_LABELS.get(clinic["relationship"], clinic["relationship"])
     clinic["tag_list"] = [t.strip() for t in (clinic.get("tags") or "").split(",") if t.strip()]
     clinic["archived"] = bool(clinic.get("archived"))

@@ -9,6 +9,7 @@ import * as pipelinePage from './pages/pipeline.js';
 import * as tasksPage from './pages/tasks.js';
 import * as analyticsPage from './pages/analytics.js';
 import * as settingsPage from './pages/settings.js';
+import * as callSheetPage from './pages/call-sheet.js';
 import { initNotifications } from './notifications.js';
 import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
@@ -25,6 +26,7 @@ const routes = [
   { pattern: /^\/tasks$/, page: tasksPage, nav: 'tasks' },
   { pattern: /^\/analytics$/, page: analyticsPage, nav: 'analytics' },
   { pattern: /^\/settings$/, page: settingsPage, nav: 'settings' },
+  { pattern: /^\/call-sheet$/, page: callSheetPage, nav: 'calendar' },
 ];
 
 let current = null;

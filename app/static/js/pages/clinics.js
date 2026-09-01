@@ -13,6 +13,7 @@ export async function render(container) {
       <h1>Clinics</h1>
       <span class="muted" id="clinic-count"></span>
       <div class="actions">
+        <a class="btn" id="sheet-btn" href="#/clinics" title="Printable call sheet of the clinics currently listed">🖨 Call sheet</a>
         <a class="btn" href="/api/export/clinics.csv" download>Export CSV</a>
         <button class="btn btn-primary" id="add-clinic">+ New clinic</button>
       </div>
@@ -46,6 +47,8 @@ const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 async function load() {
   const list = await clinics.list({ q: state.q, relationship: state.relationship, color: state.color, stage: state.stage });
   document.getElementById('clinic-count').textContent = `${list.length} clinic${list.length === 1 ? '' : 's'}`;
+  const sheetBtn = document.getElementById('sheet-btn');
+  if (sheetBtn) { sheetBtn.href = `#/call-sheet?ids=${list.slice(0, 60).map(c => c.id).join(',')}`; sheetBtn.classList.toggle('hidden', !list.length); }
   const el = document.getElementById('table');
   if (!list.length) { el.innerHTML = '<div class="card empty">No clinics yet. Click “+ New clinic” to add your first one.</div>'; return; }
 

@@ -99,6 +99,15 @@ export const attachments = {
 };
 
 export const templates = { list: () => api.get('/api/templates') };
+export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
+export async function scanCard(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/contacts/scan-card', { method: 'POST', body: fd });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(extractError(data) || `${res.status} ${res.statusText}`);
+  return data;
+}
 export const views = {
   list: (page) => api.get('/api/views', { page }),
   create: (data) => api.post('/api/views', data),

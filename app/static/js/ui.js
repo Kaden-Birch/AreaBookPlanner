@@ -1,9 +1,17 @@
 // Shared UI helpers: escaping, formatting, modals, toasts, confirm dialogs.
 
+// Semantic colour keys -> hues. Keep in sync with the .dot-*/.pin-*/.badge-* classes in app.css.
 export const COLOR_HEX = {
-  yellow: '#f5c400', green: '#2e9e44', blue: '#2b6fd6', grey: '#8a8f98', white: '#ffffff', red: '#d9342b',
+  client: '#2e9e44',      // green
+  interested: '#1e3f8f',  // dark blue
+  recent: '#b3d7f7',      // very pale blue
+  stale: '#8a8f98',       // grey
+  new: '#ffffff',         // white
+  dnc: '#d9342b',         // red
 };
-export const COLOR_ORDER = ['yellow', 'green', 'blue', 'grey', 'white', 'red'];
+export const COLOR_ORDER = ['client', 'interested', 'recent', 'stale', 'new', 'dnc'];
+const LEGACY_COLORS = { yellow: 'client', green: 'interested', blue: 'recent', grey: 'stale', white: 'new', red: 'dnc' };
+export function colorKey(k) { return LEGACY_COLORS[k] || k; }
 
 export function esc(v) {
   if (v === null || v === undefined) return '';

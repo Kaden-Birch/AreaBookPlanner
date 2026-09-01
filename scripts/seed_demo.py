@@ -80,6 +80,38 @@ LOCATIONS = [
 ]
 
 
+EQUIPMENT = [  # (temp key, payload, uplink temp key)
+    ("fw", {"device_type": "firewall", "manufacturer": "Fortinet", "model": "FortiGate 60F", "ip_address": "192.168.10.1", "designation": "Edge firewall"}, None),
+    ("sw", {"device_type": "switch", "manufacturer": "Ubiquiti", "model": "USW-24-PoE", "ip_address": "192.168.10.2", "designation": "PoE switch"}, "fw"),
+    ("ap", {"device_type": "access_point", "manufacturer": "Ubiquiti", "model": "U6-Lite", "ip_address": "192.168.10.3"}, "sw"),
+    ("srv", {"device_type": "server", "designation": "Windows Server", "manufacturer": "Dell", "model": "PowerEdge T350", "ip_address": "192.168.10.10", "os": "Windows Server 2022",
+             "services": ["Active Directory", "DNS / DHCP", "File shares", "EMR (Telus Wolf) server", "Backup agent"]}, "sw"),
+    ("v1", {"device_type": "voip", "user_name": "Reception", "ip_address": "192.168.10.51", "designation": "Reception console"}, "sw"),
+    ("w1", {"device_type": "workstation", "user_name": "Reception", "designation": "Front desk", "ip_address": "192.168.10.21", "os": "Windows 11 Pro", "manufacturer": "Dell", "model": "OptiPlex 7010"}, "v1"),
+    ("v2", {"device_type": "voip", "user_name": "Sarah Nguyen", "ip_address": "192.168.10.52"}, "sw"),
+    ("w2", {"device_type": "workstation", "user_name": "Sarah Nguyen", "designation": "Office", "ip_address": "192.168.10.22", "os": "Windows 11 Pro"}, "v2"),
+    ("w3", {"device_type": "workstation", "user_name": "Dr. Patel", "designation": "Exam room 1", "ip_address": "192.168.10.23", "os": "Windows 11 Pro"}, "sw"),
+    ("w4", {"device_type": "workstation", "designation": "Exam room 2", "ip_address": "192.168.10.24", "os": "Windows 11 Pro"}, "sw"),
+    ("p1", {"device_type": "printer", "manufacturer": "HP", "model": "LaserJet M479", "ip_address": "192.168.10.40", "designation": "Multifunction"}, "sw"),
+    ("l1", {"device_type": "laptop", "user_name": "Dr. Patel", "ip_address": "192.168.10.61", "os": "Windows 11 Pro", "link_type": "wireless"}, "ap"),
+    ("m1", {"device_type": "wireless", "user_name": "Dr. Patel", "designation": "Cell phone", "link_type": "wireless"}, "ap"),
+    ("old", {"device_type": "workstation", "designation": "Old lab PC", "status": "retired", "notes": "Replaced Jan 2026, kept as spare parts."}, None),
+]
+TICKETS = [("srv", {"title": "Backup job failing on Sundays", "url": "https://tickets.example.com/4412", "ticket_date": "2026-06-14"}),
+           ("p1", {"title": "Paper jams on tray 2", "ticket_date": "2026-07-02"})]
+
+
+def _seed_equipment(post, clinic_id: int) -> None:
+    ids = {}
+    for key, payload, up in EQUIPMENT:
+        body = dict(payload)
+        if up:
+            body["uplink_id"] = ids[up]
+        ids[key] = post(f"/api/clinics/{clinic_id}/devices", body)["id"]
+    for key, t in TICKETS:
+        post(f"/api/devices/{ids[key]}/tickets", t)
+
+
 def seed_via_api(base: str) -> None:
     def post(path, body):
         req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
@@ -100,6 +132,7 @@ def seed_via_api(base: str) -> None:
     for name, loc in LOCATIONS:
         post(f"/api/clinics/{ids[name]}/locations", loc)
     post(f"/api/clinics/{ids['Beltline Family Practice']}/links", {"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
+    _seed_equipment(post, ids["Crowfoot Medical Clinic"])
     print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks via {base}")
 
 
@@ -122,6 +155,7 @@ def seed_direct() -> None:
         for name, loc in LOCATIONS:
             client.post(f"/api/clinics/{ids[name]}/locations", json=loc)
         client.post(f"/api/clinics/{ids['Beltline Family Practice']}/links", json={"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
+        _seed_equipment(lambda path, body: client.post(path, json=body).json(), ids["Crowfoot Medical Clinic"])
     print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks")
 
 

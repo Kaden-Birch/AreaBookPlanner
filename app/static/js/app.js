@@ -10,6 +10,7 @@ import * as tasksPage from './pages/tasks.js';
 import * as analyticsPage from './pages/analytics.js';
 import * as settingsPage from './pages/settings.js';
 import * as callSheetPage from './pages/call-sheet.js';
+import * as equipmentPage from './pages/equipment.js';
 import { initNotifications } from './notifications.js';
 import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
@@ -20,6 +21,7 @@ const routes = [
   { pattern: /^\/map$/, page: mapPage, nav: 'map' },
   { pattern: /^\/clinics$/, page: clinicsPage, nav: 'clinics' },
   { pattern: /^\/clinics\/(?<id>\d+)$/, page: clinicDetail, nav: 'clinics' },
+  { pattern: /^\/clinics\/(?<id>\d+)\/equipment$/, page: equipmentPage, nav: 'clinics' },
   { pattern: /^\/contacts$/, page: contactsPage, nav: 'contacts' },
   { pattern: /^\/calendar$/, page: calendarPage, nav: 'calendar' },
   { pattern: /^\/pipeline$/, page: pipelinePage, nav: 'pipeline' },

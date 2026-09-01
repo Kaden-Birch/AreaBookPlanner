@@ -176,9 +176,18 @@ def search(q: str, limit: int = 8, conn: sqlite3.Connection = Depends(db_depende
     locations = rows_to_list(conn.execute(
         """SELECT l.id, l.name, l.address, l.clinic_id, cl.name AS clinic_name FROM clinic_locations l
            JOIN clinics cl ON cl.id = l.clinic_id WHERE l.name LIKE ? OR l.address LIKE ? LIMIT ?""", (like, like, limit)))
+    devices = rows_to_list(conn.execute(
+        """SELECT d.id, d.name, d.device_type, d.ip_address, d.user_name, d.clinic_id, cl.name AS clinic_name FROM devices d
+           JOIN clinics cl ON cl.id = d.clinic_id
+           WHERE d.name LIKE ? OR d.ip_address LIKE ? OR d.user_name LIKE ? OR d.serial LIKE ? OR d.model LIKE ? LIMIT ?""",
+        (like, like, like, like, like, limit)))
+    from ..logic import DEVICE_TYPES
+    for d in devices:
+        d["icon"] = DEVICE_TYPES.get(d["device_type"], DEVICE_TYPES["other"])["icon"]
     return {
+        "devices": devices,
         "clinics": [{"id": c["id"], "name": c["name"], "shorthand": c["shorthand"], "address": c["address"], "color": c["color"], "color_label": c["color_label"]} for c in clinics],
-        "contacts": contacts, "notes": notes, "tasks": tasks, "locations": locations,
+        "contacts": contacts, "notes": notes, "tasks": tasks, "locations": locations, "devices": devices,
     }
 
 

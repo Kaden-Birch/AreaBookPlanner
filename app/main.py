@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
-from .routers import appointments, clinics, contacts, extras, misc, tasks
+from .routers import appointments, clinics, contacts, devices, extras, misc, tasks
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -27,6 +27,7 @@ app.include_router(contacts.router)
 app.include_router(appointments.router)
 app.include_router(tasks.router)
 app.include_router(extras.router)
+app.include_router(devices.router)
 app.include_router(misc.router)
 
 

@@ -162,6 +162,46 @@ CREATE TABLE IF NOT EXISTS email_templates (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS devices (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id      INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    location_id    INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    device_type    TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    number         INTEGER,
+    designation    TEXT,
+    manufacturer   TEXT,
+    model          TEXT,
+    serial         TEXT,
+    ip_address     TEXT,
+    mac_address    TEXT,
+    os             TEXT,
+    user_name      TEXT,
+    uplink_id      INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    link_type      TEXT CHECK (link_type IN ('ethernet','wireless') OR link_type IS NULL),
+    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','spare','retired')),
+    services       TEXT,
+    purchase_date  TEXT,
+    warranty_until TEXT,
+    notes          TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS device_tickets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    url         TEXT,
+    ticket_date TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_clinic ON devices(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_devices_uplink ON devices(uplink_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_device ON device_tickets(device_id);
+
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT

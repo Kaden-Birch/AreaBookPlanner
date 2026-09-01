@@ -99,6 +99,21 @@ export const attachments = {
 };
 
 export const templates = { list: () => api.get('/api/templates') };
+
+let deviceMetaPromise = null;
+export const devices = {
+  meta: () => (deviceMetaPromise ||= api.get('/api/meta/devices')),
+  list: (clinicId, params) => api.get(`/api/clinics/${clinicId}/devices`, params),
+  nextName: (clinicId, deviceType) => api.get(`/api/clinics/${clinicId}/devices/next-name`, { device_type: deviceType }),
+  create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/devices`, data),
+  topology: (clinicId) => api.get(`/api/clinics/${clinicId}/topology`),
+  csvUrl: (clinicId) => `/api/clinics/${clinicId}/devices.csv`,
+  get: (id) => api.get(`/api/devices/${id}`),
+  update: (id, data) => api.put(`/api/devices/${id}`, data),
+  remove: (id) => api.del(`/api/devices/${id}`),
+  addTicket: (id, data) => api.post(`/api/devices/${id}/tickets`, data),
+  removeTicket: (id, ticketId) => api.del(`/api/devices/${id}/tickets/${ticketId}`),
+};
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {
   const fd = new FormData();

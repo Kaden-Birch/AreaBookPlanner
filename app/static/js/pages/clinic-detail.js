@@ -11,6 +11,8 @@ import {
   openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker, openCardScanner,
 } from '../forms.js';
 import { taskRow, wireTaskRows } from './tasks.js';
+import { openDeviceForm, plural } from '../equipment.js';
+import { devices as devicesApi } from '../api.js';
 
 let miniMap = null;
 let tlFilter = 'all';
@@ -114,6 +116,15 @@ export async function render(container, params, routeParams) {
             <dt>Next follow-up</dt><dd>${clinic.next_follow_up ? `${esc(fmtDateOnly(clinic.next_follow_up))} ${clinic.next_follow_up < today ? badge('Overdue', 'badge-red') : ''}` : '—'}</dd>
             <dt>Added</dt><dd>${esc(fmtDate(clinic.created_at))}</dd>
           </dl>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Equipment (${clinic.equipment.total})</h3>
+            <div class="actions"><button class="btn btn-sm" id="btn-device">+ Device</button><a class="btn btn-sm btn-primary" href="#/clinics/${clinic.id}/equipment">Manage</a></div></div>
+          <div id="equip-chips">${Object.values(clinic.equipment.by_type).length
+            ? Object.values(clinic.equipment.by_type).map(b => `<span class="type-chip ${b.active ? '' : 'muted'}">${esc(b.icon)} ${esc(plural(b.label, b.total))} <span class="n">${b.active}${b.total !== b.active ? `/${b.total}` : ''}</span></span>`).join('')
+            : '<p class="muted">No equipment recorded. Add the firewall/router first, then the switch, then everything plugged into it.</p>'}</div>
+          ${clinic.equipment.total ? `<div class="muted small mt">${clinic.equipment.billable.workstations} workstations/laptops · ${clinic.equipment.billable.servers} servers · ${clinic.equipment.billable.network} network · ${clinic.equipment.billable.phones} phones · ${clinic.equipment.billable.printers} printers · <a href="#/clinics/${clinic.id}/equipment?view=topology">topology</a></div>` : ''}
         </div>
 
         <div class="card">
@@ -258,6 +269,7 @@ export async function render(container, params, routeParams) {
   const visitBtn = container.querySelector('#btn-visit');
   if (visitBtn) visitBtn.onclick = () => openLogVisit({ clinic, onSaved: reload });
   container.querySelector('#btn-location').onclick = () => openLocationForm({ clinic, onSaved: reload });
+  container.querySelector('#btn-device').onclick = () => openDeviceForm({ clinic, onSaved: reload });
   container.querySelector('#btn-link').onclick = () => openLinkForm({ clinic, onSaved: reload });
   wireTaskRows(container.querySelector('#task-list'), clinic.tasks, reload);
   container.querySelectorAll('[data-quick]').forEach(b => { b.onclick = () => quickLog(clinic, b.dataset.quick, reload); });

@@ -76,6 +76,48 @@ QUICK_LOGS = {
 
 REMINDER_OPTIONS = [15, 30, 45, 60]
 
+# Equipment / network devices. prefix feeds the naming template {SHORTHAND}-{PREFIX}{NNN}.
+DEVICE_TYPES = {
+    "firewall":     {"label": "Firewall",        "prefix": "FW", "icon": "🛡",  "network": True},
+    "router":       {"label": "Router",          "prefix": "R",  "icon": "📡", "network": True},
+    "switch":       {"label": "Switch",          "prefix": "SW", "icon": "🔀", "network": True},
+    "access_point": {"label": "Access point",    "prefix": "AP", "icon": "📶", "network": True},
+    "server":       {"label": "Server",          "prefix": "S",  "icon": "🗄",  "network": False},
+    "workstation":  {"label": "Workstation",     "prefix": "W",  "icon": "🖥",  "network": False},
+    "laptop":       {"label": "Laptop",          "prefix": "L",  "icon": "💻", "network": False},
+    "wireless":     {"label": "Wireless device", "prefix": "M",  "icon": "📱", "network": False},
+    "voip":         {"label": "VoIP phone",      "prefix": "V",  "icon": "☎",  "network": False},
+    "printer":      {"label": "Printer",         "prefix": "P",  "icon": "🖨",  "network": False},
+    "other":        {"label": "Other",           "prefix": "O",  "icon": "📦", "network": False},
+}
+DEVICE_DESIGNATIONS = {
+    "server": ["Windows Server", "Linux", "Domain controller", "File / storage", "Backup", "Hypervisor", "Database", "EMR server", "NAS", "Other"],
+    "wireless": ["Cell phone", "Tablet", "Laptop (wireless only)", "Other"],
+    "voip": ["Desk phone", "Cordless", "Conference phone", "Reception console"],
+    "printer": ["Multifunction", "Laser", "Label printer", "Scanner"],
+    "workstation": ["Front desk", "Exam room", "Office", "Nursing station", "Lab"],
+    "laptop": ["Provider", "Admin", "Loaner"],
+    "firewall": ["Edge firewall", "UTM"],
+    "router": ["ISP modem/router", "Edge router", "VPN router"],
+    "switch": ["Core switch", "Access switch", "PoE switch"],
+    "access_point": ["Ceiling AP", "Guest Wi-Fi", "Mesh node"],
+    "other": ["UPS", "NAS", "Camera", "Door controller", "Smart TV"],
+}
+DEVICE_STATUSES = {"active": "Active", "spare": "Spare", "retired": "Retired"}
+LINK_TYPES_NET = {"ethernet": "Wired (Ethernet)", "wireless": "Wireless"}
+# Types whose "user" field makes sense
+USER_DEVICE_TYPES = ("workstation", "laptop", "wireless", "voip")
+
+
+def clinic_shorthand(clinic: dict) -> str:
+    """Shorthand for naming; falls back to initials of the clinic name."""
+    sh = (clinic.get("shorthand") or "").strip().upper()
+    if sh:
+        return sh
+    words = [w for w in (clinic.get("name") or "").replace("-", " ").split() if w[0].isalnum()]
+    initials = "".join(w[0] for w in words)[:3].upper()
+    return initials or "CLN"
+
 RELATIONSHIP_LABELS = {
     "current_client": "Current client",
     "interested": "Interested",

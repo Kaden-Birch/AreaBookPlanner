@@ -1,0 +1,302 @@
+"""Equipment inventory: devices per clinic with uplink/downlink topology, services, users and tickets."""
+from __future__ import annotations
+
+import csv
+import io
+import json
+import re
+import sqlite3
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
+
+from ..database import db_dependency, row_to_dict, rows_to_list
+from ..logic import (
+    DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, USER_DEVICE_TYPES, clinic_shorthand,
+    log_event, now_iso,
+)
+from ..schemas import DeviceIn, TicketIn
+
+router = APIRouter(prefix="/api", tags=["devices"])
+
+DEVICE_COLUMNS = [
+    "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
+    "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "services", "purchase_date",
+    "warranty_until", "notes",
+]
+
+SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
+                   (SELECT COUNT(*) FROM devices x WHERE x.uplink_id = d.id) AS downlink_count,
+                   (SELECT COUNT(*) FROM device_tickets t WHERE t.device_id = d.id) AS ticket_count
+            FROM devices d LEFT JOIN devices u ON u.id = d.uplink_id
+            LEFT JOIN clinic_locations l ON l.id = d.location_id"""
+
+
+def _clinic_or_404(conn: sqlite3.Connection, clinic_id: int) -> dict:
+    row = row_to_dict(conn.execute("SELECT * FROM clinics WHERE id = ?", (clinic_id,)).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Clinic not found")
+    return row
+
+
+def _decorate(row: dict) -> dict:
+    t = DEVICE_TYPES.get(row["device_type"], DEVICE_TYPES["other"])
+    row["type_label"] = t["label"]
+    row["icon"] = t["icon"]
+    row["is_network"] = t["network"]
+    row["status_label"] = DEVICE_STATUSES.get(row["status"], row["status"])
+    row["link_label"] = LINK_TYPES_NET.get(row.get("link_type") or "", None)
+    try:
+        row["services"] = json.loads(row["services"]) if row.get("services") else []
+    except (TypeError, ValueError):
+        row["services"] = []
+    row["uplink_icon"] = DEVICE_TYPES.get(row.get("uplink_type") or "", {}).get("icon")
+    return row
+
+
+def _get_or_404(conn: sqlite3.Connection, device_id: int) -> dict:
+    row = row_to_dict(conn.execute(f"{SELECT} WHERE d.id = ?", (device_id,)).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return _decorate(row)
+
+
+def next_number(conn: sqlite3.Connection, clinic_id: int, device_type: str) -> int:
+    row = conn.execute("SELECT MAX(number) FROM devices WHERE clinic_id = ? AND device_type = ?", (clinic_id, device_type)).fetchone()
+    return (row[0] or 0) + 1
+
+
+def template_name(clinic: dict, device_type: str, number: int) -> str:
+    prefix = DEVICE_TYPES.get(device_type, DEVICE_TYPES["other"])["prefix"]
+    return f"{clinic_shorthand(clinic)}-{prefix}{number:03d}"
+
+
+def _parse_number(clinic: dict, device_type: str, name: str) -> int | None:
+    prefix = DEVICE_TYPES.get(device_type, DEVICE_TYPES["other"])["prefix"]
+    m = re.fullmatch(rf"{re.escape(clinic_shorthand(clinic))}-{re.escape(prefix)}(\d+)", name.strip(), re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def _check_uplink(conn: sqlite3.Connection, clinic_id: int, device_id: int | None, uplink_id: int | None) -> None:
+    if uplink_id is None:
+        return
+    if device_id is not None and uplink_id == device_id:
+        raise HTTPException(status_code=422, detail="A device cannot be its own uplink")
+    up = conn.execute("SELECT id, clinic_id, uplink_id FROM devices WHERE id = ?", (uplink_id,)).fetchone()
+    if up is None or up["clinic_id"] != clinic_id:
+        raise HTTPException(status_code=422, detail="Uplink must be a device at the same clinic")
+    # Walk up the chain to make sure we are not creating a loop.
+    seen = set()
+    cur = up
+    while cur is not None and cur["uplink_id"] is not None:
+        if cur["uplink_id"] == device_id or cur["uplink_id"] in seen:
+            raise HTTPException(status_code=422, detail="That uplink would create a loop (the device is already upstream of it)")
+        seen.add(cur["id"])
+        cur = conn.execute("SELECT id, clinic_id, uplink_id FROM devices WHERE id = ?", (cur["uplink_id"],)).fetchone()
+
+
+def _validate(conn: sqlite3.Connection, clinic_id: int, data: dict) -> None:
+    if data["device_type"] not in DEVICE_TYPES:
+        raise HTTPException(status_code=422, detail="Unknown device type")
+    if data.get("location_id") is not None:
+        ok = conn.execute("SELECT 1 FROM clinic_locations WHERE id = ? AND clinic_id = ?", (data["location_id"], clinic_id)).fetchone()
+        if not ok:
+            raise HTTPException(status_code=422, detail="Location does not belong to this clinic")
+    if data.get("ip_address") and not re.fullmatch(r"[0-9a-fA-F:.]{3,45}(/\d{1,3})?", data["ip_address"]):
+        raise HTTPException(status_code=422, detail="IP address doesn't look valid")
+    if data.get("uplink_id") is not None and not data.get("link_type"):
+        data["link_type"] = "wireless" if data["device_type"] in ("wireless",) else "ethernet"
+    if data.get("uplink_id") is None:
+        data["link_type"] = None
+
+
+def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
+    rows = conn.execute(
+        "SELECT device_type, status, COUNT(*) AS n FROM devices WHERE clinic_id = ? GROUP BY device_type, status", (clinic_id,)).fetchall()
+    by_type = {t: {"label": v["label"], "icon": v["icon"], "prefix": v["prefix"], "active": 0, "spare": 0, "retired": 0, "total": 0} for t, v in DEVICE_TYPES.items()}
+    for r in rows:
+        b = by_type[r["device_type"]] if r["device_type"] in by_type else by_type["other"]
+        b[r["status"]] += r["n"]
+        b["total"] += r["n"]
+    return {
+        "by_type": {t: v for t, v in by_type.items() if v["total"]},
+        "total": sum(v["total"] for v in by_type.values()),
+        "active": sum(v["active"] for v in by_type.values()),
+        "billable": {
+            "workstations": by_type["workstation"]["active"] + by_type["laptop"]["active"],
+            "servers": by_type["server"]["active"],
+            "network": sum(by_type[t]["active"] for t in ("firewall", "router", "switch", "access_point")),
+            "phones": by_type["voip"]["active"],
+            "printers": by_type["printer"]["active"],
+        },
+    }
+
+
+# ---- Meta -------------------------------------------------------------------
+
+@router.get("/meta/devices")
+def device_meta():
+    return {"types": DEVICE_TYPES, "designations": DEVICE_DESIGNATIONS, "statuses": DEVICE_STATUSES,
+            "link_types": LINK_TYPES_NET, "user_types": list(USER_DEVICE_TYPES)}
+
+
+# ---- Per clinic ---------------------------------------------------------------
+
+@router.get("/clinics/{clinic_id}/devices")
+def list_devices(clinic_id: int, q: str | None = None, device_type: str | None = None, status: str | None = None,
+                 conn: sqlite3.Connection = Depends(db_dependency)):
+    clinic = _clinic_or_404(conn, clinic_id)
+    sql = f"{SELECT} WHERE d.clinic_id = ?"
+    params: list = [clinic_id]
+    if q:
+        like = f"%{q.strip()}%"
+        sql += " AND (d.name LIKE ? OR d.ip_address LIKE ? OR d.user_name LIKE ? OR d.serial LIKE ? OR d.model LIKE ? OR d.designation LIKE ? OR d.notes LIKE ?)"
+        params += [like] * 7
+    if device_type:
+        sql += " AND d.device_type = ?"
+        params.append(device_type)
+    if status:
+        sql += " AND d.status = ?"
+        params.append(status)
+    sql += " ORDER BY d.device_type, d.number, d.name COLLATE NOCASE"
+    devices = [_decorate(r) for r in rows_to_list(conn.execute(sql, params))]
+    return {"devices": devices, "summary": _summary(conn, clinic_id), "shorthand": clinic_shorthand(clinic),
+            "locations": rows_to_list(conn.execute("SELECT id, name FROM clinic_locations WHERE clinic_id = ? ORDER BY name", (clinic_id,)))}
+
+
+@router.get("/clinics/{clinic_id}/devices/next-name")
+def next_name(clinic_id: int, device_type: str, conn: sqlite3.Connection = Depends(db_dependency)):
+    clinic = _clinic_or_404(conn, clinic_id)
+    if device_type not in DEVICE_TYPES:
+        raise HTTPException(status_code=422, detail="Unknown device type")
+    n = next_number(conn, clinic_id, device_type)
+    return {"name": template_name(clinic, device_type, n), "number": n, "shorthand": clinic_shorthand(clinic),
+            "template": f"{{shorthand}}-{DEVICE_TYPES[device_type]['prefix']}{{number:03}}"}
+
+
+@router.post("/clinics/{clinic_id}/devices", status_code=201)
+def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    clinic = _clinic_or_404(conn, clinic_id)
+    data = payload.model_dump()
+    qty = data.pop("quantity", 1)
+    _validate(conn, clinic_id, data)
+    _check_uplink(conn, clinic_id, None, data.get("uplink_id"))
+    created = []
+    for i in range(qty):
+        d = dict(data)
+        n = next_number(conn, clinic_id, d["device_type"])
+        if d.get("name") and qty == 1:
+            parsed = _parse_number(clinic, d["device_type"], d["name"])
+            d["number"] = parsed if parsed is not None else n
+        else:
+            d["name"] = template_name(clinic, d["device_type"], n)
+            d["number"] = n
+        d["services"] = json.dumps(d["services"]) if d.get("services") else None
+        cols = ", ".join(["clinic_id", *DEVICE_COLUMNS])
+        marks = ", ".join("?" * (len(DEVICE_COLUMNS) + 1))
+        cur = conn.execute(f"INSERT INTO devices ({cols}) VALUES ({marks})", [clinic_id] + [d.get(c) for c in DEVICE_COLUMNS])
+        created.append(_get_or_404(conn, cur.lastrowid))
+    label = DEVICE_TYPES[data["device_type"]]["label"]
+    log_event(conn, clinic_id, "equipment", f"Added {len(created)} {label.lower()}{'s' if len(created) > 1 else ''}: " + ", ".join(c["name"] for c in created[:5]) + ("…" if len(created) > 5 else ""))
+    return created if qty > 1 else created[0]
+
+
+@router.get("/clinics/{clinic_id}/topology")
+def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Nodes + edges for the network diagram. Roots are devices with no uplink."""
+    _clinic_or_404(conn, clinic_id)
+    devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    by_id = {d["id"]: d for d in devices}
+    children: dict[int, list[int]] = {d["id"]: [] for d in devices}
+    for d in devices:
+        if d["uplink_id"] in by_id:
+            children[d["uplink_id"]].append(d["id"])
+    nodes = []
+    for d in devices:
+        nodes.append({k: d.get(k) for k in ("id", "name", "device_type", "type_label", "icon", "is_network", "designation", "ip_address",
+                                             "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model")}
+                     | {"children": children[d["id"]]})
+    roots = [d["id"] for d in devices if d["uplink_id"] not in by_id]
+    edges = [{"from": d["uplink_id"], "to": d["id"], "link_type": d["link_type"] or "ethernet"} for d in devices if d["uplink_id"] in by_id]
+    return {"nodes": nodes, "roots": roots, "edges": edges}
+
+
+@router.get("/clinics/{clinic_id}/devices.csv")
+def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    clinic = _clinic_or_404(conn, clinic_id)
+    devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    cols = ["name", "type_label", "designation", "status", "user_name", "ip_address", "mac_address", "os", "manufacturer", "model", "serial",
+            "uplink_name", "link_label", "location_name", "purchase_date", "warranty_until", "services", "notes"]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for d in devices:
+        d = dict(d)
+        d["services"] = "; ".join(d["services"])
+        w.writerow(d)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", clinic["shorthand"] or clinic["name"])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{safe}-equipment.csv"'})
+
+
+# ---- Single device --------------------------------------------------------------
+
+@router.get("/devices/{device_id}")
+def get_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    d = _get_or_404(conn, device_id)
+    d["tickets"] = rows_to_list(conn.execute("SELECT * FROM device_tickets WHERE device_id = ? ORDER BY ticket_date DESC, id DESC", (device_id,)))
+    d["downlinks"] = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.uplink_id = ? ORDER BY d.device_type, d.number", (device_id,)))]
+    chain = []
+    cur = d
+    seen = {d["id"]}
+    while cur.get("uplink_id"):
+        up = row_to_dict(conn.execute("SELECT id, name, device_type, uplink_id, ip_address FROM devices WHERE id = ?", (cur["uplink_id"],)).fetchone())
+        if not up or up["id"] in seen:
+            break
+        up["icon"] = DEVICE_TYPES.get(up["device_type"], DEVICE_TYPES["other"])["icon"]
+        chain.append(up)
+        seen.add(up["id"])
+        cur = up
+    d["uplink_chain"] = chain  # nearest first
+    return d
+
+
+@router.put("/devices/{device_id}")
+def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    before = _get_or_404(conn, device_id)
+    clinic = _clinic_or_404(conn, before["clinic_id"])
+    data = payload.model_dump()
+    data.pop("quantity", None)
+    _validate(conn, before["clinic_id"], data)
+    _check_uplink(conn, before["clinic_id"], device_id, data.get("uplink_id"))
+    if not data.get("name"):
+        data["name"] = template_name(clinic, data["device_type"], before["number"] or next_number(conn, before["clinic_id"], data["device_type"]))
+    parsed = _parse_number(clinic, data["device_type"], data["name"])
+    data["number"] = parsed if parsed is not None else (before["number"] if before["device_type"] == data["device_type"] else next_number(conn, before["clinic_id"], data["device_type"]))
+    data["services"] = json.dumps(data["services"]) if data.get("services") else None
+    sets = ", ".join(f"{c} = ?" for c in DEVICE_COLUMNS)
+    conn.execute(f"UPDATE devices SET {sets}, updated_at = ? WHERE id = ?", [data.get(c) for c in DEVICE_COLUMNS] + [now_iso(), device_id])
+    return get_device(device_id, conn)
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+def delete_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    d = _get_or_404(conn, device_id)
+    conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+    log_event(conn, d["clinic_id"], "equipment", f"Removed {d['type_label'].lower()} {d['name']}")
+    return None
+
+
+@router.post("/devices/{device_id}/tickets", status_code=201)
+def add_ticket(device_id: int, payload: TicketIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    _get_or_404(conn, device_id)
+    cur = conn.execute("INSERT INTO device_tickets (device_id, title, url, ticket_date, notes) VALUES (?, ?, ?, ?, ?)",
+                       (device_id, payload.title.strip(), payload.url, payload.ticket_date, payload.notes))
+    return row_to_dict(conn.execute("SELECT * FROM device_tickets WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.delete("/devices/{device_id}/tickets/{ticket_id}", status_code=204)
+def delete_ticket(device_id: int, ticket_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM device_tickets WHERE id = ? AND device_id = ?", (ticket_id, device_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return None

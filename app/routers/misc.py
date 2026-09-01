@@ -327,6 +327,8 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "attachments": rows_to_list(conn.execute("SELECT * FROM attachments")),
         "email_templates": rows_to_list(conn.execute("SELECT * FROM email_templates")),
         "saved_views": rows_to_list(conn.execute("SELECT * FROM saved_views")),
+        "devices": rows_to_list(conn.execute("SELECT * FROM devices")),
+        "device_tickets": rows_to_list(conn.execute("SELECT * FROM device_tickets")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -345,7 +347,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
-              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views"]
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_tickets"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -425,6 +427,33 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
             cols = ", ".join(row.keys())
             marks = ", ".join("?" * len(row))
             conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(row.values()))
+    device_map: dict[int, int] = {}
+    pending_uplinks: list[tuple[int, int]] = []
+    for row in data.get("devices", []):
+        old_id = row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["location_id"] = None
+        old_up = row.pop("uplink_id", None)
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        cur = conn.execute(f"INSERT INTO devices ({cols}) VALUES ({marks})", list(row.values()))
+        if old_id is not None:
+            device_map[old_id] = cur.lastrowid
+        if old_up is not None:
+            pending_uplinks.append((cur.lastrowid, old_up))
+    for new_id, old_up in pending_uplinks:
+        if old_up in device_map:
+            conn.execute("UPDATE devices SET uplink_id = ? WHERE id = ?", (device_map[old_up], new_id))
+    for row in data.get("device_tickets", []):
+        row.pop("id", None)
+        if row.get("device_id") not in device_map:
+            continue
+        row["device_id"] = device_map[row["device_id"]]
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO device_tickets ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

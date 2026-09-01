@@ -359,3 +359,71 @@ def test_settings_call_sheet_scan(client):
     assert client.get("/api/dashboard").json()["overdue_follow_ups"] >= 1
     # backup excludes settings
     assert "settings" not in client.get("/api/export/backup.json").json()
+
+
+def test_equipment(client):
+    r = client.post("/api/clinics", json={"name": "Cardio One", "relationship": "current_client", "shorthand": "COC"})
+    cid = r.json()["id"]
+    # auto naming
+    nn = client.get(f"/api/clinics/{cid}/devices/next-name", params={"device_type": "workstation"}).json()
+    assert nn["name"] == "COC-W001"
+    fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall", "ip_address": "192.168.1.1", "manufacturer": "Fortinet"}).json()
+    assert fw["name"] == "COC-FW001" and fw["uplink_id"] is None and fw["link_type"] is None
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "uplink_id": fw["id"], "ip_address": "192.168.1.2"}).json()
+    assert sw["name"] == "COC-SW001" and sw["link_type"] == "ethernet" and sw["uplink_name"] == "COC-FW001"
+    ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "quantity": 3, "uplink_id": sw["id"], "designation": "Exam room"}).json()
+    assert [w["name"] for w in ws] == ["COC-W001", "COC-W002", "COC-W003"]
+    # manual name with matching pattern keeps its number; next auto continues after it
+    w5 = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "name": "COC-W005", "user_name": "Dr. Lee"}).json()
+    assert w5["number"] == 5
+    assert client.get(f"/api/clinics/{cid}/devices/next-name", params={"device_type": "workstation"}).json()["name"] == "COC-W006"
+    # custom name
+    custom = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "printer", "name": "Front desk MFP", "uplink_id": sw["id"]}).json()
+    assert custom["name"] == "Front desk MFP"
+    # server with services + voip chain (workstation -> voip -> switch)
+    srv = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Windows Server", "services": "AD DS\nDNS\nFile shares", "uplink_id": sw["id"]}).json()
+    assert srv["services"] == ["AD DS", "DNS", "File shares"] and srv["name"] == "COC-S001"
+    phone = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "voip", "uplink_id": sw["id"], "user_name": "Reception"}).json()
+    r = client.put(f"/api/devices/{ws[0]['id']}", json={**{k: ws[0][k] for k in ("device_type", "name", "designation", "status")}, "uplink_id": phone["id"], "link_type": "ethernet", "user_name": "Front desk"})
+    assert r.status_code == 200, r.text
+    assert r.json()["uplink_name"] == phone["name"] and [c["name"] for c in r.json()["uplink_chain"]] == [phone["name"], sw["name"], fw["name"]]
+    # wireless device defaults to wireless link
+    ap = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "access_point", "uplink_id": sw["id"]}).json()
+    cell = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "wireless", "uplink_id": ap["id"], "user_name": "Dr. Lee", "designation": "Cell phone"}).json()
+    assert cell["link_type"] == "wireless" and cell["name"] == "COC-M001"
+    # loop protection
+    r = client.put(f"/api/devices/{fw['id']}", json={"device_type": "firewall", "name": "COC-FW001", "uplink_id": ws[0]["id"], "status": "active"})
+    assert r.status_code == 422 and "loop" in r.json()["detail"]
+    assert client.put(f"/api/devices/{fw['id']}", json={"device_type": "firewall", "name": "COC-FW001", "uplink_id": fw["id"], "status": "active"}).status_code == 422
+    # bad ip
+    assert client.post(f"/api/clinics/{cid}/devices", json={"device_type": "other", "ip_address": "not an ip!"}).status_code == 422
+    # tickets
+    t = client.post(f"/api/devices/{srv['id']}/tickets", json={"title": "Disk full on D:", "url": "https://tickets.example.com/123", "ticket_date": "2026-05-01"})
+    assert t.status_code == 201
+    det = client.get(f"/api/devices/{srv['id']}").json()
+    assert det["tickets"][0]["title"] == "Disk full on D:" and det["ticket_count"] == 1
+    # downlinks & topology
+    swd = client.get(f"/api/devices/{sw['id']}").json()
+    assert {d["name"] for d in swd["downlinks"]} >= {"COC-W002", "COC-W003", "COC-S001", "COC-V001", "Front desk MFP"}
+    topo = client.get(f"/api/clinics/{cid}/topology").json()
+    assert topo["roots"] == [fw["id"]] or set(topo["roots"]) == {fw["id"], w5["id"]}
+    fw_node = next(n for n in topo["nodes"] if n["id"] == fw["id"])
+    assert fw_node["children"] == [sw["id"]]
+    assert any(e["link_type"] == "wireless" for e in topo["edges"])
+    # list + summary + csv
+    lst = client.get(f"/api/clinics/{cid}/devices").json()
+    assert lst["summary"]["billable"]["workstations"] == 4 and lst["summary"]["billable"]["servers"] == 1 and lst["summary"]["billable"]["network"] == 3
+    assert lst["shorthand"] == "COC"
+    assert client.get(f"/api/clinics/{cid}/devices", params={"q": "Dr. Lee"}).json()["devices"]
+    assert client.get(f"/api/clinics/{cid}/devices.csv").status_code == 200
+    assert client.get(f"/api/clinics/{cid}").json()["equipment"]["total"] == 11
+    assert client.get("/api/search", params={"q": "COC-W00"}).json()["devices"]
+    # delete uplink -> children detach, not deleted
+    assert client.delete(f"/api/devices/{sw['id']}").status_code == 204
+    assert client.get(f"/api/devices/{srv['id']}").json()["uplink_id"] is None
+    # fallback shorthand from initials
+    r = client.post("/api/clinics", json={"name": "Beltline Family Practice"})
+    assert client.get(f"/api/clinics/{r.json()['id']}/devices/next-name", params={"device_type": "laptop"}).json()["name"] == "BFP-L001"
+    backup = client.get("/api/export/backup.json").json()
+    assert backup["devices"] and backup["device_tickets"]
+    assert client.post("/api/import/backup", json=backup).status_code == 200

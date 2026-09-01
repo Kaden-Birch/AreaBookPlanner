@@ -254,3 +254,51 @@ class RouteRequest(BaseModel):
 class SettingsIn(BaseModel):
     openai_api_key: Optional[str] = None
     openai_model: Optional[str] = None
+
+
+DeviceStatus = Literal["active", "spare", "retired"]
+
+
+class DeviceIn(BaseModel):
+    device_type: str
+    name: Optional[str] = None  # blank = auto-generate from the template
+    location_id: Optional[int] = None
+    designation: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial: Optional[str] = None
+    ip_address: Optional[str] = None
+    mac_address: Optional[str] = None
+    os: Optional[str] = None
+    user_name: Optional[str] = None
+    uplink_id: Optional[int] = None
+    link_type: Optional[Literal["ethernet", "wireless"]] = None
+    status: DeviceStatus = "active"
+    services: Optional[list[str]] = None
+    purchase_date: Optional[str] = None
+    warranty_until: Optional[str] = None
+    notes: Optional[str] = None
+    quantity: int = Field(default=1, ge=1, le=50)  # create several at once (auto-named)
+
+    _blank = field_validator(
+        "name", "location_id", "designation", "manufacturer", "model", "serial", "ip_address", "mac_address", "os",
+        "user_name", "uplink_id", "link_type", "purchase_date", "warranty_until", "notes", mode="before",
+    )(_blank_to_none)
+
+    @field_validator("services", mode="before")
+    @classmethod
+    def _services(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v = v.replace(",", "\n").splitlines()
+        return [str(x).strip() for x in v if str(x).strip()] or None
+
+
+class TicketIn(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    url: Optional[str] = None
+    ticket_date: Optional[str] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("url", "ticket_date", "notes", mode="before")(_blank_to_none)

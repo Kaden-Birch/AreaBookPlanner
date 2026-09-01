@@ -198,6 +198,9 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
     clinic["attachments"] = rows_to_list(
         conn.execute("SELECT * FROM attachments WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,))
     )
+    from .devices import _summary as device_summary
+
+    clinic["equipment"] = device_summary(conn, clinic_id)
     clinic["group"] = None
     clinic["group_members"] = []
     if clinic.get("group_id"):

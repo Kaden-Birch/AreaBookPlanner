@@ -93,6 +93,14 @@ and is stored in a single SQLite file.
 - **Business card scanner** – snap a card and a contact form is prefilled (name, title,
   phone/extension, mobile, email) and matched to a clinic. Uses OpenAI vision; enter
   your API key under Settings → AI. The card image is attached to the clinic.
+- **Equipment inventory** – per clinic: firewalls, routers, switches, access points,
+  servers, workstations, laptops, wireless devices, VoIP phones, printers and more.
+  Names follow `{SHORTHAND}-{PREFIX}{NNN}` (COC-W005, COC-S001, COC-FW001…) with the
+  next number suggested automatically, or type your own. Each device has an uplink
+  (wired or wireless), IP/MAC, model and serial, OS, assigned user, status, warranty,
+  notes, services (for servers) and linked tickets (title + link). A list view groups
+  by type; a topology view draws the network from the WAN down, dashed for wireless.
+  Active counts per type are summarised for billing later.
 - **Dark mode** – toggle in the top bar; remembers your choice and respects the OS
   setting by default.
 - **Dashboard** – totals, forecast, pipeline summary, colour breakdown, tasks due,
@@ -168,6 +176,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET /api/analytics` | Analytics figures |
 | `/api/views`, `/api/templates` | Saved map views, email templates |
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
+| `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory |
 | `POST /api/route` | Optimised driving order for a set of clinics |
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
 | `GET/POST /api/clinics/{id}/notes` | Dated note log |

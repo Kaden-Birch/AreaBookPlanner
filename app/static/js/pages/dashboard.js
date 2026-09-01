@@ -1,12 +1,13 @@
-// Dashboard: at-a-glance numbers, this week's plan, what needs attention, data tools.
-import { dashboard, getMeta, api } from '../api.js';
-import { esc, dot, badge, fmtDate, fmtDateTime, fmtDateOnly, relativeDays, COLOR_ORDER, COLOR_HEX, toast, confirmDialog, setTitle, navigate } from '../ui.js';
-import { openClinicForm, openAppointmentForm } from '../forms.js';
+// Dashboard: numbers, pipeline, this week's plan, what needs attention, data tools.
+import { dashboard, getMeta, api, tasks } from '../api.js';
+import { esc, dot, badge, fmtDate, fmtDateTime, fmtDateOnly, fmtMoney, relativeDays, COLOR_ORDER, COLOR_HEX, toast, confirmDialog, setTitle, navigate } from '../ui.js';
+import { openClinicForm, openAppointmentForm, openTaskForm } from '../forms.js';
 
 export async function render(container) {
   setTitle('Dashboard');
   const [d, meta] = await Promise.all([dashboard(), getMeta()]);
   const total = d.totals.clinics || 1;
+  const f = d.forecast;
 
   container.innerHTML = `
     <div class="page-header">
@@ -14,24 +15,40 @@ export async function render(container) {
       <div class="actions">
         <button class="btn btn-primary" id="add-clinic">+ Clinic</button>
         <button class="btn" id="add-appt">+ Appointment</button>
+        <button class="btn" id="add-task">+ Task</button>
       </div>
     </div>
 
     <div class="grid-4">
-      <div class="card stat"><div class="value">${d.totals.clinics}</div><div class="label">Clinics</div></div>
-      <div class="card stat"><div class="value">${d.totals.contacts}</div><div class="label">Contacts</div></div>
-      <div class="card stat"><div class="value">${d.totals.appointments_upcoming}</div><div class="label">Upcoming appointments</div></div>
-      <div class="card stat"><div class="value">${d.totals.visits_this_month}</div><div class="label">Visits this month</div></div>
+      <div class="card stat"><div class="value">${d.totals.clinics}</div><div class="label">Clinics</div><div class="sub">${d.totals.contacts} contacts</div></div>
+      <div class="card stat"><div class="value">${d.totals.appointments_upcoming}</div><div class="label">Upcoming appointments</div><div class="sub">${d.totals.visits_this_month} visits this month</div></div>
+      <div class="card stat"><div class="value money">${fmtMoney(f.weighted_value) || '$0'}</div><div class="label">Weighted forecast</div><div class="sub">${f.open_deals} open deals · ${fmtMoney(f.open_value) || '$0'} total</div></div>
+      <div class="card stat"><div class="value money">${fmtMoney(f.won_value_this_year) || '$0'}</div><div class="label">Won this year</div><div class="sub">${d.totals.tasks_open} open tasks</div></div>
     </div>
 
-    <div class="card mt">
-      <div class="card-header"><h3>Clinics by status</h3><div class="actions"><a class="btn btn-sm" href="#/map">Open map</a></div></div>
-      <div class="color-bar">${COLOR_ORDER.map(c => `<span style="width:${(d.by_color[c] / total) * 100}%;background:${COLOR_HEX[c]}" title="${esc(meta.colors[c])}: ${d.by_color[c]}"></span>`).join('')}</div>
-      <div class="legend">${COLOR_ORDER.map(c => `<a class="legend-item" href="#/map?color=${c}">${dot(c)} ${esc(meta.colors[c])} <span class="count">${d.by_color[c]}</span></a>`).join('')}</div>
+    <div class="grid-2 mt">
+      <div class="card">
+        <div class="card-header"><h3>Pipeline</h3><div class="actions"><a class="btn btn-sm" href="#/pipeline">Open board</a></div></div>
+        <div class="stage-bar">${Object.entries(meta.stages).map(([s, label]) => `
+          <a href="#/pipeline"><span class="n">${d.pipeline[s].count}</span>${esc(label)}<span class="v">${d.pipeline[s].value ? fmtMoney(d.pipeline[s].value) : '&nbsp;'}</span></a>`).join('')}</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Clinics by status</h3><div class="actions"><a class="btn btn-sm" href="#/map">Open map</a></div></div>
+        <div class="color-bar">${COLOR_ORDER.map(c => `<span style="width:${(d.by_color[c] / total) * 100}%;background:${COLOR_HEX[c]}" title="${esc(meta.colors[c])}: ${d.by_color[c]}"></span>`).join('')}</div>
+        <div class="legend">${COLOR_ORDER.map(c => `<a class="legend-item" href="#/map?color=${c}">${dot(c)} ${esc(meta.colors[c])} <span class="count">${d.by_color[c]}</span></a>`).join('')}</div>
+      </div>
     </div>
 
     <div class="grid-2 mt">
       <div>
+        <div class="card">
+          <div class="card-header"><h3>Tasks due</h3><span class="muted small">Overdue, today and next 7 days</span><div class="actions"><a class="btn btn-sm" href="#/tasks">All tasks</a></div></div>
+          ${listOrEmpty(d.tasks_due, t => `
+            <li><input type="checkbox" data-task="${t.id}" title="Mark done" style="margin-top:3px">
+              <div class="body"><div class="title">${esc(t.title)} ${t.priority === 'high' ? badge('High', 'badge-high') : ''}</div>
+              <div class="muted small">${t.clinic_id ? `<a href="#/clinics/${t.clinic_id}">${esc(t.clinic_name)}</a> · ` : ''}<span class="task-due ${t.overdue ? 'overdue' : (t.due_today ? 'today' : '')}">${t.due_date ? (t.overdue ? 'Overdue · ' : '') + esc(fmtDateOnly(t.due_date)) : 'No due date'}</span></div></div></li>`,
+            'No tasks due. Add reminders from a clinic page or the Tasks page.')}
+        </div>
         <div class="card">
           <div class="card-header"><h3>Next 7 days</h3><div class="actions"><a class="btn btn-sm" href="#/calendar">Calendar</a></div></div>
           ${listOrEmpty(d.upcoming, a => `
@@ -48,6 +65,14 @@ export async function render(container) {
         </div>
       </div>
       <div>
+        <div class="card">
+          <div class="card-header"><h3>Closing soon</h3><span class="muted small">Open deals expected to close within 30 days</span></div>
+          ${listOrEmpty(d.closing_soon, c => `
+            <li><span class="when">${esc(fmtDateOnly(c.expected_close))}</span>
+              <div class="body"><div class="title">${dot(c.color)}<a href="#/clinics/${c.id}">${esc(c.name)}</a> <span class="badge badge-stage-${esc(c.stage)}">${esc(c.stage_label)}</span></div>
+              <div class="muted small money">${c.deal_value ? fmtMoney(c.deal_value) : 'No value set'}</div></div></li>`,
+            'No deals closing in the next 30 days.')}
+        </div>
         <div class="card">
           <div class="card-header"><h3>Needs an outcome</h3><span class="muted small">Past appointments still marked scheduled</span></div>
           ${listOrEmpty(d.needs_outcome, a => `
@@ -84,8 +109,12 @@ export async function render(container) {
 
   container.querySelector('#add-clinic').onclick = () => openClinicForm({ onSaved: c => navigate(`#/clinics/${c.id}`) });
   container.querySelector('#add-appt').onclick = () => openAppointmentForm({ onSaved: () => render(container) });
+  container.querySelector('#add-task').onclick = () => openTaskForm({ onSaved: () => render(container) });
   container.querySelectorAll('[data-complete]').forEach(b => {
     b.onclick = async () => { await api.patch(`/api/appointments/${b.dataset.complete}`, { status: 'completed' }); toast('Marked completed', 'success'); render(container); };
+  });
+  container.querySelectorAll('[data-task]').forEach(cb => {
+    cb.onchange = async () => { await tasks.patch(Number(cb.dataset.task), { done: true }); toast('Task done', 'success'); render(container); };
   });
   container.querySelector('#restore-file').onchange = async (e) => {
     const file = e.target.files[0];

@@ -98,3 +98,78 @@ def test_validation(client):
     assert client.post("/api/appointments", json={"clinic_id": 1, "title": "x", "start_time": "not-a-date"}).status_code == 422
     assert client.get("/api/clinics/9999").status_code == 404
     assert client.get("/").status_code == 200
+
+
+def test_pipeline_tasks_timeline_route(client):
+    r = client.post("/api/clinics", json={"name": "Pipeline Clinic", "lat": 51.05, "lng": -114.05, "deal_value": 12000, "stage": "contacted"})
+    assert r.status_code == 201, r.text
+    c = r.json()
+    assert c["stage"] == "contacted" and c["effective_probability"] == 20 and c["weighted_value"] == 2400
+    cid = c["id"]
+
+    # move through the pipeline via the Kanban endpoint
+    r = client.patch(f"/api/clinics/{cid}/stage", json={"stage": "proposal"})
+    assert r.status_code == 200 and r.json()["stage"] == "proposal"
+    r = client.patch(f"/api/clinics/{cid}/stage", json={"stage": "won", "outcome_reason": "service", "outcome_notes": "Loved the response time"})
+    won = r.json()
+    assert won["stage"] == "won" and won["relationship"] == "current_client" and won["color"] == "yellow"
+    assert won["outcome_date"] and won["weighted_value"] == 0
+
+    # relationship -> current_client implies won, and vice versa is logged
+    r = client.post("/api/clinics", json={"name": "Client Clinic", "relationship": "current_client"})
+    assert r.json()["stage"] == "won"
+
+    # tasks
+    r = client.post("/api/tasks", json={"clinic_id": cid, "title": "Send contract", "due_date": "2020-01-01", "priority": "high"})
+    assert r.status_code == 201, r.text
+    task = r.json()
+    assert task["overdue"] is True and task["clinic_name"] == "Pipeline Clinic"
+    r = client.patch(f"/api/tasks/{task['id']}", json={"done": True})
+    assert r.json()["done"] is True and r.json()["done_at"]
+    assert client.get("/api/tasks", params={"done": "false"}).json() == []
+    assert client.post("/api/tasks", json={"clinic_id": 9999, "title": "x"}).status_code == 422
+    assert client.post("/api/tasks", json={"title": "   "}).status_code == 422
+
+    # timeline merges events, notes, tasks
+    client.post(f"/api/clinics/{cid}/notes", json={"body": "Timeline note"})
+    tl = client.get(f"/api/clinics/{cid}/timeline").json()
+    types = {t["type"] for t in tl}
+    assert {"created", "stage_change", "relationship_change", "note", "task"} <= types
+    won_event = next(t for t in tl if t["type"] == "stage_change" and "Won" in t["title"])
+    assert "Service / responsiveness" in won_event["body"]
+    detail = client.get(f"/api/clinics/{cid}").json()
+    assert detail["timeline"] and detail["tasks"]
+
+    # dashboard pipeline + forecast
+    d = client.get("/api/dashboard").json()
+    assert d["pipeline"]["won"]["count"] >= 1
+    assert d["forecast"]["won_value_this_year"] >= 12000
+    assert d["outcome_reasons"]["won"].get("Service / responsiveness") == 1
+    assert "tasks_due" in d and "closing_soon" in d
+
+    # stage filter on list
+    assert all(x["stage"] == "won" for x in client.get("/api/clinics", params={"stage": "won"}).json())
+
+    # route planning (pure-python fallback works without network)
+    r = client.post("/api/clinics", json={"name": "Far Clinic", "lat": 51.15, "lng": -114.20})
+    far = r.json()["id"]
+    r = client.post("/api/clinics", json={"name": "Near Clinic", "lat": 51.06, "lng": -114.06})
+    near = r.json()["id"]
+    r = client.post("/api/route", json={"clinic_ids": [far, near, cid], "start": {"lat": 51.04, "lng": -114.04}})
+    assert r.status_code == 200, r.text
+    route = r.json()
+    names = [s["name"] for s in route["stops"]]
+    assert names[-1] == "Far Clinic" and route["total_km"] > 0 and "google.com/maps" in route["google_maps_url"]
+    assert client.post("/api/route", json={"clinic_ids": [2]}).status_code in (200, 422)
+
+    # drive time
+    r = client.get("/api/drivetime", params={"lat": 51.04, "lng": -114.04})
+    assert r.status_code == 200
+    dt = r.json()
+    assert dt["source"] in ("osrm", "estimate") and str(near) in dt["clinics"] or near in dt["clinics"]
+
+    # backup round-trips tasks and events
+    backup = client.get("/api/export/backup.json").json()
+    assert backup["tasks"] and backup["clinic_events"]
+    r = client.post("/api/import/backup", json=backup)
+    assert r.status_code == 200

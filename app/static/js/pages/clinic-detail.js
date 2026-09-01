@@ -1,12 +1,16 @@
-// Clinic profile: details, note log, contacts, appointments, mini map.
-import { clinics, appointments, getMeta } from '../api.js';
+// Clinic profile: deal, details, activity timeline, tasks, contacts, appointments, mini map.
+import { clinics, appointments, tasks, getMeta } from '../api.js';
 import {
-  esc, attr, dot, badge, tagList, fmtDate, fmtDateTime, fmtDateOnly, relativeDays, isPast,
-  fullAddress, directionsUrl, pinIcon, toast, confirmDialog, navigate, setTitle,
+  esc, attr, dot, badge, tagList, fmtDate, fmtDateTime, fmtDateOnly, fmtMoney, relativeDays, isPast,
+  fullAddress, directionsUrl, pinIcon, toast, confirmDialog, navigate, setTitle, options, stageBadge,
 } from '../ui.js';
-import { openClinicForm, deleteClinic, openContactForm, openAppointmentForm, openLogVisit } from '../forms.js';
+import {
+  openClinicForm, deleteClinic, openContactForm, openAppointmentForm, openLogVisit, openTaskForm, changeStage,
+} from '../forms.js';
+import { taskRow, wireTaskRows } from './tasks.js';
 
 let miniMap = null;
+let tlFilter = 'all';
 
 export async function render(container, params, routeParams) {
   const id = Number(routeParams.id);
@@ -20,9 +24,12 @@ export async function render(container, params, routeParams) {
   const upcoming = clinic.appointments.filter(a => a.status === 'scheduled' && !isPast(a.start_time)).sort((a, b) => a.start_time.localeCompare(b.start_time));
   const past = clinic.appointments.filter(a => !(a.status === 'scheduled' && !isPast(a.start_time)));
   const today = new Date().toISOString().slice(0, 10);
+  const openTasks = clinic.tasks.filter(t => !t.done);
+  const closed = clinic.stage === 'won' || clinic.stage === 'lost';
+  const reasonLabel = closed && clinic.outcome_reason ? ((clinic.stage === 'won' ? meta.won_reasons : meta.lost_reasons)[clinic.outcome_reason] || clinic.outcome_reason) : null;
 
   container.innerHTML = `
-    <div class="mb"><a href="#/clinics">← All clinics</a></div>
+    <div class="mb"><a href="#/clinics">← All clinics</a> · <a href="#/pipeline">Pipeline</a></div>
     <div class="card">
       <div class="clinic-header">
         <div class="grow">
@@ -31,6 +38,7 @@ export async function render(container, params, routeParams) {
             <h1>${esc(clinic.name)}</h1>
             <span class="badge badge-${esc(clinic.color)}">${esc(clinic.color_label)}</span>
             ${clinic.relationship_label !== clinic.color_label ? badge(clinic.relationship_label) : ''}
+            ${stageBadge(clinic)}
             ${badge(`${clinic.priority} priority`, `badge-${clinic.priority}`)}
           </div>
           <div class="meta">
@@ -43,6 +51,7 @@ export async function render(container, params, routeParams) {
         <div class="actions flex flex-wrap">
           <button class="btn btn-primary" id="btn-appt">+ Appointment</button>
           <button class="btn" id="btn-visit">Log a visit</button>
+          <button class="btn" id="btn-task">+ Task</button>
           <button class="btn" id="btn-contact">+ Contact</button>
           ${clinic.lat != null ? `<a class="btn" href="#/map?focus=${clinic.id}">Show on map</a>` : ''}
           <a class="btn" href="${attr(directionsUrl(clinic))}" target="_blank" rel="noopener">Directions</a>
@@ -54,6 +63,25 @@ export async function render(container, params, routeParams) {
 
     <div class="grid-2 mt">
       <div>
+        <div class="card">
+          <div class="card-header"><h3>Deal</h3>
+            <div class="actions">
+              <select class="stage-select" id="stage-move" title="Move to stage">${options(meta.stages, clinic.stage)}</select>
+              <button class="btn btn-sm" id="btn-edit-deal">Edit</button>
+            </div>
+          </div>
+          <dl class="kv">
+            <dt>Stage</dt><dd>${stageBadge(clinic)}</dd>
+            <dt>Est. annual value</dt><dd class="money">${clinic.deal_value ? fmtMoney(clinic.deal_value) : '—'}</dd>
+            ${!closed ? `<dt>Win probability</dt><dd>${clinic.effective_probability}%${clinic.win_probability == null ? ' <span class="muted">(stage default)</span>' : ''}</dd>
+            <dt>Weighted value</dt><dd class="money">${clinic.weighted_value ? fmtMoney(clinic.weighted_value) : '—'}</dd>
+            <dt>Expected close</dt><dd>${clinic.expected_close ? `${esc(fmtDateOnly(clinic.expected_close))} ${clinic.expected_close < today ? badge('Slipped', 'badge-red') : ''}` : '—'}</dd>` : `
+            <dt>${clinic.stage === 'won' ? 'Won' : 'Lost'} on</dt><dd>${clinic.outcome_date ? esc(fmtDateOnly(clinic.outcome_date)) : '—'}</dd>
+            <dt>Reason</dt><dd>${reasonLabel ? esc(reasonLabel) : '—'}</dd>
+            ${clinic.outcome_notes ? `<dt>Outcome notes</dt><dd><pre class="wrap">${esc(clinic.outcome_notes)}</pre></dd>` : ''}`}
+          </dl>
+        </div>
+
         <div class="card">
           <div class="card-header"><h3>Details</h3></div>
           <dl class="kv">
@@ -76,23 +104,25 @@ export async function render(container, params, routeParams) {
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Note log</h3><span class="muted small">Dated entries: calls, conversations, observations</span></div>
+          <div class="card-header"><h3>Activity</h3><span class="muted small">Notes, visits, tasks and status changes in one feed</span></div>
           <form id="note-form" class="mb">
             <textarea name="body" rows="2" placeholder="Add a note… (e.g. Called, spoke with receptionist, manager back Tuesday)"></textarea>
             <div class="right mt"><button class="btn btn-primary btn-sm" type="submit">Add note</button></div>
           </form>
-          <div id="note-log">
-            ${clinic.note_log.length ? clinic.note_log.map(n => `
-              <div class="note-entry" data-id="${n.id}">
-                <div class="note-meta"><span>${esc(fmtDateTime(n.created_at))}</span>${n.author ? `<span>· ${esc(n.author)}</span>` : ''}
-                  <span class="actions"><button class="btn btn-link btn-sm" data-act="del-note" data-id="${n.id}">Delete</button></span></div>
-                <pre class="wrap">${esc(n.body)}</pre>
-              </div>`).join('') : '<p class="muted">No log entries yet.</p>'}
+          <div class="tl-filters" id="tl-filters">
+            ${[['all', 'All'], ['note', 'Notes'], ['appointment', 'Appointments'], ['task', 'Tasks'], ['change', 'Changes']].map(([k, l]) =>
+              `<button class="btn btn-sm ${tlFilter === k ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
           </div>
+          <ul class="timeline" id="timeline"></ul>
         </div>
       </div>
 
       <div>
+        <div class="card">
+          <div class="card-header"><h3>Tasks (${openTasks.length} open)</h3><div class="actions"><button class="btn btn-sm" id="btn-task-2">+ Add</button></div></div>
+          <div id="task-list">${openTasks.length ? openTasks.map(taskRow).join('') : '<p class="muted">No open tasks. Add a reminder like “Call back Friday”.</p>'}</div>
+        </div>
+
         <div class="card">
           <div class="card-header"><h3>Contacts (${clinic.contacts.length})</h3><div class="actions"><button class="btn btn-sm" id="btn-contact-2">+ Add</button></div></div>
           ${clinic.contacts.length ? clinic.contacts.map(ct => `
@@ -130,8 +160,10 @@ export async function render(container, params, routeParams) {
   const editClinic = () => openClinicForm({ clinic, onSaved: reload });
   container.querySelector('#btn-edit').onclick = editClinic;
   container.querySelector('#btn-edit-notes').onclick = editClinic;
+  container.querySelector('#btn-edit-deal').onclick = editClinic;
   const locate = container.querySelector('#btn-locate');
   if (locate) locate.onclick = editClinic;
+  container.querySelector('#stage-move').onchange = (e) => changeStage(clinic, e.target.value, reload);
   container.querySelector('#btn-delete').onclick = async () => { if (await deleteClinic(clinic)) navigate('#/clinics'); };
   const newAppt = () => openAppointmentForm({ clinicId: clinic.id, lockClinic: true, onSaved: reload });
   container.querySelector('#btn-appt').onclick = newAppt;
@@ -139,7 +171,11 @@ export async function render(container, params, routeParams) {
   const newContact = () => openContactForm({ clinicId: clinic.id, onSaved: reload });
   container.querySelector('#btn-contact').onclick = newContact;
   container.querySelector('#btn-contact-2').onclick = newContact;
+  const newTask = () => openTaskForm({ clinicId: clinic.id, onSaved: reload });
+  container.querySelector('#btn-task').onclick = newTask;
+  container.querySelector('#btn-task-2').onclick = newTask;
   container.querySelector('#btn-visit').onclick = () => openLogVisit({ clinic, onSaved: reload });
+  wireTaskRows(container.querySelector('#task-list'), clinic.tasks, reload);
 
   container.querySelectorAll('[data-act=edit-contact]').forEach(b => {
     b.onclick = () => openContactForm({ contact: clinic.contacts.find(c => c.id === Number(b.dataset.id)), onSaved: reload });
@@ -150,13 +186,6 @@ export async function render(container, params, routeParams) {
   container.querySelectorAll('[data-act=complete]').forEach(b => {
     b.onclick = async () => { await appointments.patch(Number(b.dataset.id), { status: 'completed' }); toast('Marked completed', 'success'); reload(); };
   });
-  container.querySelectorAll('[data-act=del-note]').forEach(b => {
-    b.onclick = async () => {
-      if (!(await confirmDialog('Delete this note?'))) return;
-      await clinics.removeNote(clinic.id, Number(b.dataset.id));
-      reload();
-    };
-  });
   const noteForm = container.querySelector('#note-form');
   noteForm.onsubmit = async (e) => {
     e.preventDefault();
@@ -166,6 +195,38 @@ export async function render(container, params, routeParams) {
     toast('Note added', 'success');
     reload();
   };
+
+  // Timeline
+  const renderTimeline = () => {
+    const items = clinic.timeline.filter(t => {
+      if (tlFilter === 'all') return true;
+      if (tlFilter === 'change') return ['stage_change', 'relationship_change', 'created'].includes(t.type);
+      return t.type === tlFilter;
+    });
+    const ul = container.querySelector('#timeline');
+    ul.innerHTML = items.length ? items.map(timelineItem).join('') : '<li class="muted">Nothing here yet.</li>';
+    ul.querySelectorAll('[data-act=del-note]').forEach(b => {
+      b.onclick = async () => {
+        if (!(await confirmDialog('Delete this note?'))) return;
+        await clinics.removeNote(clinic.id, Number(b.dataset.id));
+        reload();
+      };
+    });
+    ul.querySelectorAll('[data-act=open-appt]').forEach(b => {
+      b.onclick = () => openAppointmentForm({ appointment: clinic.appointments.find(a => a.id === Number(b.dataset.id)), lockClinic: true, onSaved: reload });
+    });
+    ul.querySelectorAll('[data-act=open-task]').forEach(b => {
+      b.onclick = () => openTaskForm({ task: clinic.tasks.find(t => t.id === Number(b.dataset.id)), onSaved: reload });
+    });
+  };
+  container.querySelectorAll('#tl-filters button').forEach(b => {
+    b.onclick = () => {
+      tlFilter = b.dataset.filter;
+      container.querySelectorAll('#tl-filters button').forEach(x => x.classList.toggle('active', x === b));
+      renderTimeline();
+    };
+  });
+  renderTimeline();
 
   // Mini map
   const mapEl = container.querySelector('#mini-map');
@@ -185,6 +246,24 @@ export async function render(container, params, routeParams) {
 
 export function destroy() {
   if (miniMap) { miniMap.remove(); miniMap = null; }
+}
+
+const TL_ICONS = { note: '📝', appointment: '📍', task: '☑', stage_change: '➜', relationship_change: '◆', created: '＋' };
+
+function timelineItem(t) {
+  let actions = '';
+  if (t.type === 'note') actions = `<button class="btn btn-link btn-sm" data-act="del-note" data-id="${t.id}">Delete</button>`;
+  if (t.type === 'appointment') actions = `<button class="btn btn-link btn-sm" data-act="open-appt" data-id="${t.id}">Open</button>`;
+  if (t.type === 'task') actions = `<button class="btn btn-link btn-sm" data-act="open-task" data-id="${t.id}">Open</button>`;
+  const extra = t.type === 'appointment' ? `<span class="badge badge-${esc(t.status)}">${esc(t.status)}</span>` : '';
+  return `
+    <li class="tl-item ${t.future ? 'future' : ''}">
+      <div class="tl-icon tl-icon-${esc(t.type)}">${TL_ICONS[t.type] || '•'}</div>
+      <div class="tl-body">
+        <div class="tl-title">${esc(t.title)} ${extra}<span class="tl-time">${esc(fmtDateTime(t.at))}${t.future ? ' · upcoming' : ''}</span><span class="tl-actions">${actions}</span></div>
+        ${t.body ? `<div class="tl-text">${esc(t.body)}</div>` : ''}
+      </div>
+    </li>`;
 }
 
 function apptRow(a, meta) {

@@ -19,19 +19,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 CLINICS = [
     {"name": "Crowfoot Medical Clinic", "address": "400 Crowfoot Cres NW", "postal_code": "T3G 5H6",
      "lat": 51.1235, "lng": -114.2065, "relationship": "current_client", "clinic_type": "Family practice",
-     "emr_system": "Telus Wolf", "provider_count": 8, "tags": "NW, client", "phone": "403-555-0100"},
+     "emr_system": "Telus Wolf", "provider_count": 8, "tags": "NW, client", "phone": "403-555-0100",
+     "stage": "won", "deal_value": 18000, "outcome_reason": "service", "outcome_notes": "Chose us for on-site response time."},
     {"name": "Beltline Family Practice", "address": "1121 12 Ave SW", "postal_code": "T2R 0J3",
      "lat": 51.0413, "lng": -114.0794, "relationship": "interested", "clinic_type": "Family practice",
-     "emr_system": "Accuro", "provider_count": 5, "tags": "downtown", "next_follow_up": (datetime.now() + timedelta(days=3)).date().isoformat()},
+     "emr_system": "Accuro", "provider_count": 5, "tags": "downtown", "next_follow_up": (datetime.now() + timedelta(days=3)).date().isoformat(),
+     "stage": "proposal", "deal_value": 12000, "win_probability": 65, "expected_close": (datetime.now() + timedelta(days=14)).date().isoformat()},
     {"name": "Marlborough Walk-In", "address": "1240 36 St NE", "postal_code": "T2A 6L1",
      "lat": 51.0552, "lng": -113.9836, "relationship": "prospect", "clinic_type": "Walk-in clinic",
-     "it_provider": "In-house", "provider_count": 4, "tags": "NE, walk-in"},
+     "it_provider": "In-house", "provider_count": 4, "tags": "NE, walk-in", "stage": "contacted", "deal_value": 6000},
     {"name": "Southcentre Dental", "address": "100 Anderson Rd SE", "postal_code": "T2J 3V1",
      "lat": 50.9615, "lng": -114.0715, "relationship": "prospect", "clinic_type": "Dental",
-     "provider_count": 3, "tags": "SE, dental"},
+     "provider_count": 3, "tags": "SE, dental", "stage": "lost", "deal_value": 4500, "outcome_reason": "contract_locked",
+     "outcome_notes": "3-year contract with current provider, ends spring 2028."},
     {"name": "Westbrook Physiotherapy", "address": "1200 37 St SW", "postal_code": "T3C 1S2",
      "lat": 51.0378, "lng": -114.1319, "relationship": "prospect", "clinic_type": "Physiotherapy",
-     "provider_count": 2, "tags": "SW"},
+     "provider_count": 2, "tags": "SW", "stage": "demo", "deal_value": 5000, "expected_close": (datetime.now() + timedelta(days=25)).date().isoformat()},
     {"name": "Bowness Medical Centre", "address": "6400 Bowness Rd NW", "postal_code": "T3B 0E3",
      "lat": 51.0867, "lng": -114.1855, "relationship": "do_not_contact", "clinic_type": "Medical centre",
      "notes": "Locked into a 5-year contract with another provider. Asked not to be contacted.", "tags": "NW"},
@@ -57,6 +60,14 @@ APPOINTMENTS = [
     ("Southcentre Dental", {"title": "Drop-in visit", "appt_type": "visit", "start_time": _dt(-150), "status": "completed", "outcome": "Not interested right now, revisit next year."}),
 ]
 
+TASKS = [
+    ("Beltline Family Practice", {"title": "Send revised backup quote", "due_date": (datetime.now() - timedelta(days=1)).date().isoformat(), "priority": "high"}),
+    ("Beltline Family Practice", {"title": "Call Dana (office manager) re: decision", "due_date": (datetime.now() + timedelta(days=2)).date().isoformat()}),
+    ("Marlborough Walk-In", {"title": "Drop off brochure for Tom", "due_date": datetime.now().date().isoformat()}),
+    ("Westbrook Physiotherapy", {"title": "Prepare demo laptop", "due_date": (datetime.now() + timedelta(days=5)).date().isoformat(), "priority": "medium"}),
+    (None, {"title": "Order more business cards", "priority": "low"}),
+]
+
 NOTES = [
     ("Beltline Family Practice", "Emily says the office manager (Dana) is in Tue-Thu mornings."),
     ("Marlborough Walk-In", "Their current IT person is retiring in the spring."),
@@ -78,7 +89,9 @@ def seed_via_api(base: str) -> None:
         post("/api/appointments", {**a, "clinic_id": ids[name]})
     for name, body in NOTES:
         post(f"/api/clinics/{ids[name]}/notes", {"body": body})
-    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments via {base}")
+    for name, t in TASKS:
+        post("/api/tasks", {**t, "clinic_id": ids[name] if name else None})
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks via {base}")
 
 
 def seed_direct() -> None:
@@ -95,7 +108,9 @@ def seed_direct() -> None:
             client.post("/api/appointments", json={**a, "clinic_id": ids[name]})
         for name, body in NOTES:
             client.post(f"/api/clinics/{ids[name]}/notes", json={"body": body})
-    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments")
+        for name, t in TASKS:
+            client.post("/api/tasks", json={**t, "clinic_id": ids[name] if name else None})
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks")
 
 
 if __name__ == "__main__":

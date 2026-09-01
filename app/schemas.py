@@ -10,6 +10,7 @@ Priority = Literal["high", "medium", "low"]
 ContactRole = Literal["manager", "doctor", "nurse", "receptionist", "staff", "owner", "it", "other"]
 ApptType = Literal["visit", "call", "demo", "install", "support", "other"]
 ApptStatus = Literal["scheduled", "completed", "cancelled", "no_show"]
+Stage = Literal["prospect", "contacted", "demo", "proposal", "won", "lost"]
 
 
 def _blank_to_none(v):
@@ -39,11 +40,20 @@ class ClinicIn(BaseModel):
     tags: Optional[str] = None
     notes: Optional[str] = None
     next_follow_up: Optional[str] = None  # YYYY-MM-DD
+    # Pipeline / deal tracking
+    stage: Stage = "prospect"
+    deal_value: Optional[float] = Field(default=None, ge=0, description="Estimated annual contract value")
+    expected_close: Optional[str] = None  # YYYY-MM-DD
+    win_probability: Optional[int] = Field(default=None, ge=0, le=100)
+    outcome_reason: Optional[str] = None
+    outcome_notes: Optional[str] = None
+    outcome_date: Optional[str] = None
 
     _blank = field_validator(
         "address", "city", "province", "postal_code", "phone", "fax", "email", "website",
         "clinic_type", "emr_system", "it_provider", "tags", "notes", "next_follow_up",
-        "lat", "lng", "provider_count", mode="before",
+        "lat", "lng", "provider_count", "deal_value", "expected_close", "win_probability",
+        "outcome_reason", "outcome_notes", "outcome_date", mode="before",
     )(_blank_to_none)
 
     @field_validator("name")
@@ -112,3 +122,48 @@ class AppointmentPatch(BaseModel):
 class NoteIn(BaseModel):
     body: str = Field(min_length=1)
     author: Optional[str] = None
+
+
+class StageChange(BaseModel):
+    """Move a clinic along the pipeline (used by the Kanban board)."""
+    stage: Stage
+    outcome_reason: Optional[str] = None
+    outcome_notes: Optional[str] = None
+
+    _blank = field_validator("outcome_reason", "outcome_notes", mode="before")(_blank_to_none)
+
+
+class TaskIn(BaseModel):
+    clinic_id: Optional[int] = None
+    contact_id: Optional[int] = None
+    title: str = Field(min_length=1, max_length=200)
+    notes: Optional[str] = None
+    due_date: Optional[str] = None  # YYYY-MM-DD
+    priority: Priority = "medium"
+    done: bool = False
+
+    _blank = field_validator("clinic_id", "contact_id", "notes", "due_date", mode="before")(_blank_to_none)
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("title is required")
+        return v
+
+
+class TaskPatch(BaseModel):
+    done: Optional[bool] = None
+    due_date: Optional[str] = None
+
+
+class LatLng(BaseModel):
+    lat: float
+    lng: float
+
+
+class RouteRequest(BaseModel):
+    clinic_ids: list[int] = Field(min_length=1)
+    start: Optional[LatLng] = None
+    return_to_start: bool = False

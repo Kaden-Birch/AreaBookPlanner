@@ -1,8 +1,8 @@
 // Modal forms for clinics, contacts and appointments (shared across pages).
-import { clinics, contacts, appointments, geocode, getMeta } from './api.js';
+import { clinics, contacts, appointments, tasks, geocode, getMeta } from './api.js';
 import {
   esc, attr, openModal, confirmDialog, toast, formData, showFormError, options,
-  toLocalInput, pinIcon, debounce,
+  toLocalInput, toDateInput, pinIcon, debounce,
 } from './ui.js';
 
 // ---- Clinic --------------------------------------------------------------
@@ -65,6 +65,46 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
       </div>
 
       <div class="form-section">
+        <h3>Deal / pipeline</h3>
+        <div class="field-row">
+          <div class="field">
+            <label>Pipeline stage</label>
+            <select name="stage" id="stage-select">${options(meta.stages, c.stage || 'prospect')}</select>
+            <div class="help">Won sets the relationship to Current client.</div>
+          </div>
+          <div class="field">
+            <label>Est. annual value (CAD)</label>
+            <input name="deal_value" type="number" min="0" step="100" value="${attr(c.deal_value ?? '')}" placeholder="e.g. 12000">
+          </div>
+          <div class="field">
+            <label>Win probability %</label>
+            <input name="win_probability" type="number" min="0" max="100" step="5" value="${attr(c.win_probability ?? '')}" id="prob-input" placeholder="${meta.default_probability[c.stage || 'prospect']}">
+            <div class="help">Blank uses the stage default.</div>
+          </div>
+          <div class="field">
+            <label>Expected close</label>
+            <input name="expected_close" type="date" value="${attr(c.expected_close)}">
+          </div>
+        </div>
+        <div id="outcome-fields" class="${['won', 'lost'].includes(c.stage) ? '' : 'hidden'}">
+          <div class="field-row">
+            <div class="field">
+              <label id="outcome-label">${c.stage === 'lost' ? 'Why lost?' : 'Why won?'}</label>
+              <select name="outcome_reason" id="outcome-reason"></select>
+            </div>
+            <div class="field">
+              <label>Outcome date</label>
+              <input name="outcome_date" type="date" value="${attr(c.outcome_date)}">
+            </div>
+          </div>
+          <div class="field">
+            <label>Outcome notes</label>
+            <textarea name="outcome_notes" rows="2" placeholder="What tipped it? Who decided? Anything to learn for next time?">${esc(c.outcome_notes)}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
         <h3>Practice details</h3>
         <div class="field-row">
           <div class="field">
@@ -98,6 +138,23 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
   const form = modal.body.querySelector('#clinic-form');
   const latEl = form.elements.lat;
   const lngEl = form.elements.lng;
+
+  // Stage-dependent outcome fields
+  const stageSel = form.querySelector('#stage-select');
+  const outcomeBox = form.querySelector('#outcome-fields');
+  const reasonSel = form.querySelector('#outcome-reason');
+  const fillReasons = () => {
+    const stage = stageSel.value;
+    const closed = stage === 'won' || stage === 'lost';
+    outcomeBox.classList.toggle('hidden', !closed);
+    form.querySelector('#prob-input').placeholder = meta.default_probability[stage];
+    if (!closed) return;
+    form.querySelector('#outcome-label').textContent = stage === 'lost' ? 'Why lost?' : 'Why won?';
+    reasonSel.innerHTML = options(stage === 'lost' ? meta.lost_reasons : meta.won_reasons, c.outcome_reason, { blank: '— Select a reason —' });
+    if (!form.elements.outcome_date.value) form.elements.outcome_date.value = toDateInput(new Date());
+  };
+  stageSel.addEventListener('change', fillReasons);
+  fillReasons();
 
   // Mini map with draggable pin
   const map = L.map(modal.body.querySelector('#clinic-form-map'), { zoomControl: true });
@@ -167,6 +224,7 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
     if (!data.name.trim()) { showFormError(form, 'Clinic name is required.'); return; }
     if (data.lat === '' || data.lat === null) data.lat = null;
     if (data.lng === '' || data.lng === null) data.lng = null;
+    if (!['won', 'lost'].includes(data.stage)) { data.outcome_reason = null; data.outcome_notes = null; data.outcome_date = null; }
     try {
       const saved = isEdit ? await clinics.update(clinic.id, data) : await clinics.create(data);
       toast(isEdit ? 'Clinic updated' : 'Clinic created', 'success');
@@ -421,6 +479,131 @@ export async function openLogVisit({ clinic, onSaved }) {
   };
   modal.root.querySelector('[data-act=save]').onclick = save;
   form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+}
+
+// ---- Pipeline stage change (Kanban drop / select) -----------------------
+
+export async function changeStage(clinic, stage, onSaved) {
+  if (stage === clinic.stage) return;
+  if (stage === 'won' || stage === 'lost') {
+    return openOutcomeDialog({ clinic, stage, onSaved });
+  }
+  try {
+    const saved = await clinics.setStage(clinic.id, { stage });
+    toast(`${clinic.name} → ${saved.stage_label}`, 'success');
+    onSaved && onSaved(saved);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+export async function openOutcomeDialog({ clinic, stage, onSaved }) {
+  const meta = await getMeta();
+  const won = stage === 'won';
+  const reasons = won ? meta.won_reasons : meta.lost_reasons;
+  const modal = openModal({
+    title: won ? `Mark ${clinic.name} as Won 🎉` : `Mark ${clinic.name} as Lost`,
+    size: 'modal-sm',
+    body: `
+      <form id="outcome-form">
+        <div class="field">
+          <label>${won ? 'Why did we win?' : 'Why did we lose?'}</label>
+          <select name="outcome_reason">${options(reasons, '', { blank: '— Select a reason —' })}</select>
+        </div>
+        <div class="field">
+          <label>Notes</label>
+          <textarea name="outcome_notes" rows="3" placeholder="${won ? 'What sealed it? Contract details, start date...' : 'Who did they go with? Any chance to revisit later?'}"></textarea>
+        </div>
+        ${won ? '<p class="help">The clinic will be marked as a <strong>Current client</strong> (yellow on the map).</p>' : '<p class="help">The map colour is left unchanged. Set “Do not contact” on the clinic if they asked not to be called again.</p>'}
+      </form>`,
+    footer: `<button class="btn" data-act="cancel">Cancel</button>
+             <button class="btn btn-primary" data-act="save">${won ? 'Mark won' : 'Mark lost'}</button>`,
+  });
+  const form = modal.body.querySelector('#outcome-form');
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const save = async () => {
+    const data = formData(form);
+    try {
+      const saved = await clinics.setStage(clinic.id, { stage, ...data });
+      toast(`${clinic.name} marked ${saved.stage_label}`, 'success');
+      modal.close();
+      onSaved && onSaved(saved);
+    } catch (e) { showFormError(form, e.message); }
+  };
+  modal.root.querySelector('[data-act=save]').onclick = save;
+  form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+  return modal;
+}
+
+// ---- Tasks -------------------------------------------------------------------
+
+export async function openTaskForm({ task = null, clinicId = null, onSaved } = {}) {
+  const t = { priority: 'medium', ...(task || {}) };
+  if (!task && clinicId) t.clinic_id = clinicId;
+  const isEdit = !!task;
+  const clinicOpts = await clinicOptions(t.clinic_id);
+  const body = `
+    <form id="task-form" autocomplete="off">
+      <div class="field"><label>Task *</label><input name="title" required value="${attr(t.title)}" placeholder="e.g. Call Sarah about the quote"></div>
+      <div class="field-row">
+        <div class="field"><label>Clinic</label><select name="clinic_id">${clinicOpts}</select></div>
+        <div class="field"><label>Contact</label><select name="contact_id"><option value="">—</option></select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Due date</label><input name="due_date" type="date" value="${attr(t.due_date)}"></div>
+        <div class="field"><label>Priority</label><select name="priority">${options({ high: 'High', medium: 'Medium', low: 'Low' }, t.priority)}</select></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="3">${esc(t.notes)}</textarea></div>
+      ${isEdit ? `<div class="field"><label class="checkbox"><input type="checkbox" name="done" ${t.done ? 'checked' : ''}> Done</label></div>` : ''}
+    </form>`;
+  const modal = openModal({
+    title: isEdit ? 'Edit task' : 'New task',
+    body,
+    footer: `${isEdit ? '<button class="btn btn-danger left" data-act="delete">Delete</button>' : ''}
+             <button class="btn" data-act="cancel">Cancel</button>
+             <button class="btn btn-primary" data-act="save">${isEdit ? 'Save changes' : 'Add task'}</button>`,
+  });
+  const form = modal.body.querySelector('#task-form');
+  const clinicSel = form.elements.clinic_id, contactSel = form.elements.contact_id;
+  const loadContacts = async () => {
+    contactSel.innerHTML = '<option value="">—</option>';
+    if (!clinicSel.value) return;
+    const list = await contacts.list({ clinic_id: clinicSel.value });
+    contactSel.innerHTML += list.map(ct => `<option value="${ct.id}"${String(ct.id) === String(t.contact_id) ? ' selected' : ''}>${esc(ct.full_name)}</option>`).join('');
+  };
+  clinicSel.addEventListener('change', loadContacts);
+  loadContacts();
+  // Quick due-date shortcuts
+  const dueEl = form.elements.due_date;
+  const shortcuts = document.createElement('div');
+  shortcuts.className = 'flex mt';
+  shortcuts.innerHTML = ['Today', 'Tomorrow', 'Next week'].map((l, i) => `<button type="button" class="btn btn-sm" data-days="${[0, 1, 7][i]}">${l}</button>`).join('');
+  dueEl.parentElement.appendChild(shortcuts);
+  shortcuts.querySelectorAll('button').forEach(b => { b.onclick = () => { const d = new Date(); d.setDate(d.getDate() + Number(b.dataset.days)); dueEl.value = toDateInput(d); }; });
+
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const del = modal.root.querySelector('[data-act=delete]');
+  if (del) del.onclick = async () => {
+    if (!(await confirmDialog(`Delete task "${t.title}"?`))) return;
+    await tasks.remove(task.id);
+    toast('Task deleted');
+    modal.close();
+    onSaved && onSaved(null);
+  };
+  const save = async () => {
+    const data = formData(form);
+    if (!data.title.trim()) { showFormError(form, 'Task title is required.'); return; }
+    data.clinic_id = data.clinic_id ? Number(data.clinic_id) : null;
+    data.contact_id = data.contact_id ? Number(data.contact_id) : null;
+    if (!isEdit) data.done = false;
+    try {
+      const saved = isEdit ? await tasks.update(task.id, data) : await tasks.create(data);
+      toast(isEdit ? 'Task updated' : 'Task added', 'success');
+      modal.close();
+      onSaved && onSaved(saved);
+    } catch (e) { showFormError(form, e.message); }
+  };
+  modal.root.querySelector('[data-act=save]').onclick = save;
+  form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+  return modal;
 }
 
 export const debouncedSearch = debounce;

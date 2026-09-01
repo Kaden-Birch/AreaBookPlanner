@@ -61,7 +61,21 @@ export const clinics = {
   remove: (id) => api.del(`/api/clinics/${id}`),
   addNote: (id, body) => api.post(`/api/clinics/${id}/notes`, { body }),
   removeNote: (id, noteId) => api.del(`/api/clinics/${id}/notes/${noteId}`),
+  setStage: (id, body) => api.patch(`/api/clinics/${id}/stage`, body),
+  timeline: (id) => api.get(`/api/clinics/${id}/timeline`),
 };
+
+export const tasks = {
+  list: (params) => api.get('/api/tasks', params),
+  get: (id) => api.get(`/api/tasks/${id}`),
+  create: (data) => api.post('/api/tasks', data),
+  update: (id, data) => api.put(`/api/tasks/${id}`, data),
+  patch: (id, data) => api.patch(`/api/tasks/${id}`, data),
+  remove: (id) => api.del(`/api/tasks/${id}`),
+};
+
+export const planRoute = (body) => api.post('/api/route', body);
+export const driveTime = (lat, lng) => api.get('/api/drivetime', { lat, lng });
 
 export const contacts = {
   list: (params) => api.get('/api/contacts', params),

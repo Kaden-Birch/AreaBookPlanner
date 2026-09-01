@@ -17,6 +17,34 @@ COLOR_LABELS = {
     "red": "Do not contact",
 }
 
+STAGE_LABELS = {
+    "prospect": "Prospect",
+    "contacted": "Contacted",
+    "demo": "Demo",
+    "proposal": "Proposal",
+    "won": "Won",
+    "lost": "Lost",
+}
+OPEN_STAGES = ("prospect", "contacted", "demo", "proposal")
+
+WON_REASONS = {
+    "price": "Competitive price",
+    "service": "Service / responsiveness",
+    "relationship": "Existing relationship",
+    "referral": "Referral",
+    "timing": "Good timing (contract ended)",
+    "other": "Other",
+}
+LOST_REASONS = {
+    "price": "Price too high",
+    "competitor": "Chose a competitor",
+    "contract_locked": "Locked into existing contract",
+    "timing": "Bad timing",
+    "no_need": "No need / in-house IT",
+    "no_response": "Went quiet / no response",
+    "other": "Other",
+}
+
 RELATIONSHIP_LABELS = {
     "current_client": "Current client",
     "interested": "Interested",
@@ -89,4 +117,24 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
     clinic["color_label"] = COLOR_LABELS[clinic["color"]]
     clinic["relationship_label"] = RELATIONSHIP_LABELS.get(clinic["relationship"], clinic["relationship"])
     clinic["tag_list"] = [t.strip() for t in (clinic.get("tags") or "").split(",") if t.strip()]
+    stage = clinic.get("stage") or "prospect"
+    clinic["stage"] = stage
+    clinic["stage_label"] = STAGE_LABELS.get(stage, stage)
+    value = clinic.get("deal_value") or 0
+    prob = clinic.get("win_probability")
+    if prob is None:
+        prob = DEFAULT_PROBABILITY.get(stage, 0)
+    clinic["effective_probability"] = prob
+    clinic["weighted_value"] = round(value * prob / 100, 2) if stage in OPEN_STAGES else 0
     return clinic
+
+
+# Used when no explicit win probability is set on a clinic.
+DEFAULT_PROBABILITY = {"prospect": 10, "contacted": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
+
+
+def log_event(conn: sqlite3.Connection, clinic_id: int, event_type: str, title: str, detail: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO clinic_events (clinic_id, event_type, title, detail) VALUES (?, ?, ?, ?)",
+        (clinic_id, event_type, title, detail),
+    )

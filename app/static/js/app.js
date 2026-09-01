@@ -5,8 +5,10 @@ import * as clinicsPage from './pages/clinics.js';
 import * as clinicDetail from './pages/clinic-detail.js';
 import * as contactsPage from './pages/contacts.js';
 import * as calendarPage from './pages/calendar.js';
+import * as pipelinePage from './pages/pipeline.js';
+import * as tasksPage from './pages/tasks.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
-import { navigate, toast } from './ui.js';
+import { navigate, toast, toggleTheme, getTheme } from './ui.js';
 
 const routes = [
   { pattern: /^\/?$/, page: dashboard, nav: '' },
@@ -15,6 +17,8 @@ const routes = [
   { pattern: /^\/clinics\/(?<id>\d+)$/, page: clinicDetail, nav: 'clinics' },
   { pattern: /^\/contacts$/, page: contactsPage, nav: 'contacts' },
   { pattern: /^\/calendar$/, page: calendarPage, nav: 'calendar' },
+  { pattern: /^\/pipeline$/, page: pipelinePage, nav: 'pipeline' },
+  { pattern: /^\/tasks$/, page: tasksPage, nav: 'tasks' },
 ];
 
 let current = null;
@@ -48,6 +52,12 @@ document.getElementById('global-add-clinic').onclick = () =>
   openClinicForm({ onSaved: (c) => navigate(`#/clinics/${c.id}`) });
 document.getElementById('global-add-appointment').onclick = () =>
   openAppointmentForm({ onSaved: () => route() });
+
+// Dark mode toggle (theme itself is applied before first paint in index.html).
+const themeBtn = document.getElementById('theme-toggle');
+const syncThemeBtn = () => { themeBtn.textContent = getTheme() === 'dark' ? '☀' : '☾'; };
+themeBtn.onclick = () => { toggleTheme(); syncThemeBtn(); };
+syncThemeBtn();
 
 // Surface API failures that escape page code.
 window.addEventListener('unhandledrejection', (e) => {

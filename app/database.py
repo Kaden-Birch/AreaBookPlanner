@@ -87,6 +87,32 @@ CREATE TABLE IF NOT EXISTS clinic_notes (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id   INTEGER REFERENCES clinics(id) ON DELETE CASCADE,
+    contact_id  INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    title       TEXT NOT NULL,
+    notes       TEXT,
+    due_date    TEXT,
+    priority    TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
+    done        INTEGER NOT NULL DEFAULT 0,
+    done_at     TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS clinic_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id   INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    detail      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_clinic ON tasks(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
+CREATE INDEX IF NOT EXISTS idx_events_clinic ON clinic_events(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_clinic ON contacts(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_clinic ON appointments(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_start ON appointments(start_time);
@@ -102,10 +128,35 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first release. Applied with ALTER TABLE on existing databases.
+MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "clinics": [
+        ("stage", "TEXT NOT NULL DEFAULT 'prospect'"),
+        ("deal_value", "REAL"),
+        ("expected_close", "TEXT"),
+        ("win_probability", "INTEGER"),
+        ("outcome_reason", "TEXT"),
+        ("outcome_notes", "TEXT"),
+        ("outcome_date", "TEXT"),
+    ],
+}
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, ddl in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    # Keep the pipeline consistent with the relationship for pre-existing rows.
+    conn.execute("UPDATE clinics SET stage = 'won' WHERE relationship = 'current_client' AND stage <> 'won'")
+
+
 def init_db() -> None:
     conn = _connect()
     try:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
         conn.commit()
     finally:
         conn.close()

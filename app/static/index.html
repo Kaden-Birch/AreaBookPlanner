@@ -6,6 +6,17 @@
   <title>Area Book Planner</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%232b6fd6'/><circle cx='50' cy='50' r='16' fill='white'/></svg>">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/vendor/markercluster/MarkerCluster.css">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash of the wrong colours.
+    (function () {
+      try {
+        var t = localStorage.getItem('theme');
+        if (!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
@@ -17,13 +28,16 @@
     <nav class="topnav" id="topnav">
       <a href="#/" data-route="">Dashboard</a>
       <a href="#/map" data-route="map">Map</a>
+      <a href="#/pipeline" data-route="pipeline">Pipeline</a>
       <a href="#/clinics" data-route="clinics">Clinics</a>
       <a href="#/contacts" data-route="contacts">Contacts</a>
       <a href="#/calendar" data-route="calendar">Calendar</a>
+      <a href="#/tasks" data-route="tasks">Tasks</a>
     </nav>
     <div class="topbar-right">
       <button class="btn btn-primary" id="global-add-clinic">+ Clinic</button>
       <button class="btn" id="global-add-appointment">+ Appointment</button>
+      <button class="btn theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
     </div>
   </header>
   <main id="app" class="page"></main>
@@ -31,6 +45,8 @@
   <div id="toast-root"></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/vendor/markercluster/leaflet.markercluster.js"></script>
+  <script src="/static/vendor/heat/leaflet-heat.js"></script>
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

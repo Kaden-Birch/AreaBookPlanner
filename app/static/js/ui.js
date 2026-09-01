@@ -183,6 +183,49 @@ export function showFormError(form, message) {
 
 export function navigate(hash) { window.location.hash = hash; }
 
+// ---- Money ---------------------------------------------------------------
+const moneyFmt = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
+export function fmtMoney(v) {
+  if (v === null || v === undefined || v === '' || isNaN(Number(v))) return '';
+  return moneyFmt.format(Number(v));
+}
+export function fmtKm(km) { return km == null ? '' : `${Number(km).toFixed(km < 10 ? 1 : 0)} km`; }
+export function fmtMinutes(m) {
+  if (m == null) return '';
+  m = Math.round(m);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+
+// ---- Theme ---------------------------------------------------------------
+export function getTheme() { return document.documentElement.getAttribute('data-theme') || 'light'; }
+export function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('theme', t); } catch { /* private mode */ }
+  document.dispatchEvent(new CustomEvent('themechange', { detail: t }));
+}
+export function toggleTheme() { setTheme(getTheme() === 'dark' ? 'light' : 'dark'); }
+
+// ---- Geo -----------------------------------------------------------------
+export function haversineKm(a, b) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+export function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('Geolocation is not available in this browser')); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      err => reject(new Error(err.code === 1 ? 'Location permission denied. Click the map to set a point instead.' : 'Could not get your location. Click the map to set a point instead.')),
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  });
+}
+export function stageBadge(clinic) {
+  return `<span class="badge badge-stage-${esc(clinic.stage)}">${esc(clinic.stage_label || clinic.stage)}</span>`;
+}
+
 export function setTitle(t) { document.title = t ? `${t} · Area Book Planner` : 'Area Book Planner'; }
 
 export function debounce(fn, ms = 250) {

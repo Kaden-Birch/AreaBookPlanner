@@ -89,6 +89,9 @@ DEVICE_TYPES = {
     "wireless":     {"label": "Wireless device", "prefix": "M",  "icon": "📱", "network": False},
     "voip":         {"label": "VoIP phone",      "prefix": "V",  "icon": "☎",  "network": False},
     "printer":      {"label": "Printer",         "prefix": "P",  "icon": "🖨",  "network": False},
+    "nvr":          {"label": "Network video recorder", "prefix": "NVR", "icon": "📹", "network": False, "security": True},
+    "camera":       {"label": "Security camera",  "prefix": "CAM", "icon": "📷", "network": False, "security": True},
+    "security":     {"label": "Security device",  "prefix": "SEC", "icon": "🔒", "network": False, "security": True},
     "other":        {"label": "Other",           "prefix": "O",  "icon": "📦", "network": False},
 }
 DEVICE_DESIGNATIONS = {
@@ -103,7 +106,10 @@ DEVICE_DESIGNATIONS = {
     "router": ["ISP modem/router", "Edge router", "VPN router"],
     "switch": ["Core switch", "Access switch", "PoE switch"],
     "access_point": ["Ceiling AP", "Guest Wi-Fi", "Mesh node"],
-    "other": ["UPS", "NAS", "Camera", "Door controller", "Smart TV"],
+    "nvr": ["NVR", "DVR", "VMS / camera server", "Cloud recorder"],
+    "camera": ["Dome", "Bullet", "PTZ", "Turret", "Doorbell / video intercom", "Fisheye"],
+    "security": ["Access control panel", "Door controller", "Alarm panel", "Card reader", "Intercom", "Motion / door sensor", "Keypad"],
+    "other": ["UPS", "NAS", "Smart TV", "Digital signage"],
 }
 DEVICE_STATUSES = {"active": "Active", "spare": "Spare", "retired": "Retired"}
 LINK_TYPES_NET = {"ethernet": "Wired (Ethernet)", "wireless": "Wireless"}
@@ -113,10 +119,10 @@ USER_DEVICE_TYPES = ("workstation", "laptop", "wireless", "voip")
 OS_DEVICE_TYPES = ("workstation", "laptop", "server", "vm", "wireless", "other")
 # Typical rack height (in rack units) by device type, used as the default when adding to a rack.
 DEFAULT_RACK_UNITS = {
-    "server": 2, "switch": 1, "router": 1, "firewall": 1, "access_point": 1, "printer": 0, "other": 1,
+    "server": 2, "switch": 1, "router": 1, "firewall": 1, "access_point": 1, "nvr": 2, "security": 1, "other": 1,
 }
 # Device types that are never physically rack-mounted (a VM lives on its host, etc.).
-NON_RACKABLE_TYPES = ("vm", "wireless", "laptop")
+NON_RACKABLE_TYPES = ("vm", "wireless", "laptop", "camera")
 
 
 def clinic_shorthand(clinic: dict) -> str:

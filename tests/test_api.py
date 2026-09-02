@@ -647,3 +647,32 @@ def test_racks(client):
     assert r.status_code == 200 and r.json()["rack_position"] == 3
     backup = client.get("/api/export/backup.json").json()
     assert any("rack" in d for d in backup["devices"])
+
+
+def test_security_devices_and_1u(client):
+    cid = client.post("/api/clinics", json={"name": "Sec Clinic", "shorthand": "SEC"}).json()["id"]
+    dm = client.get("/api/meta/devices").json()
+    assert {"camera", "nvr", "security"} <= set(dm["types"])
+    assert dm["types"]["camera"]["prefix"] == "CAM" and dm["types"]["nvr"]["prefix"] == "NVR"
+    assert dm["default_rack_units"]["nvr"] == 2
+    assert "camera" in dm["non_rackable"] and "nvr" not in dm["non_rackable"]
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "rack": "R", "rack_room": "IT", "rack_position": 10, "rack_units": 1}).json()
+    assert sw["name"] == "SEC-SW001" and sw["rack_units"] == 1  # 1U accepted
+    nvr = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "nvr", "designation": "NVR", "uplink_id": sw["id"], "rack": "R", "rack_room": "IT", "rack_position": 8, "rack_units": 2}).json()
+    assert nvr["name"] == "SEC-NVR001"
+    cam = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "camera", "designation": "Dome", "uplink_id": sw["id"], "user_name": "Front door"}).json()
+    assert cam["name"] == "SEC-CAM001"
+    door = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "security", "designation": "Access control panel", "uplink_id": sw["id"]}).json()
+    assert door["name"] == "SEC-SEC001"
+    # 1U device with explicit position 1 is fine
+    assert client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "rack": "R", "rack_room": "IT", "rack_position": 1, "rack_units": 1}).status_code == 201
+    # blank rack fields (None) are allowed
+    assert client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall", "rack_position": None, "rack_units": None}).status_code == 201
+    # topology places cameras/nvr; racks include the NVR
+    topo = client.get(f"/api/clinics/{cid}/topology").json()
+    assert any(n["device_type"] == "camera" for n in topo["nodes"])
+    racks = client.get(f"/api/clinics/{cid}/racks").json()
+    rack = racks["racks"][0]
+    assert any(d["device_type"] == "nvr" for d in rack["devices"])
+    # camera is a link on the rack (external, since not rack-mounted)
+    assert any(l["b_name"] == cam["name"] or l["a"] == cam["id"] for l in rack["links"])

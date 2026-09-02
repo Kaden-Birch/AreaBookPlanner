@@ -632,6 +632,7 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-node .accent-network { fill: var(--c-interested); }
 .topo-node .accent-server { fill: #7c5cd6; }
 .topo-node .accent-vm { fill: #a98be6; }
+.topo-node .accent-security { fill: #d9342b; }
 .topo-node .accent-endpoint { fill: var(--c-client); }
 .topo-node .accent-phone { fill: #eda100; }
 .topo-node .accent-printer { fill: #8a8f98; }
@@ -762,20 +763,28 @@ details summary { cursor: pointer; font-weight: 600; }
 .ru-icon { font-size: 13px; }
 .ru-u { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .ru-badge { font-size: 10px; }
+.ru-empty { cursor: pointer; }
+.ru-empty rect { fill: transparent; stroke: transparent; }
+.ru-empty-label { fill: transparent; font-size: 11px; font-weight: 600; }
+.ru-empty:hover rect { fill: var(--primary-soft); stroke: var(--primary); stroke-dasharray: 4 3; }
+.ru-empty:hover .ru-empty-label { fill: var(--primary-soft-text); }
 /* fills per type (box tint + accent stripe) */
 .ru-box.fill-network, .thumb-slot.fill-network { fill: color-mix(in srgb, var(--c-interested) 12%, var(--surface)); }
 .ru-box.fill-server, .thumb-slot.fill-server { fill: color-mix(in srgb, #7c5cd6 14%, var(--surface)); }
 .ru-box.fill-vm, .thumb-slot.fill-vm { fill: color-mix(in srgb, #a98be6 14%, var(--surface)); }
 .ru-box.fill-printer, .thumb-slot.fill-printer { fill: color-mix(in srgb, var(--c-stale) 14%, var(--surface)); }
+.ru-box.fill-security, .thumb-slot.fill-security { fill: color-mix(in srgb, var(--c-red) 12%, var(--surface)); }
 .ru-box.fill-other, .thumb-slot.fill-other { fill: var(--surface); }
 .ru-accent.fill-network { fill: var(--c-interested); }
 .ru-accent.fill-server { fill: #7c5cd6; }
 .ru-accent.fill-vm { fill: #a98be6; }
 .ru-accent.fill-printer { fill: var(--c-stale); }
+.ru-accent.fill-security { fill: var(--c-red); }
 .ru-accent.fill-other { fill: var(--faint); }
 .thumb-slot.fill-network { fill: var(--c-interested); }
 .thumb-slot.fill-server { fill: #7c5cd6; }
 .thumb-slot.fill-printer { fill: var(--c-stale); }
+.thumb-slot.fill-security { fill: var(--c-red); }
 .thumb-slot.fill-other { fill: var(--faint); }
 .thumb-frame { fill: var(--surface-2); stroke: var(--border); }
 /* cables */
@@ -789,6 +798,7 @@ details summary { cursor: pointer; font-weight: 600; }
 .rack-legend .sw.fill-network { background: var(--c-interested); }
 .rack-legend .sw.fill-server { background: #7c5cd6; }
 .rack-legend .sw.fill-printer { background: var(--c-stale); }
+.rack-legend .sw.fill-security { background: var(--c-red); }
 .rack-legend .cable { display: inline-block; width: 22px; border-top: 2px solid var(--c-interested); vertical-align: middle; margin-right: 4px; }
 .rack-legend .cable.wireless { border-top-style: dashed; border-color: var(--primary); }
 .rack-legend .cable.virtual { border-top-style: dotted; border-color: #7c5cd6; }

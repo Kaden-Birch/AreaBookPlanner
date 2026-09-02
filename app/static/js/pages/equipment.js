@@ -202,7 +202,7 @@ async function renderTopology(body) {
     </div>
     <div class="topo-legend">
       <span><span class="line"></span>Wired</span><span><span class="line wireless"></span>Wireless</span><span><span class="line virtual"></span>VM → host</span><span><span class="line extra"></span>Extra link</span>
-      <span>Left stripe: <span style="color:var(--c-interested)">■</span> network · <span style="color:#7c5cd6">■</span> server/VM · <span style="color:var(--c-client)">■</span> workstation/laptop · <span style="color:#eda100">■</span> phone · <span style="color:#8a8f98">■</span> printer</span>
+      <span>Left stripe: <span style="color:var(--c-interested)">■</span> network · <span style="color:#7c5cd6">■</span> server/VM · <span style="color:var(--c-client)">■</span> workstation/laptop · <span style="color:#eda100">■</span> phone · <span style="color:#8a8f98">■</span> printer · <span style="color:#d9342b">■</span> security</span>
       <span>🧊 = smaller box is a VM. Click a device for details.</span>
     </div>`;
   body.querySelectorAll('.topo-node').forEach(g => {
@@ -246,6 +246,7 @@ async function renderRacks(body) {
   // group racks by room
   const rooms = {};
   data.racks.forEach(r => { (rooms[r.room || 'Unspecified room'] ||= []).push(r); });
+  if (!state.rack || !data.racks.find(r => r.name === state.rack)) state.rack = data.racks[0].name;
   const selected = data.racks.find(r => r.name === state.rack) || null;
 
   body.innerHTML = `<div class="rack-layout">
@@ -273,6 +274,7 @@ async function renderRacks(body) {
   main.innerHTML = rackElevation(selected);
   main.querySelectorAll('.ru-device').forEach(g => { g.onclick = () => openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); });
   main.querySelectorAll('[data-id2]').forEach(b => { b.onclick = () => openDeviceDetail({ deviceId: Number(b.dataset.id2), clinic, onChanged: load }); });
+  main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => openDeviceForm({ clinic, initial: { device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); });
 }
 
 function rackThumb(r) {
@@ -291,6 +293,7 @@ function accentFill(t) {
   if (dt.network) return 'fill-network';
   if (t === 'server') return 'fill-server';
   if (t === 'vm') return 'fill-vm';
+  if (dt.security) return 'fill-security';
   if (t === 'printer') return 'fill-printer';
   return 'fill-other';
 }
@@ -311,6 +314,18 @@ function rackElevation(r) {
     const y = uToY(u);
     svg += `<line x1="${rackX}" x2="${rackX + rackW}" y1="${y}" y2="${y}" class="rack-uline"/>`;
     svg += `<text x="${rackX - 8}" y="${y + UH - 8}" text-anchor="end" class="rack-unum">${u}</text>`;
+  }
+
+  // occupied units -> so empty ones can be click-to-add
+  const occupied = new Set();
+  for (const d of r.devices) {
+    if (!d.position) continue;
+    for (let u = d.position; u < d.position + (d.units || 1); u++) occupied.add(u);
+  }
+  for (let u = 1; u <= U; u++) {
+    if (occupied.has(u)) continue;
+    const y = uToY(u);
+    svg += `<g class="ru-empty" data-u="${u}"><rect x="${rackX + 2}" y="${y + 1.5}" width="${rackW - 4}" height="${UH - 3}" rx="3"/><text x="${rackX + rackW / 2}" y="${y + UH / 2 + 4}" text-anchor="middle" class="ru-empty-label">+ add at U${u}</text></g>`;
   }
 
   // devices
@@ -378,7 +393,7 @@ function rackElevation(r) {
   svg += linkSvg.join('');
 
   const legend = `<div class="rack-legend">
-    <span><span class="sw fill-network"></span>Network</span><span><span class="sw fill-server"></span>Server</span><span><span class="sw fill-printer"></span>Printer</span>
+    <span><span class="sw fill-network"></span>Network</span><span><span class="sw fill-server"></span>Server</span><span><span class="sw fill-printer"></span>Printer</span><span><span class="sw fill-security"></span>Security</span>
     <span><span class="cable"></span>Cable</span><span><span class="cable wireless"></span>Wireless</span><span><span class="cable virtual"></span>Virtual</span>
     <span class="muted">Chips on the right are linked devices outside this rack. Click a device for details.</span></div>`;
 

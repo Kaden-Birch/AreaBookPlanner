@@ -9,6 +9,7 @@ export function accentClass(type, meta) {
   if (t.network) return 'accent-network';
   if (type === 'vm') return 'accent-vm';
   if (type === 'server') return 'accent-server';
+  if (t.security) return 'accent-security';
   if (type === 'voip' || type === 'wireless') return 'accent-phone';
   if (type === 'printer') return 'accent-printer';
   if (type === 'workstation' || type === 'laptop') return 'accent-endpoint';
@@ -148,8 +149,8 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     data.location_id = data.location_id ? Number(data.location_id) : null;
     data.link_type = typeSel.value === 'vm' ? 'virtual' : form.querySelector('[name=link_type]:checked').value;
     data.off_site = form.querySelector('[name=off_site]').checked;
-    data.rack_position = data.rack_position === '' ? null : Number(data.rack_position);
-    data.rack_units = data.rack_units === '' ? null : Number(data.rack_units);
+    data.rack_position = (data.rack_position === '' || data.rack_position == null) ? null : Number(data.rack_position);
+    data.rack_units = (data.rack_units === '' || data.rack_units == null) ? null : Number(data.rack_units);
     if (!isEdit) data.quantity = Math.max(1, Number(data.quantity) || 1);
     try {
       const saved = isEdit ? await devices.update(device.id, data) : await devices.create(clinic.id, data);

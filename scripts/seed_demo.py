@@ -100,6 +100,10 @@ EQUIPMENT = [  # (temp key, payload, uplink temp key)
     ("m1", {"device_type": "wireless", "user_name": "Dr. Patel", "designation": "Cell phone", "link_type": "wireless"}, "ap"),
     ("old", {"device_type": "workstation", "designation": "Old lab PC", "status": "retired", "notes": "Replaced Jan 2026, kept as spare parts."}, None),
     ("home", {"device_type": "laptop", "user_name": "Dr. Patel", "designation": "Home office", "off_site": True, "os": "Windows 11 Pro", "notes": "Connects via VPN from home."}, None),
+    ("nvr", {"device_type": "nvr", "designation": "NVR", "manufacturer": "Reolink", "model": "RLN8-410", "ip_address": "192.168.10.70", "rack": "Rack A", "rack_room": "Server room", "rack_position": 8, "rack_units": 2}, "sw"),
+    ("cam1", {"device_type": "camera", "designation": "Dome", "user_name": "Waiting room", "ip_address": "192.168.10.71"}, "nvr"),
+    ("cam2", {"device_type": "camera", "designation": "Bullet", "user_name": "Back entrance", "ip_address": "192.168.10.72"}, "nvr"),
+    ("acs", {"device_type": "security", "designation": "Access control panel", "manufacturer": "Kantech", "ip_address": "192.168.10.73"}, "sw"),
 ]
 TICKETS = [("vm2", {"title": "Backup job failing on Sundays", "url": "https://tickets.example.com/4412", "ticket_date": "2026-06-14"}),
            ("p1", {"title": "Paper jams on tray 2", "ticket_date": "2026-07-02"})]

@@ -94,8 +94,9 @@ and is stored in a single SQLite file.
   phone/extension, mobile, email) and matched to a clinic. Uses OpenAI vision; enter
   your API key under Settings → AI. The card image is attached to the clinic.
 - **Equipment inventory** – per clinic: firewalls, routers, switches, access points,
-  servers, workstations, laptops, wireless devices, VoIP phones, printers, network
-  video recorders, security cameras and other security devices, and more.
+  servers, workstations, laptops, wireless devices, VoIP phones, printers, patch
+  panels, shelves, network video recorders, security cameras and other security
+  devices, and more.
   Names follow `{SHORTHAND}-{PREFIX}{NNN}` (COC-W005, COC-S001, COC-FW001…) with the
   next number suggested automatically, or type your own. Each device has an uplink
   (wired or wireless), IP/MAC, model and serial, OS, assigned user, status, warranty,
@@ -117,7 +118,10 @@ and is stored in a single SQLite file.
   labeled chip (naming the device and its rack). Wired, wireless and VM links are
   styled distinctly. Empty rack units are click-to-add: clicking a slot opens the
   device form with the rack, room and U# pre-filled, and a rack device can be
-  dragged from one slot to another empty slot to reposition it.
+  dragged from one slot to another empty slot to reposition it. Shelves can be any
+  height and hold loose (non-rack-form-factor) devices, which render as chips on the
+  tray. The elevation puts upstream (uplink) devices on the left and downstream
+  devices on the right; hovering a device highlights just its cables.
 - **Quoting** – a price book under Settings (managed IT tiers priced per device or per
   user, VM / physical server / firewall / switch / AP / site management, basic and BDR
   backup, M365 backup, PrimeEMR flat or per user, hourly support rates, onboarding fee,

@@ -89,6 +89,8 @@ DEVICE_TYPES = {
     "wireless":     {"label": "Wireless device", "prefix": "M",  "icon": "📱", "network": False},
     "voip":         {"label": "VoIP phone",      "prefix": "V",  "icon": "☎",  "network": False},
     "printer":      {"label": "Printer",         "prefix": "P",  "icon": "🖨",  "network": False},
+    "patch_panel":  {"label": "Patch panel",      "prefix": "PP", "icon": "🎛", "network": False, "passive": True},
+    "shelf":        {"label": "Shelf",            "prefix": "SH", "icon": "🗂", "network": False, "shelf": True},
     "nvr":          {"label": "Network video recorder", "prefix": "NVR", "icon": "📹", "network": False, "security": True},
     "camera":       {"label": "Security camera",  "prefix": "CAM", "icon": "📷", "network": False, "security": True},
     "security":     {"label": "Security device",  "prefix": "SEC", "icon": "🔒", "network": False, "security": True},
@@ -109,6 +111,8 @@ DEVICE_DESIGNATIONS = {
     "nvr": ["NVR", "DVR", "VMS / camera server", "Cloud recorder"],
     "camera": ["Dome", "Bullet", "PTZ", "Turret", "Doorbell / video intercom", "Fisheye"],
     "security": ["Access control panel", "Door controller", "Alarm panel", "Card reader", "Intercom", "Motion / door sensor", "Keypad"],
+    "patch_panel": ["24-port Cat6", "48-port Cat6", "Fibre / LC", "Voice / 66 block", "Coax"],
+    "shelf": ["Fixed shelf", "Sliding shelf", "Vented shelf", "Cantilever shelf"],
     "other": ["UPS", "NAS", "Smart TV", "Digital signage"],
 }
 DEVICE_STATUSES = {"active": "Active", "spare": "Spare", "retired": "Retired"}
@@ -119,7 +123,8 @@ USER_DEVICE_TYPES = ("workstation", "laptop", "wireless", "voip")
 OS_DEVICE_TYPES = ("workstation", "laptop", "server", "vm", "wireless", "other")
 # Typical rack height (in rack units) by device type, used as the default when adding to a rack.
 DEFAULT_RACK_UNITS = {
-    "server": 2, "switch": 1, "router": 1, "firewall": 1, "access_point": 1, "nvr": 2, "security": 1, "other": 1,
+    "server": 2, "switch": 1, "router": 1, "firewall": 1, "access_point": 1, "nvr": 2, "security": 1,
+    "patch_panel": 1, "shelf": 2, "other": 1,
 }
 # Device types that are never physically rack-mounted (a VM lives on its host, etc.).
 NON_RACKABLE_TYPES = ("vm", "wireless", "laptop", "camera")

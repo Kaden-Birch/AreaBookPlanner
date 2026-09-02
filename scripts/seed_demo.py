@@ -104,6 +104,10 @@ EQUIPMENT = [  # (temp key, payload, uplink temp key)
     ("cam1", {"device_type": "camera", "designation": "Dome", "user_name": "Waiting room", "ip_address": "192.168.10.71"}, "nvr"),
     ("cam2", {"device_type": "camera", "designation": "Bullet", "user_name": "Back entrance", "ip_address": "192.168.10.72"}, "nvr"),
     ("acs", {"device_type": "security", "designation": "Access control panel", "manufacturer": "Kantech", "ip_address": "192.168.10.73"}, "sw"),
+    ("pp", {"device_type": "patch_panel", "designation": "24-port Cat6", "manufacturer": "Panduit", "rack": "Rack A", "rack_room": "Server room", "rack_position": 3, "rack_units": 1}, None),
+    ("shelf", {"device_type": "shelf", "designation": "Vented shelf", "rack": "Rack A", "rack_room": "Server room", "rack_position": 1, "rack_units": 2}, None),
+    ("nas", {"device_type": "other", "designation": "NAS", "manufacturer": "Synology", "model": "DS220+", "ip_address": "192.168.10.80", "shelf_key": "shelf"}, "sw"),
+    ("mini", {"device_type": "server", "designation": "Mini PC", "model": "Intel NUC", "ip_address": "192.168.10.81", "os": "Ubuntu 24.04", "shelf_key": "shelf"}, "sw"),
 ]
 TICKETS = [("vm2", {"title": "Backup job failing on Sundays", "url": "https://tickets.example.com/4412", "ticket_date": "2026-06-14"}),
            ("p1", {"title": "Paper jams on tray 2", "ticket_date": "2026-07-02"})]
@@ -115,6 +119,9 @@ def _seed_equipment(post, clinic_id: int) -> None:
         body = dict(payload)
         if up:
             body["uplink_id"] = ids[up]
+        shelf_key = body.pop("shelf_key", None)
+        if shelf_key:
+            body["shelf_id"] = ids[shelf_key]
         ids[key] = post(f"/api/clinics/{clinic_id}/devices", body)["id"]
     for key, t in TICKETS:
         post(f"/api/devices/{ids[key]}/tickets", t)

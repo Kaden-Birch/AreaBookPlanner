@@ -631,16 +631,14 @@ def test_racks(client):
     assert rackA["units"] >= 12  # min height
     srv_slot = next(d for d in rackA["devices"] if d["id"] == srv["id"])
     assert srv_slot["position"] == 5 and srv_slot["units"] == 2
-    # links: switch<->firewall and switch<->server are in-rack; switch<->workstation is external
-    sw_links = [l for l in rackA["links"] if sw["id"] in (l["a"], l["b"])]
-    in_rack = [l for l in sw_links if l["b_in_rack"] or (l["a"] != sw["id"])]
-    ext = [l for l in rackA["links"] if not l["b_in_rack"] and ws["id"] in (l["a"], l["b"])]
-    assert any(not l["b_in_rack"] and l["b_name"] == ws["name"] for l in rackA["links"])
-    assert any(l["b_in_rack"] for l in rackA["links"])
-    # AP link to switch: switch is in Rack A, so from Rack B's view it's an external link naming the other rack
+    # links: switch<->firewall and switch<->server are in-rack (peer); switch<->workstation is external (down)
+    assert any(l["in_rack"] and {l["member_id"], l["other_member_id"]} == {sw["id"], fw["id"]} for l in rackA["links"])
+    assert any(l["in_rack"] and {l["member_id"], l["other_member_id"]} == {sw["id"], srv["id"]} for l in rackA["links"])
+    assert any(not l["in_rack"] and l["direction"] == "down" and l["ext"]["name"] == ws["name"] for l in rackA["links"])
+    # AP (in Rack B) uplinks to the switch in Rack A -> external link from Rack B naming the other rack
     rackB = data["racks"][1]
-    aplink = [l for l in rackB["links"] if not l["b_in_rack"]]
-    assert aplink and aplink[0]["b_rack"] == "Rack A"
+    aplink = [l for l in rackB["links"] if not l["in_rack"]]
+    assert aplink and aplink[0]["ext"]["rack"] == "Rack A" and aplink[0]["direction"] == "up"
 
     # editing a device's rack fields
     r = client.put(f"/api/devices/{ap['id']}", json={**{k: ap[k] for k in ("device_type", "name", "status")}, "rack": "Rack B", "rack_room": "Front office", "rack_position": 3, "rack_units": 1, "uplink_id": sw["id"]})
@@ -674,5 +672,52 @@ def test_security_devices_and_1u(client):
     racks = client.get(f"/api/clinics/{cid}/racks").json()
     rack = racks["racks"][0]
     assert any(d["device_type"] == "nvr" for d in rack["devices"])
-    # camera is a link on the rack (external, since not rack-mounted)
-    assert any(l["b_name"] == cam["name"] or l["a"] == cam["id"] for l in rack["links"])
+    # camera is an external downstream link on the rack (uplinks to the switch, not rack-mounted itself)
+    assert any(not l["in_rack"] and (l.get("ext") or {}).get("name") == cam["name"] for l in rack["links"])
+
+
+def test_shelves_patch_panels_directional_links(client):
+    cid = client.post("/api/clinics", json={"name": "Shelf Clinic", "shorthand": "SHC"}).json()["id"]
+    dm = client.get("/api/meta/devices").json()
+    assert dm["types"]["patch_panel"]["prefix"] == "PP" and dm["types"]["shelf"]["prefix"] == "SH"
+    assert dm["default_rack_units"]["shelf"] == 2
+    fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall", "rack": "R1", "rack_room": "MDF", "rack_position": 20, "rack_units": 1}).json()
+    sw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "switch", "rack": "R1", "rack_room": "MDF", "rack_position": 18, "rack_units": 1, "uplink_id": fw["id"]}).json()
+    pp = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "patch_panel", "designation": "24-port Cat6", "rack": "R1", "rack_room": "MDF", "rack_position": 19, "rack_units": 1}).json()
+    assert pp["name"] == "SHC-PP001"
+    shelf = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "shelf", "rack": "R1", "rack_room": "MDF", "rack_position": 10, "rack_units": 4}).json()
+    assert shelf["name"] == "SHC-SH001" and shelf["rack_units"] == 4
+    # two non-rack devices ON the shelf (a NAS 'other' and a mini PC)
+    nas = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "other", "designation": "NAS", "shelf_id": shelf["id"], "rack": "R1", "rack_room": "MDF", "uplink_id": sw["id"]}).json()
+    minipc = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Mini PC", "shelf_id": shelf["id"], "rack": "R1", "rack_room": "MDF", "uplink_id": sw["id"]}).json()
+    # an external workstation that uplinks into the switch (downstream), and the fw is upstream of sw
+    ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "uplink_id": sw["id"]}).json()
+
+    data = client.get(f"/api/clinics/{cid}/racks").json()
+    assert any(sh["name"] == "SHC-SH001" for sh in data["shelves"])
+    rack = data["racks"][0]
+    assert rack["device_count"] == 6  # fw, sw, pp, shelf, nas, minipc
+    # shelf carries its two items; they are NOT separate mounted rows
+    shelf_row = next(d for d in rack["devices"] if d["device_type"] == "shelf")
+    assert {i["name"] for i in shelf_row["shelf_items"]} == {nas["name"], minipc["name"]}
+    mounted_names = {d["name"] for d in rack["devices"]}
+    assert nas["name"] not in mounted_names and minipc["name"] not in mounted_names
+    assert {"SHC-FW001", "SHC-SW001", "SHC-PP001", "SHC-SH001"} <= mounted_names
+
+    # directional links
+    def links_for(mid):
+        return [l for l in rack["links"] if l["member_id"] == mid]
+    sw_links = links_for(sw["id"])
+    # sw uplinks to fw (in-rack peer), sw has downstream ws (external, down), and shelf items uplink to sw
+    assert any(l["in_rack"] and l["direction"] == "peer" and {l["member_id"], l["other_member_id"]} == {sw["id"], fw["id"]} for l in rack["links"])
+    down = [l for l in sw_links if not l["in_rack"] and l["direction"] == "down"]
+    assert any(l["ext"]["name"] == ws["name"] for l in down)
+    # the shelf items' link to the switch anchors on the shelf (member_id == shelf) as upstream
+    shelf_up = [l for l in links_for(shelf["id"]) if l["direction"] == "up" and not l["in_rack"]]
+    # NAS/miniPC uplink to switch which is IN rack -> that becomes a peer link between shelf and switch
+    assert any(l["in_rack"] and {l["member_id"], l["other_member_id"]} == {shelf["id"], sw["id"]} for l in rack["links"])
+
+    # firewall's downstream includes the switch (in-rack peer, already counted) — external down should be empty here
+    assert not any(l for l in links_for(fw["id"]) if not l["in_rack"] and l["direction"] == "down")
+    backup = client.get("/api/export/backup.json").json()
+    assert any(d.get("shelf_id") for d in backup["devices"])

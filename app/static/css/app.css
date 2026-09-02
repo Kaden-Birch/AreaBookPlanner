@@ -779,6 +779,20 @@ details summary { cursor: pointer; font-weight: 600; }
 .ru-box.fill-printer, .thumb-slot.fill-printer { fill: color-mix(in srgb, var(--c-stale) 14%, var(--surface)); }
 .ru-box.fill-security, .thumb-slot.fill-security { fill: color-mix(in srgb, var(--c-red) 12%, var(--surface)); }
 .ru-box.fill-other, .thumb-slot.fill-other { fill: var(--surface); }
+.ru-box.fill-patch_panel, .thumb-slot.fill-patch_panel { fill: color-mix(in srgb, var(--c-stale) 10%, var(--surface)); }
+.ru-box.fill-shelf, .thumb-slot.fill-shelf { fill: var(--surface-3); }
+.ru-box.is-shelf { stroke-dasharray: none; stroke: var(--faint); }
+.ru-accent.fill-patch_panel { fill: var(--c-stale); }
+.ru-accent.fill-shelf { fill: var(--faint); }
+/* devices sitting on a shelf */
+.shelf-item { cursor: pointer; }
+.shelf-item rect { stroke: var(--border); }
+.shelf-item:hover rect { stroke: var(--primary); }
+.shelf-item text { font-size: 11px; fill: var(--text); }
+.shelf-item .fill-network { fill: color-mix(in srgb, var(--c-interested) 16%, var(--surface)); }
+.shelf-item .fill-server { fill: color-mix(in srgb, #7c5cd6 16%, var(--surface)); }
+.shelf-item .fill-security { fill: color-mix(in srgb, var(--c-red) 14%, var(--surface)); }
+.shelf-item .fill-other, .shelf-item .fill-printer, .shelf-item .fill-vm { fill: var(--surface); }
 .ru-accent.fill-network { fill: var(--c-interested); }
 .ru-accent.fill-server { fill: #7c5cd6; }
 .ru-accent.fill-vm { fill: #a98be6; }
@@ -795,6 +809,12 @@ details summary { cursor: pointer; font-weight: 600; }
 .rack-cable { fill: none; stroke: var(--c-interested); stroke-width: 1.5; opacity: .8; }
 .rack-cable.wireless { stroke: var(--primary); stroke-dasharray: 5 4; }
 .rack-cable.virtual { stroke: #7c5cd6; stroke-dasharray: 2 3; }
+.rack-cable.internal { stroke: var(--c-interested); opacity: .6; }
+.rack-svg.has-hot .rack-cable:not(.hot) { opacity: .1; }
+.rack-svg.has-hot .rack-chip:not(.hot) { opacity: .25; }
+.rack-cable.hot { stroke-width: 2.5; opacity: 1; }
+.rack-chip.hot rect { stroke: var(--primary); stroke-width: 1.5; }
+
 .rack-chip rect { fill: var(--surface); stroke: var(--border); }
 .rack-chip text { fill: var(--text); font-size: 11px; }
 .rack-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); margin-top: 10px; }

@@ -276,6 +276,25 @@ async function renderRacks(body) {
   main.querySelectorAll('.ru-device').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); }; });
   main.querySelectorAll('[data-id2]').forEach(b => { b.onclick = () => openDeviceDetail({ deviceId: Number(b.dataset.id2), clinic, onChanged: load }); });
   main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceForm({ clinic, initial: { device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); }; });
+  // shelf items open their own detail and shouldn't start a shelf drag
+  main.querySelectorAll('.shelf-item[data-id]').forEach(g => {
+    g.addEventListener('pointerdown', (e) => e.stopPropagation());
+    g.addEventListener('click', (e) => { e.stopPropagation(); if (Date.now() - rackDragEndAt < 350) return; openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); });
+  });
+  // hover a device (or its shelf) to highlight just its cables and chips
+  const svg = main.querySelector('.rack-svg');
+  const setHot = (id) => {
+    if (!svg) return;
+    svg.classList.toggle('has-hot', id != null);
+    svg.querySelectorAll('[data-dev]').forEach(el => {
+      const on = id != null && (el.dataset.dev === String(id) || el.dataset.dev2 === String(id));
+      el.classList.toggle('hot', on);
+    });
+  };
+  main.querySelectorAll('.ru-device[data-id]').forEach(g => {
+    g.addEventListener('mouseenter', () => setHot(g.dataset.id));
+    g.addEventListener('mouseleave', () => setHot(null));
+  });
   wireRackDrag(main, selected, body);
 }
 
@@ -302,107 +321,125 @@ function accentFill(t) {
 
 function rackElevation(r) {
   const U = r.units;
-  const UH = 26;                 // px per rack unit
-  const rackX = 54, rackY = 20, rackW = 260;
-  const railW = 200;             // cable-routing rail on the right
-  const W = rackX + rackW + railW + 24;
+  const UH = 28;
+  const leftRailW = 200, uNumW = 26, rackW = 260, rightRailW = 220;
+  const rackX = leftRailW + uNumW, rackY = 22;
+  const W = rackX + rackW + rightRailW + 20;
   const H = rackY + U * UH + 30;
-  const uToY = (u) => rackY + (U - u) * UH;   // top edge y of unit u
-  const byId = Object.fromEntries(r.devices.map(d => [d.id, d]));
+  const uToY = (u) => rackY + (U - u) * UH;
 
-  // rack frame + U numbers + empty slots
-  let svg = `<rect x="${rackX}" y="${rackY}" width="${rackW}" height="${U * UH}" rx="4" class="rack-frame"/>`;
+  // rack frame + U numbers
+  let frame = `<rect x="${rackX}" y="${rackY}" width="${rackW}" height="${U * UH}" rx="4" class="rack-frame"/>`;
   for (let u = 1; u <= U; u++) {
     const y = uToY(u);
-    svg += `<line x1="${rackX}" x2="${rackX + rackW}" y1="${y}" y2="${y}" class="rack-uline"/>`;
-    svg += `<text x="${rackX - 8}" y="${y + UH - 8}" text-anchor="end" class="rack-unum">${u}</text>`;
+    frame += `<line x1="${rackX}" x2="${rackX + rackW}" y1="${y}" y2="${y}" class="rack-uline"/>`;
+    frame += `<text x="${rackX - 6}" y="${y + UH - 9}" text-anchor="end" class="rack-unum">${u}</text>`;
   }
 
-  // occupied units -> so empty ones can be click-to-add
   const occupied = new Set();
-  for (const d of r.devices) {
-    if (!d.position) continue;
-    for (let u = d.position; u < d.position + (d.units || 1); u++) occupied.add(u);
-  }
+  for (const d of r.devices) { if (!d.position) continue; for (let u = d.position; u < d.position + (d.units || 1); u++) occupied.add(u); }
+  let empties = '';
   for (let u = 1; u <= U; u++) {
     if (occupied.has(u)) continue;
     const y = uToY(u);
-    svg += `<g class="ru-empty" data-u="${u}"><rect x="${rackX + 2}" y="${y + 1.5}" width="${rackW - 4}" height="${UH - 3}" rx="3"/><text x="${rackX + rackW / 2}" y="${y + UH / 2 + 4}" text-anchor="middle" class="ru-empty-label">+ add at U${u}</text></g>`;
+    empties += `<g class="ru-empty" data-u="${u}"><rect x="${rackX + 2}" y="${y + 1.5}" width="${rackW - 4}" height="${UH - 3}" rx="3"/><text x="${rackX + rackW / 2}" y="${y + UH / 2 + 4}" text-anchor="middle" class="ru-empty-label">+ add at U${u}</text></g>`;
   }
 
-  // devices
+  // mounted devices
   const anchorOf = {};
+  let devSvg = '';
   for (const d of r.devices) {
-    const pos = d.position;
-    const h = d.units || 1;
+    const pos = d.position, h = d.units || 1;
     if (!pos) continue;
-    const top = uToY(pos + h - 1);
-    const height = h * UH - 3;
-    const cy = top + height / 2;
-    anchorOf[d.id] = { x: rackX + rackW, y: cy, top, height };
-    const label = `${d.name}`;
+    const top = uToY(pos + h - 1), height = h * UH - 3, cy = top + height / 2;
+    anchorOf[d.id] = { leftX: rackX, rightX: rackX + rackW, y: cy };
+    const isShelf = d.device_type === 'shelf';
     const sub = [d.designation, d.ip_address].filter(Boolean).join(' · ');
-    svg += `<g class="ru-device ${d.status === 'retired' ? 'retired' : ''}" data-id="${d.id}" data-pos="${pos}" data-h="${h}" transform="translate(${rackX + 2},${top + 1.5})">
-      <rect width="${rackW - 4}" height="${height}" rx="3" class="ru-box ${accentFill(d.device_type)}"/>
+    let inner = `
+      <rect width="${rackW - 4}" height="${height}" rx="3" class="ru-box ${accentFill(d.device_type)} ${isShelf ? 'is-shelf' : ''}"/>
       <rect width="4" height="${height}" class="ru-accent ${accentFill(d.device_type)}"/>
-      <text x="12" y="${Math.min(17, height / 2 + 4)}" class="ru-icon">${esc(d.icon)}</text>
-      <text x="30" y="${h === 1 ? 15 : 16}" class="ru-name">${esc(trunc(label, 22))}</text>
-      ${h > 1 && sub ? `<text x="30" y="31" class="ru-sub">${esc(trunc(sub, 30))}</text>` : ''}
-      <text x="${rackW - 10}" y="14" text-anchor="end" class="ru-u">${h}U</text>
-      ${d.ticket_count ? `<text x="${rackW - 10}" y="${height - 6}" text-anchor="end" class="ru-badge">🎫${d.ticket_count}</text>` : ''}
-    </g>`;
-  }
-  // occupied-but-unpositioned devices (no U#) listed below
-  const noPos = r.devices.filter(d => !d.position);
-
-  // links: internal = curved cables on the rail; external = stub + labeled chip
-  const railX = rackX + rackW;
-  let lane = 0;
-  const laneGap = 13;
-  let chips = [];
-  const linkSvg = [];
-  // de-dup already handled server-side; draw
-  for (const l of r.links) {
-    const a = anchorOf[l.a] || anchorOf[l.b];
-    const aId = anchorOf[l.a] ? l.a : (anchorOf[l.b] ? l.b : null);
-    if (!a || aId === null) continue;
-    const cls = `rack-cable ${l.link_type === 'wireless' ? 'wireless' : l.link_type === 'virtual' ? 'virtual' : ''}`;
-    if (l.b_in_rack && anchorOf[l.a] && anchorOf[l.b]) {
-      // both endpoints in this rack: route a cable out to a lane and back
-      const p = anchorOf[l.a], q = anchorOf[l.b];
-      const lx = railX + 14 + (lane % 8) * laneGap; lane++;
-      linkSvg.push(`<path class="${cls}" d="M${p.x},${p.y} H${lx} V${q.y} H${q.x}"/>`);
-    } else {
-      // external endpoint: stub to a chip in the rail
-      const other = anchorOf[l.a] ? l.b : l.a;
-      void other;
-      const yc = a.y;
-      const lx = railX + 14 + (lane % 8) * laneGap; lane++;
-      chips.push({ y: yc, name: l.b_name, icon: l.b_icon, rack: l.b_rack, lx, link_type: l.link_type });
+      <text x="12" y="${Math.min(18, height / 2 + 5)}" class="ru-icon">${esc(d.icon)}</text>
+      <text x="30" y="${h === 1 ? 16 : 16}" class="ru-name">${esc(trunc(d.name, 22))}</text>
+      ${h > 1 && sub && !isShelf ? `<text x="30" y="32" class="ru-sub">${esc(trunc(sub, 30))}</text>` : ''}
+      <text x="${rackW - 10}" y="15" text-anchor="end" class="ru-u">${h}U</text>
+      ${d.ticket_count ? `<text x="${rackW - 10}" y="${height - 7}" text-anchor="end" class="ru-badge">🎫${d.ticket_count}</text>` : ''}`;
+    // shelf items sitting on the tray: small chips laid across, wrapping
+    if (isShelf) {
+      const items = d.shelf_items || [];
+      const padX = 8, chipH = 20, gap = 5, availW = rackW - 4 - padX * 2;
+      let cxp = padX, cyp = 22;
+      for (const it of items) {
+        const label = `${it.icon} ${trunc(it.name, 12)}`;
+        const cw = Math.min(availW, 30 + label.length * 6.2);
+        if (cxp + cw > rackW - 4 - padX && cxp > padX) { cxp = padX; cyp += chipH + gap; }
+        anchorOf['item-' + it.id] = { leftX: rackX, rightX: rackX + rackW, y: top + 1.5 + cyp + chipH / 2 };
+        inner += `<g class="shelf-item" data-id="${it.id}" transform="translate(${cxp},${cyp})"><rect width="${cw}" height="${chipH}" rx="4" class="${accentFill(it.device_type)}"/><text x="6" y="14">${esc(label)}</text></g>`;
+        cxp += cw + gap;
+      }
+      if (!items.length) inner += `<text x="30" y="${height - 8}" class="ru-sub">empty shelf — add devices onto it</text>`;
     }
+    devSvg += `<g class="ru-device ${d.status === 'retired' ? 'retired' : ''} ${isShelf ? 'shelf' : ''}" data-id="${d.id}" data-pos="${pos}" data-h="${h}" transform="translate(${rackX + 2},${top + 1.5})">${inner}</g>`;
   }
-  // place external chips avoiding overlap (simple vertical stack near their anchor)
-  chips.sort((a, b) => a.y - b.y);
-  let lastY = -100;
-  for (const ch of chips) {
-    let cy = Math.max(ch.y, lastY + 24);
-    lastY = cy;
-    const chipX = railX + 120, chipW = railW - 130;
-    const cls = `rack-cable ${ch.link_type === 'wireless' ? 'wireless' : ch.link_type === 'virtual' ? 'virtual' : ''}`;
-    linkSvg.push(`<path class="${cls}" d="M${railX},${ch.y} H${ch.lx} V${cy} H${chipX}"/>`);
-    linkSvg.push(`<g class="rack-chip" transform="translate(${chipX},${cy - 11})"><rect width="${chipW}" height="22" rx="5"/><text x="8" y="15">${esc(ch.icon || '')} ${esc(trunc(ch.name || '', 16))}${ch.rack ? ` ·${esc(trunc(ch.rack, 8))}` : ''}</text></g>`);
+
+  // map shelf-item ids to their shelf's anchor for link routing
+  const memberAnchor = (id) => anchorOf[id] || null;
+
+  // Build cables + chips. Upstream (direction 'up') -> LEFT rail; downstream ('down') -> RIGHT rail.
+  const linkColor = (lt) => lt === 'wireless' ? 'wireless' : lt === 'virtual' ? 'virtual' : '';
+  const leftChips = [], rightChips = [];
+  const internal = [];
+  for (const l of r.links) {
+    if (l.in_rack) { internal.push(l); continue; }
+    const anc = memberAnchor(l.member_id);
+    if (!anc || !l.ext) continue;
+    (l.direction === 'up' ? leftChips : rightChips).push({ y: anc.y, member: l.member_id, ext: l.ext, lt: l.link_type });
   }
-  svg += linkSvg.join('');
+
+  // place chips without overlap, near their anchor Y, and draw a smooth curve to the anchor edge
+  const CHIP_H = 22, CHIP_GAP = 6, CHIP_W = 150;
+  function layoutChips(list, side) {
+    list.sort((a, b) => a.y - b.y);
+    let lastY = -1e9;
+    let cables = '', chips = '';
+    for (const ch of list) {
+      const cy = Math.max(ch.y, lastY + CHIP_H + CHIP_GAP);
+      lastY = cy;
+      const anc = memberAnchor(ch.member);
+      const chipX = side === 'left' ? rackX - uNumW - CHIP_W - 10 : rackX + rackW + 30;
+      const startX = side === 'left' ? anc.leftX : anc.rightX;
+      const endX = side === 'left' ? chipX + CHIP_W : chipX;
+      const c1 = side === 'left' ? startX - 40 : startX + 40;
+      const c2 = side === 'left' ? endX + 40 : endX - 40;
+      cables += `<path class="rack-cable ${linkColor(ch.lt)}" data-dev="${ch.member}" d="M${startX},${ch.y} C${c1},${ch.y} ${c2},${cy} ${endX},${cy}"/>`;
+      chips += `<g class="rack-chip" data-dev="${ch.member}" transform="translate(${chipX},${cy - CHIP_H / 2})"><rect width="${CHIP_W}" height="${CHIP_H}" rx="6"/><text x="8" y="15">${esc(ch.ext.icon || '')} ${esc(trunc(ch.ext.name || '', 15))}${ch.ext.rack ? ` ·${esc(trunc(ch.ext.rack, 7))}` : ''}</text></g>`;
+    }
+    return cables + chips;
+  }
+  const leftSvg = layoutChips(leftChips, 'left');
+  const rightSvg = layoutChips(rightChips, 'right');
+
+  // in-rack peer links: a compact cable in a thin gutter just inside the right edge
+  let internalSvg = '';
+  let lane = 0;
+  for (const l of internal) {
+    const a = memberAnchor(l.member_id), b = memberAnchor(l.other_member_id);
+    if (!a || !b) continue;
+    const gx = rackX + rackW + 6 + (lane % 4) * 5; lane++;
+    internalSvg += `<path class="rack-cable internal ${linkColor(l.link_type)}" data-dev="${l.member_id}" data-dev2="${l.other_member_id}" d="M${a.rightX},${a.y} C${gx},${a.y} ${gx},${b.y} ${b.rightX},${b.y}"/>`;
+  }
 
   const legend = `<div class="rack-legend">
     <span><span class="sw fill-network"></span>Network</span><span><span class="sw fill-server"></span>Server</span><span><span class="sw fill-printer"></span>Printer</span><span><span class="sw fill-security"></span>Security</span>
-    <span><span class="cable"></span>Cable</span><span><span class="cable wireless"></span>Wireless</span><span><span class="cable virtual"></span>Virtual</span>
-    <span class="muted">Chips on the right are linked devices outside this rack. Click a device for details, or drag it to an empty slot to move it.</span></div>`;
+    <span><span class="cable"></span>Wired</span><span><span class="cable wireless"></span>Wireless</span><span><span class="cable virtual"></span>Virtual</span>
+    <span class="muted">◀ Upstream (uplinks) · Downstream ▶. Hover a device to highlight its links. Drag to move; click for details.</span></div>`;
 
+  const noPos = r.devices.filter(d => !d.position);
   return `<div class="card">
     <div class="card-header"><h3>🗄 ${esc(r.name)}</h3><span class="muted small">${esc(r.room || '')} · ${r.device_count} device${r.device_count === 1 ? '' : 's'} · ${U}U</span>
       <div class="actions"><a class="btn btn-sm" href="#/clinics/${clinic.id}/equipment?view=topology">Topology</a></div></div>
-    <div class="rack-scroll"><svg class="rack-svg" data-uh="${UH}" data-racky="${rackY}" data-rackx="${rackX}" data-rackw="${rackW}" data-u="${U}" data-h="${H}" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${svg}</svg></div>
+    <div class="rack-scroll"><svg class="rack-svg" data-uh="${UH}" data-racky="${rackY}" data-rackx="${rackX}" data-rackw="${rackW}" data-u="${U}" data-h="${H}" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+      ${leftSvg}${rightSvg}${internalSvg}${frame}${empties}${devSvg}
+    </svg></div>
     ${noPos.length ? `<div class="mt small muted">In this rack without a U# set: ${noPos.map(d => `<button class="btn btn-link btn-sm" data-id2="${d.id}">${esc(d.icon)} ${esc(d.name)}</button>`).join(' ')} — edit each to set its position.</div>` : ''}
     ${legend}
   </div>`;

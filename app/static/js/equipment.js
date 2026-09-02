@@ -35,8 +35,8 @@ function uplinkOptions(list, selected, excludeId) {
 export async function openDeviceForm({ clinic, device = null, initial = null, onSaved }) {
   const meta = await devices.meta();
   const { devices: all, locations, shorthand } = await devices.list(clinic.id);
-  const rackData = await devices.racks(clinic.id).catch(() => ({ rack_names: [], rooms: [] }));
-  const rackMeta = { racks: rackData.rack_names || [], rooms: rackData.rooms || [] };
+  const rackData = await devices.racks(clinic.id).catch(() => ({ rack_names: [], rooms: [], shelves: [] }));
+  const rackMeta = { racks: rackData.rack_names || [], rooms: rackData.rooms || [], shelves: rackData.shelves || [] };
   const d = { device_type: 'workstation', status: 'active', ...(device || {}), ...(initial || {}) };
   const isEdit = !!device;
   const typeOpts = Object.entries(meta.types).map(([k, v]) => `<option value="${k}" ${k === d.device_type ? 'selected' : ''}>${esc(v.icon)} ${esc(v.label)}</option>`).join('');
@@ -83,8 +83,11 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
         <div class="field-row">
           <div class="field"><label>Room</label><input name="rack_room" list="room-list" value="${attr(d.rack_room)}" placeholder="e.g. Server room"><datalist id="room-list">${(rackMeta.rooms || []).map(r => `<option value="${attr(r)}">`).join('')}</datalist></div>
           <div class="field"><label>Rack</label><input name="rack" list="rack-list" value="${attr(d.rack)}" placeholder="e.g. Rack A"><datalist id="rack-list">${(rackMeta.racks || []).map(r => `<option value="${attr(r)}">`).join('')}</datalist></div>
-          <div class="field"><label>Bottom RU (U#)</label><input name="rack_position" type="number" min="1" max="60" value="${attr(d.rack_position ?? '')}" placeholder="e.g. 12"><div class="help">The unit number the device sits at (1 = bottom).</div></div>
-          <div class="field"><label>Height (U)</label><input name="rack_units" type="number" min="1" max="48" value="${attr(d.rack_units ?? '')}" id="rack-units" placeholder="1"><div class="help" id="rack-units-help"></div></div>
+          <div class="field shelf-select-field"><label>On shelf</label>
+            <select name="shelf_id" id="shelf-select"><option value="">— Rack-mounted —</option>${(rackMeta.shelves || []).filter(sh => !device || sh.id !== device.id).map(sh => `<option value="${sh.id}" ${String(sh.id) === String(d.shelf_id) ? 'selected' : ''}>${esc(sh.name)}${sh.rack ? ` · ${esc(sh.rack)}` : ''}</option>`).join('')}</select>
+            <div class="help">Place this device on a shelf instead of at a fixed U#.</div></div>
+          <div class="field mount-field"><label>Bottom RU (U#)</label><input name="rack_position" type="number" min="1" max="60" value="${attr(d.rack_position ?? '')}" placeholder="e.g. 12"><div class="help">The unit number the device sits at (1 = bottom).</div></div>
+          <div class="field mount-field"><label id="rack-units-label">Height (U)</label><input name="rack_units" type="number" min="1" max="48" value="${attr(d.rack_units ?? '')}" id="rack-units" placeholder="1"><div class="help" id="rack-units-help"></div></div>
         </div>
       </div>
       <div class="form-section services-field"><h3>Services running on this server</h3>
@@ -104,13 +107,18 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     form.querySelector('.services-field').classList.toggle('hidden', t !== 'server');
     form.querySelector('.os-field').classList.toggle('hidden', !(meta.os_types || ['workstation', 'laptop', 'server', 'vm', 'wireless', 'other']).includes(t));
     if (t === 'wireless' && !isEdit) form.querySelector('[name=link_type][value=wireless]').checked = true;
+    const isShelf = t === 'shelf';
     const rackable = !(meta.non_rackable || []).includes(t);
-    form.querySelector('.rack-field').classList.toggle('hidden', !rackable);
+    // Rack section shows for everything except VMs (a non-rackable device can still sit on a shelf).
+    form.querySelector('.rack-field').classList.toggle('hidden', t === 'vm');
+    form.querySelector('.shelf-select-field').classList.toggle('hidden', isShelf);
     const du = (meta.default_rack_units || {})[t];
     const ruHelp = form.querySelector('#rack-units-help');
-    if (ruHelp) ruHelp.textContent = du ? `typical: ${du}U` : '';
+    if (ruHelp) ruHelp.textContent = isShelf ? 'shelves can be any height' : (du ? `typical: ${du}U` : (rackable ? '' : 'usually not rack-mounted'));
     const ruEl = form.querySelector('#rack-units');
     if (ruEl && !ruEl.value && du) ruEl.placeholder = String(du);
+    if (form.querySelector('#rack-units-label')) form.querySelector('#rack-units-label').textContent = isShelf ? 'Shelf height (U)' : 'Height (U)';
+    syncShelf();
     // VM: uplink is the host server; the link is virtual (hide the wired/wireless radios)
     const isVm = t === 'vm';
     form.querySelector('#link-field').classList.toggle('hidden', isVm);
@@ -133,6 +141,20 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
       form.querySelector('#dev-name-help').textContent = `Template ${nn.template} → next is ${nn.name}. Leave blank to use it, or type your own.`;
     } catch { /* ignore */ }
   };
+  const shelfSel = form.querySelector('#shelf-select');
+  function syncShelf() {
+    const onShelf = shelfSel && shelfSel.value;
+    form.querySelectorAll('.mount-field').forEach(el => el.classList.toggle('hidden', !!onShelf));
+    // room/rack inputs are inherited from the shelf when on one
+    ['rack', 'rack_room'].forEach(n => { const el = form.elements[n]; if (el) el.closest('.field').classList.toggle('hidden', !!onShelf); });
+    let note = form.querySelector('#shelf-note');
+    if (onShelf) {
+      const sh = (rackMeta.shelves || []).find(x => String(x.id) === shelfSel.value);
+      if (!note) { note = document.createElement('div'); note.id = 'shelf-note'; note.className = 'help'; shelfSel.parentElement.appendChild(note); }
+      note.textContent = sh ? `Sits on ${sh.name}${sh.rack ? ` in ${sh.rack}${sh.rack_room ? ', ' + sh.rack_room : ''}` : ''}.` : '';
+    } else if (note) { note.remove(); }
+  }
+  if (shelfSel) shelfSel.addEventListener('change', syncShelf);
   typeSel.addEventListener('change', syncType);
   syncType();
   form.querySelector('#dev-autoname').onclick = async () => { const nn = await devices.nextName(clinic.id, typeSel.value); nameEl.value = nn.name; };
@@ -151,6 +173,12 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     data.off_site = form.querySelector('[name=off_site]').checked;
     data.rack_position = (data.rack_position === '' || data.rack_position == null) ? null : Number(data.rack_position);
     data.rack_units = (data.rack_units === '' || data.rack_units == null) ? null : Number(data.rack_units);
+    data.shelf_id = data.shelf_id ? Number(data.shelf_id) : null;
+    if (data.shelf_id) {
+      const sh = (rackMeta.shelves || []).find(x => x.id === data.shelf_id);
+      if (sh) { data.rack = sh.rack; data.rack_room = sh.rack_room; }
+      data.rack_position = null;  // items on a shelf have no fixed U#
+    }
     if (!isEdit) data.quantity = Math.max(1, Number(data.quantity) || 1);
     try {
       const saved = isEdit ? await devices.update(device.id, data) : await devices.create(clinic.id, data);

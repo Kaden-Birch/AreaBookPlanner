@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api", tags=["devices"])
 DEVICE_COLUMNS = [
     "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
     "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "rack", "rack_room",
-    "rack_position", "rack_units", "services", "purchase_date", "warranty_until", "notes",
+    "rack_position", "rack_units", "shelf_id", "services", "purchase_date", "warranty_until", "notes",
 ]
 
 SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
@@ -345,72 +345,124 @@ def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_depende
 
 @router.get("/clinics/{clinic_id}/racks")
 def racks(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
-    """Group rack-mounted devices into racks, and return the links each rack needs to draw
-    (both endpoints, so a link to a device outside the rack can be shown too)."""
+    """Group rack devices into racks. Mounted devices carry a U position; a shelf carries
+    the loose devices sitting on it (shelf_id). Links are directional (up = the member's
+    uplink, down = something that uplinks into the member) so the view can put upstream
+    devices on the left and downstream on the right."""
     _clinic_or_404(conn, clinic_id)
     all_devs = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.rack, d.rack_position DESC, d.name", (clinic_id,)))]
     by_id = {d["id"]: d for d in all_devs}
-    # adjacency (primary + extra links), undirected, for drawing rack connections
-    adj: dict[int, list[tuple[int, str]]] = {}
-    def add_adj(a, b, lt):
-        adj.setdefault(a, []).append((b, lt))
-        adj.setdefault(b, []).append((a, lt))
+
+    # directed uplinks: uplinks_of[x] = set of devices x connects UP to
+    uplinks_of: dict[int, set[int]] = {d["id"]: set() for d in all_devs}
+    link_type_of: dict[tuple[int, int], str] = {}
     for d in all_devs:
         if d["uplink_id"] in by_id:
-            add_adj(d["id"], d["uplink_id"], "virtual" if d["device_type"] == "vm" else (d["link_type"] or "ethernet"))
+            uplinks_of[d["id"]].add(d["uplink_id"])
+            link_type_of[(d["id"], d["uplink_id"])] = "virtual" if d["device_type"] == "vm" else (d["link_type"] or "ethernet")
     for l in rows_to_list(conn.execute(
         """SELECT dl.device_id, dl.uplink_id, dl.link_type FROM device_links dl JOIN devices d ON d.id = dl.device_id WHERE d.clinic_id = ?""", (clinic_id,))):
         if l["device_id"] in by_id and l["uplink_id"] in by_id:
-            add_adj(l["device_id"], l["uplink_id"], l["link_type"] or "ethernet")
+            uplinks_of[l["device_id"]].add(l["uplink_id"])
+            link_type_of.setdefault((l["device_id"], l["uplink_id"]), l["link_type"] or "ethernet")
+
+    # An item on a shelf inherits the shelf's rack for grouping.
+    def rack_of(d: dict) -> str | None:
+        if d.get("shelf_id") and d["shelf_id"] in by_id:
+            return by_id[d["shelf_id"]].get("rack")
+        return d.get("rack")
 
     racks: dict[str, dict] = {}
     for d in all_devs:
-        if not d.get("rack"):
+        rk = rack_of(d)
+        if not rk:
             continue
-        key = d["rack"]
-        r = racks.setdefault(key, {"name": key, "room": d.get("rack_room"), "units": 0, "devices": []})
+        r = racks.setdefault(rk, {"name": rk, "room": d.get("rack_room"), "units": 0, "devices": [], "_members": {}})
         if d.get("rack_room") and not r["room"]:
             r["room"] = d["rack_room"]
-        pos = d.get("rack_position")
-        height = d.get("rack_units") or DEFAULT_RACK_UNITS.get(d["device_type"], 1) or 1
-        r["devices"].append({
-            "id": d["id"], "name": d["name"], "device_type": d["device_type"], "type_label": d["type_label"],
-            "icon": d["icon"], "designation": d["designation"], "ip_address": d["ip_address"], "status": d["status"],
-            "position": pos, "units": height, "model": d.get("model"), "user_name": d.get("user_name"),
-            "ticket_count": d["ticket_count"],
-        })
-        top = (pos or 0) + height - 1
-        if top > r["units"]:
-            r["units"] = top
+        r["_members"][d["id"]] = d
+
+    def brief(d: dict) -> dict:
+        return {"id": d["id"], "name": d["name"], "device_type": d["device_type"], "type_label": d["type_label"],
+                "icon": d["icon"], "designation": d["designation"], "ip_address": d["ip_address"], "status": d["status"],
+                "model": d.get("model"), "user_name": d.get("user_name"), "ticket_count": d["ticket_count"]}
+
     out = []
-    for key, r in sorted(racks.items()):
-        member_ids = {dv["id"] for dv in r["devices"]}
-        r["units"] = max(r["units"], 12)  # a sensible minimum rack height
-        # links touching any device in this rack
-        seen = set()
+    for rk, r in sorted(racks.items()):
+        members = r.pop("_members")
+        member_ids = set(members)
+        # shelf items grouped by their shelf
+        items_by_shelf: dict[int, list] = {}
+        for d in members.values():
+            if d.get("shelf_id") in members:
+                items_by_shelf.setdefault(d["shelf_id"], []).append(brief(d))
+        # mounted devices (have a U position, are not sitting on a shelf)
+        mounted = []
+        for d in members.values():
+            if d.get("shelf_id"):
+                continue
+            pos = d.get("rack_position")
+            height = d.get("rack_units") or DEFAULT_RACK_UNITS.get(d["device_type"], 1) or 1
+            row = {**brief(d), "position": pos, "units": height}
+            if d["device_type"] == "shelf":
+                row["shelf_items"] = sorted(items_by_shelf.get(d["id"], []), key=lambda x: x["name"])
+            mounted.append(row)
+            top = (pos or 0) + height - 1
+            if top > r["units"]:
+                r["units"] = top
+        mounted.sort(key=lambda x: (x["position"] or 0), reverse=True)
+        r["devices"] = mounted
+        r["units"] = max(r["units"], 12)
+        r["device_count"] = len(members)
+        # anchor: which mounted member a link should attach to (shelf item -> its shelf)
+        def anchor_member(mid: int) -> int:
+            d = members.get(mid)
+            if d and d.get("shelf_id") in members:
+                return d["shelf_id"]
+            return mid
+
         links = []
-        for dv in r["devices"]:
-            for (other, lt) in adj.get(dv["id"], []):
-                pair = tuple(sorted((dv["id"], other)))
-                if pair in seen:
-                    continue
-                seen.add(pair)
-                o = by_id.get(other)
-                links.append({
-                    "a": dv["id"], "b": other, "link_type": lt,
-                    "b_in_rack": other in member_ids,
-                    "b_name": o["name"] if o else None, "b_icon": o["icon"] if o else None,
-                    "b_rack": o.get("rack") if o else None,
-                })
+        seen_ext = set()
+        seen_int = set()
+        for mid, d in members.items():
+            am = anchor_member(mid)
+            # upstream (this member's uplinks)
+            for up in uplinks_of.get(mid, set()):
+                lt = link_type_of.get((mid, up), "ethernet")
+                if up in member_ids:
+                    key = tuple(sorted((am, anchor_member(up))))
+                    if key[0] != key[1] and key not in seen_int:
+                        seen_int.add(key)
+                        links.append({"member_id": key[0], "other_member_id": key[1], "in_rack": True, "direction": "peer", "link_type": lt})
+                else:
+                    o = by_id.get(up)
+                    k = (am, up)
+                    if k in seen_ext:
+                        continue
+                    seen_ext.add(k)
+                    links.append({"member_id": am, "in_rack": False, "direction": "up", "link_type": lt,
+                                  "ext": {"id": up, "name": o["name"] if o else None, "icon": o["icon"] if o else None, "rack": o.get("rack") if o else None}})
+            # downstream (things that uplink into this member)
+            for other_id, ups in uplinks_of.items():
+                if mid in ups and other_id not in member_ids:
+                    lt = link_type_of.get((other_id, mid), "ethernet")
+                    k = (am, other_id)
+                    if k in seen_ext:
+                        continue
+                    seen_ext.add(k)
+                    o = by_id.get(other_id)
+                    links.append({"member_id": am, "in_rack": False, "direction": "down", "link_type": lt,
+                                  "ext": {"id": other_id, "name": o["name"] if o else None, "icon": o["icon"] if o else None, "rack": o.get("rack") if o else None}})
         r["links"] = links
-        r["device_count"] = len(r["devices"])
         out.append(r)
-    # devices that have a rack position but we still want a room list for the picker
+
     rooms = sorted({d["rack_room"] for d in all_devs if d.get("rack_room")})
     existing_racks = sorted({d["rack"] for d in all_devs if d.get("rack")})
-    return {"racks": out, "rooms": rooms, "rack_names": existing_racks,
+    shelves = [{"id": d["id"], "name": d["name"], "rack": d.get("rack"), "rack_room": d.get("rack_room")}
+               for d in all_devs if d["device_type"] == "shelf"]
+    return {"racks": out, "rooms": rooms, "rack_names": existing_racks, "shelves": shelves,
             "unracked_infra": [{"id": d["id"], "name": d["name"], "icon": d["icon"], "device_type": d["device_type"]}
-                               for d in all_devs if not d.get("rack") and d["device_type"] not in NON_RACKABLE_TYPES and d["is_network"] or (not d.get("rack") and d["device_type"] == "server")]}
+                               for d in all_devs if not rack_of(d) and d["device_type"] not in NON_RACKABLE_TYPES and (d["is_network"] or d["device_type"] in ("server", "nvr", "patch_panel", "shelf"))]}
 
 
 # ---- Single device --------------------------------------------------------------

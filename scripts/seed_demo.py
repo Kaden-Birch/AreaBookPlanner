@@ -39,6 +39,16 @@ CLINICS = [
     {"name": "Bowness Medical Centre", "address": "6400 Bowness Rd NW", "postal_code": "T3B 0E3",
      "lat": 51.0867, "lng": -114.1855, "relationship": "do_not_contact", "clinic_type": "Medical centre",
      "notes": "Locked into a 5-year contract with another provider. Asked not to be contacted.", "tags": "NW"},
+    # Leads: clinics added to the book to visit, but not yet contacted. They stay OFF the
+    # pipeline board (stage defaults to "lead") until marked Interested.
+    {"name": "Sunridge Family Clinic", "address": "2580 Southland Dr SW", "postal_code": "T2V 4J8",
+     "lat": 50.9855, "lng": -114.0906, "relationship": "prospect", "clinic_type": "Family practice",
+     "provider_count": 4, "tags": "SW, lead", "notes": "Drove past — worth a cold visit."},
+    {"name": "Kensington Health Group", "address": "1140 Kensington Rd NW", "postal_code": "T2N 3P1",
+     "lat": 51.0522, "lng": -114.0899, "relationship": "prospect", "clinic_type": "Medical centre",
+     "provider_count": 6, "tags": "NW, lead", "priority": "high",
+     "next_follow_up": (datetime.now() + timedelta(days=5)).date().isoformat(),
+     "notes": "Referred by a contact at Beltline — plan a first visit."},
 ]
 
 CONTACTS = [

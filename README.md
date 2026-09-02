@@ -33,8 +33,17 @@ and is stored in a single SQLite file.
   calendar or from a clinic profile, link them to a contact, and record planning notes
   before and outcome notes after. "Log a visit" records a drop-in visit in one click.
   Export an `.ics` feed for Outlook / Google Calendar.
-- **Pipeline (Kanban)** – drag clinics across Prospect → Contacted → Demo → Proposal →
-  Won / Lost. Winning a deal automatically makes the clinic a current client.
+- **Leads vs. the pipeline** – new clinics start as a **Lead**: on your map and in your
+  book, but *not* on the pipeline board. Add five clinics you plan to visit this week
+  without cluttering the pipeline. Once you've actually talked to one and they're
+  interested, mark it **Interested** (from the clinic page's "Add to pipeline →" button,
+  or by dragging it onto the board) and it joins the pipeline. A count of leads waiting
+  to be contacted shows on the dashboard and the pipeline page.
+- **Pipeline (Kanban)** – drag clinics across Interested → Contacted → In negotiations →
+  Quote sent → Won / Lost. Winning a deal automatically makes the clinic a current client.
+- **Self-clearing Won / Lost** – Won and Lost cards stay on the board until the end of the
+  month they closed in, then drop off automatically so the columns stay tidy (negotiations
+  and everything earlier stay put). A "Include earlier months" toggle brings them back.
 - **Deal tracking** – estimated annual value, win probability (with sensible stage
   defaults), expected close date, and a weighted forecast on the dashboard.
 - **Won / lost reasons** – capture why each deal closed and see the breakdown on the

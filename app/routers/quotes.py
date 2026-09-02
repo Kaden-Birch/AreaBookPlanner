@@ -296,11 +296,15 @@ def set_quote_status(quote_id: int, payload: QuoteStatusIn, conn: sqlite3.Connec
                  (payload.status, now_iso() if payload.status == "sent" else None, now_iso(), quote_id))
     log_event(conn, q["clinic_id"], "quote", f"Quote {q['number']} marked {STATUS_LABELS[payload.status].lower()}", f"{q['totals']['monthly_total']:.2f}/month")
     # Sending a quote is a proposal; nudge the pipeline forward without going backwards.
+    # A quote also pulls a not-yet-contacted lead onto the board (and marks it Interested).
     if payload.status == "sent":
-        stage = conn.execute("SELECT stage FROM clinics WHERE id = ?", (q["clinic_id"],)).fetchone()[0]
-        if stage in ("prospect", "contacted", "demo"):
-            conn.execute("UPDATE clinics SET stage = 'proposal', updated_at = ? WHERE id = ?", (now_iso(), q["clinic_id"]))
-            log_event(conn, q["clinic_id"], "stage_change", "Stage: → Proposal (quote sent)", None, from_value=stage, to_value="proposal")
+        row = conn.execute("SELECT stage, relationship FROM clinics WHERE id = ?", (q["clinic_id"],)).fetchone()
+        stage, relationship = row[0], row[1]
+        if stage in ("lead", "prospect", "contacted", "demo"):
+            new_rel = "interested" if relationship == "prospect" else relationship
+            conn.execute("UPDATE clinics SET stage = 'proposal', relationship = ?, updated_at = ? WHERE id = ?",
+                         (new_rel, now_iso(), q["clinic_id"]))
+            log_event(conn, q["clinic_id"], "stage_change", "Stage: → Quote sent", None, from_value=stage, to_value="proposal")
     return _get_or_404(conn, quote_id)
 
 

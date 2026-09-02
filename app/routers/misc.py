@@ -16,8 +16,8 @@ from fastapi.responses import PlainTextResponse, Response
 
 from ..database import db_dependency, rows_to_list
 from ..logic import (
-    COLOR_LABELS, DEFAULT_PROBABILITY, LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, OPEN_STAGES, QUICK_LOGS,
-    RELATIONSHIP_LABELS, REMINDER_OPTIONS, STAGE_LABELS, WON_REASONS, enrich_clinic, now_iso,
+    COLOR_LABELS, DEFAULT_PROBABILITY, LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, OPEN_STAGES, PIPELINE_STAGES,
+    QUICK_LOGS, RELATIONSHIP_LABELS, REMINDER_OPTIONS, STAGE_LABELS, WON_REASONS, enrich_clinic, now_iso,
 )
 from ..schemas import RouteRequest
 from .appointments import STATUS_LABELS, TYPE_LABELS
@@ -49,6 +49,7 @@ def meta():
         "appointment_statuses": STATUS_LABELS,
         "clinic_types": CLINIC_TYPES,
         "stages": STAGE_LABELS,
+        "pipeline_stages": list(PIPELINE_STAGES),
         "open_stages": list(OPEN_STAGES),
         "default_probability": DEFAULT_PROBABILITY,
         "won_reasons": WON_REASONS,
@@ -152,6 +153,16 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
 
     unmapped = [{"id": c["id"], "name": c["name"]} for c in clinics if c["lat"] is None or c["lng"] is None]
 
+    # Leads: added to the book but not yet contacted (pre-pipeline). Oldest first so the
+    # ones that have been waiting longest surface at the top.
+    leads = [
+        {"id": c["id"], "name": c["name"], "color": c["color"], "priority": c["priority"],
+         "created_at": c["created_at"], "next_follow_up": c["next_follow_up"]}
+        for c in clinics
+        if c["stage"] == "lead" and not c["archived"] and c["relationship"] != "do_not_contact"
+    ]
+    leads.sort(key=lambda x: (x["created_at"] or ""))
+
     pipeline = {s: {"count": 0, "value": 0.0, "weighted": 0.0} for s in STAGE_LABELS}
     for c in clinics:
         p = pipeline[c["stage"]]
@@ -223,6 +234,8 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
         "overdue_follow_ups": sum(1 for c in clinics if c["follow_up_overdue"]),
         "stale": stale[:20],
         "unmapped": unmapped,
+        "leads": leads[:20],
+        "leads_count": len(leads),
     }
 
 

@@ -85,8 +85,8 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
         <div class="field-row">
           <div class="field">
             <label>Pipeline stage</label>
-            <select name="stage" id="stage-select">${options(meta.stages, c.stage || 'prospect')}</select>
-            <div class="help">Won sets the relationship to Current client.</div>
+            <select name="stage" id="stage-select">${options(meta.stages, c.stage || 'lead')}</select>
+            <div class="help">Leads stay off the pipeline board until you mark them Interested. Won sets the relationship to Current client.</div>
           </div>
           <div class="field">
             <label>Est. annual value (CAD)</label>
@@ -94,7 +94,7 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
           </div>
           <div class="field open-only">
             <label>Win probability %</label>
-            <input name="win_probability" type="number" min="0" max="100" step="5" value="${attr(c.win_probability ?? '')}" id="prob-input" placeholder="${meta.default_probability[c.stage || 'prospect']}">
+            <input name="win_probability" type="number" min="0" max="100" step="5" value="${attr(c.win_probability ?? '')}" id="prob-input" placeholder="${meta.default_probability[c.stage || 'lead']}">
             <div class="help">Blank uses the stage default.</div>
           </div>
           <div class="field open-only">

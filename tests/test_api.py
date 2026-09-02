@@ -176,6 +176,62 @@ def test_pipeline_tasks_timeline_route(client):
     assert r.status_code == 200
 
 
+def test_lead_pipeline_revamp(client):
+    # New clinics default to "lead": in the book, but off the pipeline board.
+    r = client.post("/api/clinics", json={"name": "Fresh Lead Clinic", "deal_value": 10000})
+    assert r.status_code == 201, r.text
+    lead = r.json()
+    assert lead["stage"] == "lead"
+    assert lead["in_pipeline"] is False
+    assert lead["relationship"] == "prospect"
+    assert lead["weighted_value"] == 0  # leads don't count toward the forecast
+    lid = lead["id"]
+
+    # A lead is excluded from the dashboard forecast open-deal counts...
+    d = client.get("/api/dashboard").json()
+    lead_ids = {x["id"] for x in d["leads"]}
+    assert lid in lead_ids
+    assert d["leads_count"] >= 1
+
+    # Promoting a lead onto the board (-> Interested) bumps the map relationship to interested.
+    r = client.patch(f"/api/clinics/{lid}/stage", json={"stage": "prospect"})
+    assert r.status_code == 200, r.text
+    promoted = r.json()
+    assert promoted["stage"] == "prospect"
+    assert promoted["in_pipeline"] is True
+    assert promoted["relationship"] == "interested"
+    assert promoted["color"] == "interested"
+
+    # It's no longer listed as a lead on the dashboard.
+    d = client.get("/api/dashboard").json()
+    assert lid not in {x["id"] for x in d["leads"]}
+
+    # Dropping back to a lead demotes the relationship again.
+    r = client.patch(f"/api/clinics/{lid}/stage", json={"stage": "lead"})
+    assert r.json()["relationship"] == "prospect" and r.json()["in_pipeline"] is False
+
+    # Won/Lost carry a "closed_recent" flag: true only for the month they closed in.
+    r = client.post("/api/clinics", json={"name": "Won This Month", "stage": "proposal", "deal_value": 5000})
+    wid = r.json()["id"]
+    r = client.patch(f"/api/clinics/{wid}/stage", json={"stage": "won", "outcome_reason": "service"})
+    assert r.json()["closed_recent"] is True  # closed today -> this month
+    old = "2021-03-15"
+    r = client.post("/api/clinics", json={"name": "Lost Long Ago", "stage": "demo"})
+    oid = r.json()["id"]
+    r = client.patch(f"/api/clinics/{oid}/stage", json={"stage": "lost", "outcome_reason": "price", "outcome_date": old})
+    assert r.json()["outcome_date"] == old
+    assert r.json()["closed_recent"] is False  # closed in a past month -> filtered off the board
+
+    # /api/meta drives the board: pipeline_stages excludes lead, and the relabels are in place.
+    meta = client.get("/api/meta").json()
+    assert "lead" not in meta["pipeline_stages"]
+    assert meta["pipeline_stages"] == ["prospect", "contacted", "demo", "proposal", "won", "lost"]
+    assert meta["stages"]["lead"] == "Lead"
+    assert meta["stages"]["prospect"] == "Interested"
+    assert meta["stages"]["demo"] == "In negotiations"
+    assert meta["stages"]["proposal"] == "Quote sent"
+
+
 def test_clients_contacts_locations_links_groups(client):
     # client-specific fields + archive
     r = client.post("/api/clinics", json={"name": "Cardiology One Calgary", "relationship": "current_client", "shorthand": "coc", "phone": "403-555-0900", "address": "1 Heart Way SW"})

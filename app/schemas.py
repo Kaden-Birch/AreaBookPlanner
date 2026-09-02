@@ -10,7 +10,7 @@ Priority = Literal["high", "medium", "low"]
 ContactRole = Literal["manager", "doctor", "nurse", "receptionist", "staff", "owner", "it", "other"]
 ApptType = Literal["visit", "call", "demo", "install", "support", "other"]
 ApptStatus = Literal["scheduled", "completed", "cancelled", "no_show"]
-Stage = Literal["prospect", "contacted", "demo", "proposal", "won", "lost"]
+Stage = Literal["lead", "prospect", "contacted", "demo", "proposal", "won", "lost"]
 
 
 def _blank_to_none(v):
@@ -41,7 +41,7 @@ class ClinicIn(BaseModel):
     notes: Optional[str] = None
     next_follow_up: Optional[str] = None  # YYYY-MM-DD
     # Pipeline / deal tracking
-    stage: Stage = "prospect"
+    stage: Stage = "lead"
     deal_value: Optional[float] = Field(default=None, ge=0, description="Estimated annual contract value")
     expected_close: Optional[str] = None  # YYYY-MM-DD
     win_probability: Optional[int] = Field(default=None, ge=0, le=100)

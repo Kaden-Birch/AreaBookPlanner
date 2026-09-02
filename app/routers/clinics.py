@@ -39,6 +39,13 @@ def _sync_stage_and_relationship(data: dict, previous: dict | None) -> None:
         data["relationship"] = "current_client"
     elif data["relationship"] == "current_client" and data["relationship"] != prev_rel and data["stage"] != "won":
         data["stage"] = "won"
+    # Entering the pipeline (lead -> an open stage) makes the clinic "Interested" on the map;
+    # dropping back to a lead demotes it to a plain prospect.
+    if data["stage"] in ("prospect", "contacted", "demo", "proposal") and data["stage"] != prev_stage \
+            and data["relationship"] == "prospect":
+        data["relationship"] = "interested"
+    elif data["stage"] == "lead" and data["stage"] != prev_stage and data["relationship"] == "interested":
+        data["relationship"] = "prospect"
     if data["stage"] in ("won", "lost") and data["stage"] != prev_stage and not data.get("outcome_date"):
         data["outcome_date"] = now_iso()[:10]
 

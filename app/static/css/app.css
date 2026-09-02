@@ -237,7 +237,8 @@ label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); 
 .badge-completed { background: var(--green-bg); color: var(--green-fg); }
 .badge-cancelled { background: var(--grey-bg); color: var(--grey-fg); text-decoration: line-through; }
 .badge-no_show { background: var(--red-bg); color: var(--red-fg); }
-.badge-stage-prospect { background: var(--grey-bg); color: var(--grey-fg); }
+.badge-stage-lead { background: var(--grey-bg); color: var(--grey-fg); }
+.badge-stage-prospect { background: var(--blue-bg); color: var(--blue-fg); }
 .badge-stage-contacted { background: var(--blue-bg); color: var(--blue-fg); }
 .badge-stage-demo { background: var(--purple-bg); color: var(--purple-fg); }
 .badge-stage-proposal { background: var(--yellow-bg); color: var(--yellow-fg); }
@@ -277,6 +278,8 @@ table.table { width: 100%; border-collapse: collapse; background: var(--surface)
 .legend-item .count { color: var(--muted); font-weight: 600; }
 .color-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin: 10px 0; background: var(--surface-3); }
 .color-bar span { display: block; }
+.lead-line { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--muted); }
+.lead-line .n { font-weight: 700; color: var(--text); }
 .stage-bar { display: flex; gap: 4px; margin: 10px 0; }
 .stage-bar a { flex: 1; text-align: center; padding: 8px 4px; border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 12px; }
 .stage-bar a:hover { background: var(--hover-strong); text-decoration: none; }
@@ -420,10 +423,14 @@ table.table { width: 100%; border-collapse: collapse; background: var(--surface)
 .kanban-col-header .totals { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .kanban-col-header.stage-won { border-top: 3px solid var(--c-green); }
 .kanban-col-header.stage-lost { border-top: 3px solid var(--c-red); }
-.kanban-col-header.stage-prospect { border-top: 3px solid var(--c-grey); }
+.kanban-col-header.stage-prospect { border-top: 3px solid #1f4e8c; }
 .kanban-col-header.stage-contacted { border-top: 3px solid var(--c-blue); }
 .kanban-col-header.stage-demo { border-top: 3px solid #7c5cd6; }
 .kanban-col-header.stage-proposal { border-top: 3px solid var(--c-yellow); }
+.kanban-col-header.stage-lead { border-top: 3px solid var(--c-grey); }
+.lead-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--c-grey); border-radius: var(--radius); }
+.lead-banner a { margin-left: auto; white-space: nowrap; }
 .kanban-cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .kanban-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: grab; box-shadow: var(--shadow); }
 .kanban-card:active { cursor: grabbing; }

@@ -5,9 +5,11 @@ import { openClinicForm } from '../forms.js';
 
 let state = { q: '', relationship: '', color: '', stage: '', sort: 'name' };
 
-export async function render(container) {
+export async function render(container, params) {
   setTitle('Clinics');
   const meta = await getMeta();
+  if (params && params.get('stage') != null) state.stage = params.get('stage');
+  if (params && params.get('color') != null) state.color = params.get('color');
   container.innerHTML = `
     <div class="page-header">
       <h1>Clinics</h1>

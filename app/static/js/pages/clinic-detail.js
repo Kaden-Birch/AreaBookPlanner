@@ -31,6 +31,7 @@ export async function render(container, params, routeParams) {
   const today = new Date().toISOString().slice(0, 10);
   const openTasks = clinic.tasks.filter(t => !t.done);
   const isClient = clinic.is_client;
+  const isLead = clinic.stage === 'lead';
   const closed = clinic.stage === 'won' || clinic.stage === 'lost';
   const reasonLabel = closed && clinic.outcome_reason ? ((clinic.stage === 'won' ? meta.won_reasons : meta.lost_reasons)[clinic.outcome_reason] || clinic.outcome_reason) : null;
   const photos = clinic.attachments.filter(a => a.kind === 'photo');
@@ -77,13 +78,15 @@ export async function render(container, params, routeParams) {
     <div class="grid-2 mt">
       <div>
         <div class="card">
-          <div class="card-header"><h3>${isClient ? 'Client' : 'Deal'}</h3>
+          <div class="card-header"><h3>${isClient ? 'Client' : (isLead ? 'Lead' : 'Deal')}</h3>
             <div class="actions">
+              ${isLead ? `<button class="btn btn-sm btn-primary" id="btn-promote" title="Move this lead onto the pipeline board as Interested">Add to pipeline →</button>` : ''}
               ${isClient && clinic.stage === 'won' ? `<button class="btn btn-sm" id="btn-archive" title="${clinic.archived ? 'Show again on the pipeline board' : 'Hide from the Won column on the pipeline board'}">${clinic.archived ? 'Restore to board' : 'Dismiss from board'}</button>` : ''}
               <select class="stage-select" id="stage-move" title="Move to stage">${options(meta.stages, clinic.stage)}</select>
               <button class="btn btn-sm" id="btn-edit-deal">Edit</button>
             </div>
           </div>
+          ${isLead ? '<p class="help mb">This clinic is a lead — added to your book but not yet contacted. It stays off the pipeline board until you add it as Interested.</p>' : ''}
           <dl class="kv">
             ${isClient ? `
             <dt>Shorthand</dt><dd>${clinic.shorthand ? shorthandBadge(clinic) : '<span class="muted">— set one under Edit</span>'}</dd>
@@ -263,6 +266,8 @@ export async function render(container, params, routeParams) {
   const archiveBtn = container.querySelector('#btn-archive');
   if (archiveBtn) archiveBtn.onclick = async () => { await clinics.archive(clinic.id, !clinic.archived); toast(clinic.archived ? 'Back on the pipeline board' : 'Dismissed from the pipeline board', 'success'); reload(); };
   container.querySelector('#stage-move').onchange = (e) => changeStage(clinic, e.target.value, reload);
+  const promoteBtn = container.querySelector('#btn-promote');
+  if (promoteBtn) promoteBtn.onclick = () => changeStage(clinic, 'prospect', reload);
   container.querySelector('#btn-delete').onclick = async () => { if (await deleteClinic(clinic)) navigate('#/clinics'); };
   const newAppt = () => openAppointmentForm({ clinicId: clinic.id, lockClinic: true, onSaved: reload });
   container.querySelector('#btn-appt').onclick = newAppt;

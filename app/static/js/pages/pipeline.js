@@ -3,7 +3,7 @@ import { clinics, dashboard, getMeta } from '../api.js';
 import { esc, attr, dot, fmtMoney, fmtDate, fmtDateOnly, relativeDays, options, debounce, setTitle, badge, toast, shorthandBadge } from '../ui.js';
 import { changeStage, openClinicForm } from '../forms.js';
 
-let state = { q: '', color: '', showClosed: true, showArchived: false, sort: 'value' };
+let state = { q: '', color: '', showClosed: true, showEarlierClosed: false, showArchived: false, sort: 'value' };
 let allClinics = [];
 let meta = null;
 
@@ -16,9 +16,10 @@ export async function render(container) {
       <h1>Pipeline</h1>
       <span class="muted" id="pipe-summary"></span>
       <div class="actions">
-        <button class="btn btn-primary" id="add-clinic">+ New prospect</button>
+        <button class="btn btn-primary" id="add-clinic">+ New interested clinic</button>
       </div>
     </div>
+    <div id="leads-chip"></div>
     <div class="grid-4 mb" id="forecast"></div>
     <div class="toolbar">
       <input type="search" class="search" id="q" placeholder="Search clinics…" value="${attr(state.q)}">
@@ -30,8 +31,9 @@ export async function render(container) {
         <option value="activity" ${state.sort === 'activity' ? 'selected' : ''}>Sort: Recently updated</option>
       </select>
       <label class="checkbox"><input type="checkbox" id="show-closed" ${state.showClosed ? 'checked' : ''}> Show Won / Lost</label>
+      <label class="checkbox"><input type="checkbox" id="show-earlier" ${state.showEarlierClosed ? 'checked' : ''}> Include earlier months <span class="muted" id="earlier-count"></span></label>
       <label class="checkbox"><input type="checkbox" id="show-archived" ${state.showArchived ? 'checked' : ''}> Show dismissed clients <span class="muted" id="archived-count"></span></label>
-      <span class="muted small">Drag cards between columns to move them along the pipeline.</span>
+      <span class="muted small">Drag cards between columns to move them along the pipeline. Won / Lost clear at month-end.</span>
     </div>
     <div id="board"></div>
     <div class="grid-2 mt" id="reasons"></div>`;
@@ -42,6 +44,7 @@ export async function render(container) {
   container.querySelector('#color').onchange = (e) => { state.color = e.target.value; renderBoard(); };
   container.querySelector('#sort').onchange = (e) => { state.sort = e.target.value; renderBoard(); };
   container.querySelector('#show-closed').onchange = (e) => { state.showClosed = e.target.checked; renderBoard(); };
+  container.querySelector('#show-earlier').onchange = (e) => { state.showEarlierClosed = e.target.checked; renderBoard(); };
   container.querySelector('#show-archived').onchange = (e) => { state.showArchived = e.target.checked; renderBoard(); };
   await load();
 }
@@ -52,8 +55,20 @@ async function load() {
   const [list, d] = await Promise.all([clinics.list(), dashboard()]);
   allClinics = list;
   renderForecast(d);
+  renderLeads();
   renderBoard();
   renderReasons(d);
+}
+
+function renderLeads() {
+  const el = document.getElementById('leads-chip');
+  if (!el) return;
+  const leads = allClinics.filter(c => c.stage === 'lead' && !c.archived && c.relationship !== 'do_not_contact');
+  if (!leads.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="lead-banner">
+    <span><strong>${leads.length}</strong> lead${leads.length === 1 ? '' : 's'} waiting to be contacted — not on the board yet.</span>
+    <a class="btn btn-sm" href="#/clinics?stage=lead">Review leads →</a>
+  </div>`;
 }
 
 function renderForecast(d) {
@@ -63,11 +78,19 @@ function renderForecast(d) {
     <div class="card stat"><div class="value money">${fmtMoney(f.open_value) || '$0'}</div><div class="label">Open pipeline value</div><div class="sub">Sum of estimated annual value</div></div>
     <div class="card stat"><div class="value money">${fmtMoney(f.weighted_value) || '$0'}</div><div class="label">Weighted forecast</div><div class="sub">Value × win probability</div></div>
     <div class="card stat"><div class="value money">${fmtMoney(f.won_value_this_year) || '$0'}</div><div class="label">Won this year</div></div>`;
-  document.getElementById('pipe-summary').textContent = `${allClinics.length} clinics`;
+  const onBoard = allClinics.filter(c => c.stage !== 'lead').length;
+  document.getElementById('pipe-summary').textContent = `${onBoard} in pipeline`;
 }
 
+function isClosed(c) { return c.stage === 'won' || c.stage === 'lost'; }
+
 function visible(c) {
-  if (!state.showClosed && (c.stage === 'won' || c.stage === 'lost')) return false;
+  if (c.stage === 'lead') return false; // leads are pre-pipeline, never on the board
+  if (isClosed(c)) {
+    if (!state.showClosed) return false;
+    // Won / Lost only linger for the calendar month they closed in.
+    if (!c.closed_recent && !state.showEarlierClosed) return false;
+  }
   if (c.archived && !state.showArchived) return false;
   if (state.color && c.color !== state.color) return false;
   if (state.q) {
@@ -89,7 +112,10 @@ function sorter(a, b) {
 function renderBoard() {
   const archivedN = allClinics.filter(c => c.archived).length;
   document.getElementById('archived-count').textContent = archivedN ? `(${archivedN})` : '';
-  const stages = Object.keys(meta.stages).filter(s => state.showClosed || !['won', 'lost'].includes(s));
+  const earlierN = allClinics.filter(c => isClosed(c) && !c.closed_recent && !c.archived).length;
+  document.getElementById('earlier-count').textContent = earlierN ? `(${earlierN})` : '';
+  const pipeline = meta.pipeline_stages || Object.keys(meta.stages).filter(s => s !== 'lead');
+  const stages = pipeline.filter(s => state.showClosed || !['won', 'lost'].includes(s));
   const board = document.getElementById('board');
   const today = new Date().toISOString().slice(0, 10);
   board.innerHTML = `<div class="kanban" style="grid-template-columns: repeat(${stages.length}, minmax(200px, 1fr))">${stages.map(stage => {

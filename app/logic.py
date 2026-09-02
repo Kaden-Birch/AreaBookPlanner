@@ -26,14 +26,18 @@ COLOR_LABELS = {
 LEGACY_COLOR_KEYS = {"yellow": "client", "green": "interested", "blue": "recent", "grey": "stale", "white": "new", "red": "dnc"}
 
 STAGE_LABELS = {
-    "prospect": "Prospect",
+    "lead": "Lead",           # added to the system but not contacted yet — NOT on the pipeline board
+    "prospect": "Interested",
     "contacted": "Contacted",
-    "demo": "Demo",
-    "proposal": "Proposal",
+    "demo": "In negotiations",
+    "proposal": "Quote sent",
     "won": "Won",
     "lost": "Lost",
 }
+# Stages shown on the pipeline board, in order (leads are pre-pipeline, so excluded).
+PIPELINE_STAGES = ("prospect", "contacted", "demo", "proposal", "won", "lost")
 OPEN_STAGES = ("prospect", "contacted", "demo", "proposal")
+CLOSED_STAGES = ("won", "lost")
 
 WON_REASONS = {
     "price": "Competitive price",
@@ -217,9 +221,14 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
     clinic["tag_list"] = [t.strip() for t in (clinic.get("tags") or "").split(",") if t.strip()]
     clinic["archived"] = bool(clinic.get("archived"))
     clinic["is_client"] = clinic["relationship"] == "current_client"
-    stage = clinic.get("stage") or "prospect"
+    stage = clinic.get("stage") or "lead"
     clinic["stage"] = stage
     clinic["stage_label"] = STAGE_LABELS.get(stage, stage)
+    clinic["in_pipeline"] = stage != "lead"
+    # Won/Lost stay on the board only for the calendar month they closed in.
+    clinic["closed_recent"] = bool(
+        stage in CLOSED_STAGES and clinic.get("outcome_date") and clinic["outcome_date"][:7] == now_iso()[:7]
+    )
     value = clinic.get("deal_value") or 0
     prob = clinic.get("win_probability")
     if prob is None:
@@ -230,7 +239,7 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
 
 
 # Used when no explicit win probability is set on a clinic.
-DEFAULT_PROBABILITY = {"prospect": 10, "contacted": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
+DEFAULT_PROBABILITY = {"lead": 0, "prospect": 10, "contacted": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
 
 
 def log_event(

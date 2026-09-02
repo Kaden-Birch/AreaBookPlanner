@@ -30,8 +30,9 @@ export async function render(container) {
     <div class="grid-2 mt">
       <div class="card">
         <div class="card-header"><h3>Pipeline</h3><div class="actions"><a class="btn btn-sm" href="#/pipeline">Open board</a></div></div>
-        <div class="stage-bar">${Object.entries(meta.stages).map(([s, label]) => `
-          <a href="#/pipeline"><span class="n">${d.pipeline[s].count}</span>${esc(label)}<span class="v">${d.pipeline[s].value ? fmtMoney(d.pipeline[s].value) : '&nbsp;'}</span></a>`).join('')}</div>
+        ${d.leads_count ? `<a class="lead-line" href="#/clinics?stage=lead"><span class="n">${d.leads_count}</span> lead${d.leads_count === 1 ? '' : 's'} waiting to be contacted →</a>` : ''}
+        <div class="stage-bar">${(meta.pipeline_stages || Object.keys(meta.stages).filter(s => s !== 'lead')).map(s => `
+          <a href="#/pipeline"><span class="n">${d.pipeline[s].count}</span>${esc(meta.stages[s])}<span class="v">${d.pipeline[s].value ? fmtMoney(d.pipeline[s].value) : '&nbsp;'}</span></a>`).join('')}</div>
       </div>
       <div class="card">
         <div class="card-header"><h3>Clinics by status</h3><div class="actions"><a class="btn btn-sm" href="#/map">Open map</a></div></div>
@@ -43,6 +44,15 @@ export async function render(container) {
 
     <div class="grid-2 mt">
       <div>
+        ${d.leads && d.leads.length ? `
+        <div class="card">
+          <div class="card-header"><h3>Leads to contact</h3><span class="muted small">Added to the book, not yet in the pipeline</span><div class="actions"><a class="btn btn-sm" href="#/clinics?stage=lead">All leads</a></div></div>
+          ${listOrEmpty(d.leads, l => `
+            <li><span class="when">${l.created_at ? esc(relativeDays(l.created_at)) : ''}</span>
+              <div class="body"><div class="title">${dot(l.color)}<a href="#/clinics/${l.id}">${esc(l.name)}</a> ${l.priority === 'high' ? badge('High', 'badge-high') : ''}</div>
+              ${l.next_follow_up ? `<div class="muted small">Follow up ${esc(fmtDateOnly(l.next_follow_up))}</div>` : ''}</div></li>`,
+            'No leads waiting.')}
+        </div>` : ''}
         <div class="card">
           <div class="card-header"><h3>Tasks due</h3><span class="muted small">Overdue, today and next 7 days</span><div class="actions"><a class="btn btn-sm" href="#/tasks">All tasks</a></div></div>
           ${listOrEmpty(d.tasks_due, t => `

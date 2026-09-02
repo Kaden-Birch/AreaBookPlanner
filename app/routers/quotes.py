@@ -300,7 +300,7 @@ def set_quote_status(quote_id: int, payload: QuoteStatusIn, conn: sqlite3.Connec
     if payload.status == "sent":
         row = conn.execute("SELECT stage, relationship FROM clinics WHERE id = ?", (q["clinic_id"],)).fetchone()
         stage, relationship = row[0], row[1]
-        if stage in ("lead", "prospect", "contacted", "demo"):
+        if stage in ("lead", "prospect", "demo"):
             new_rel = "interested" if relationship == "prospect" else relationship
             conn.execute("UPDATE clinics SET stage = 'proposal', relationship = ?, updated_at = ? WHERE id = ?",
                          (new_rel, now_iso(), q["clinic_id"]))

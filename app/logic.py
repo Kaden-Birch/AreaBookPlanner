@@ -26,17 +26,16 @@ COLOR_LABELS = {
 LEGACY_COLOR_KEYS = {"yellow": "client", "green": "interested", "blue": "recent", "grey": "stale", "white": "new", "red": "dnc"}
 
 STAGE_LABELS = {
-    "lead": "Lead",           # added to the system but not contacted yet — NOT on the pipeline board
+    "lead": "Lead",           # added to the system but not yet a qualified lead — NOT on the pipeline board
     "prospect": "Interested",
-    "contacted": "Contacted",
     "demo": "In negotiations",
     "proposal": "Quote sent",
     "won": "Won",
     "lost": "Lost",
 }
 # Stages shown on the pipeline board, in order (leads are pre-pipeline, so excluded).
-PIPELINE_STAGES = ("prospect", "contacted", "demo", "proposal", "won", "lost")
-OPEN_STAGES = ("prospect", "contacted", "demo", "proposal")
+PIPELINE_STAGES = ("prospect", "demo", "proposal", "won", "lost")
+OPEN_STAGES = ("prospect", "demo", "proposal")
 CLOSED_STAGES = ("won", "lost")
 
 WON_REASONS = {
@@ -288,7 +287,7 @@ def _days_until(target: str | None, today: date) -> int | None:
 
 
 # Used when no explicit win probability is set on a clinic.
-DEFAULT_PROBABILITY = {"lead": 0, "prospect": 10, "contacted": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
+DEFAULT_PROBABILITY = {"lead": 0, "prospect": 20, "demo": 40, "proposal": 60, "won": 100, "lost": 0}
 
 
 def log_event(

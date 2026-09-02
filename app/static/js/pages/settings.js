@@ -388,9 +388,9 @@ function normalizeValue(field, v) {
   }
   if (field === 'stage') {
     const s = v.toLowerCase();
-    for (const k of ['prospect', 'contacted', 'demo', 'proposal', 'won', 'lost']) if (s.includes(k)) return k;
-    if (/contact/.test(s)) return 'contacted';
-    return 'prospect';
+    for (const k of ['prospect', 'demo', 'proposal', 'won', 'lost']) if (s.includes(k)) return k;
+    if (/interest/.test(s)) return 'prospect';
+    return 'lead';
   }
   if (field === 'priority') { const s = v.toLowerCase(); return s.startsWith('h') ? 'high' : s.startsWith('l') ? 'low' : 'medium'; }
   if (field === 'provider_count') { const n = parseInt(v, 10); return isNaN(n) ? null : n; }

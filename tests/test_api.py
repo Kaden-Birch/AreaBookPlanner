@@ -102,10 +102,10 @@ def test_validation(client):
 
 
 def test_pipeline_tasks_timeline_route(client):
-    r = client.post("/api/clinics", json={"name": "Pipeline Clinic", "lat": 51.05, "lng": -114.05, "deal_value": 12000, "stage": "contacted"})
+    r = client.post("/api/clinics", json={"name": "Pipeline Clinic", "lat": 51.05, "lng": -114.05, "deal_value": 12000, "stage": "prospect"})
     assert r.status_code == 201, r.text
     c = r.json()
-    assert c["stage"] == "contacted" and c["effective_probability"] == 20 and c["weighted_value"] == 2400
+    assert c["stage"] == "prospect" and c["effective_probability"] == 20 and c["weighted_value"] == 2400
     cid = c["id"]
 
     # move through the pipeline via the Kanban endpoint
@@ -227,7 +227,8 @@ def test_lead_pipeline_revamp(client):
     # /api/meta drives the board: pipeline_stages excludes lead, and the relabels are in place.
     meta = client.get("/api/meta").json()
     assert "lead" not in meta["pipeline_stages"]
-    assert meta["pipeline_stages"] == ["prospect", "contacted", "demo", "proposal", "won", "lost"]
+    assert meta["pipeline_stages"] == ["prospect", "demo", "proposal", "won", "lost"]
+    assert "contacted" not in meta["stages"]
     assert meta["stages"]["lead"] == "Lead"
     assert meta["stages"]["prospect"] == "Interested"
     assert meta["stages"]["demo"] == "In negotiations"
@@ -280,7 +281,7 @@ def test_client_lifecycle_revenue_and_onboarding(client):
 def test_competitor_displacement(client):
     end = (datetime.now() + timedelta(days=45)).date().isoformat()
     r = client.post("/api/clinics", json={
-        "name": "Displacement Target", "stage": "contacted", "relationship": "interested",
+        "name": "Displacement Target", "stage": "prospect", "relationship": "interested",
         "it_provider": "RivalMSP", "competitor_contract_end": end, "deal_value": 8000,
     })
     assert r.status_code == 201, r.text
@@ -401,7 +402,7 @@ def test_search_reminders_analytics_views_templates_import(client):
     assert len(a["visits_by_week"]) == 12 and len(a["visits_by_month"]) == 12
     assert a["conversion"]["won"] >= 1 and "rate" in a["conversion"]
     assert any(r["rep"] == "Kaden" for r in a["by_rep"])
-    assert [t["stage"] for t in a["time_in_stage"]] == ["prospect", "contacted", "demo", "proposal"]
+    assert [t["stage"] for t in a["time_in_stage"]] == ["prospect", "demo", "proposal"]
 
     # saved views
     v = client.post("/api/views", json={"name": "NW prospects", "page": "map", "state": {"q": "NW", "colors": ["white", "grey"]}}).json()
@@ -417,7 +418,7 @@ def test_search_reminders_analytics_views_templates_import(client):
 
     # csv import with duplicate skipping
     r = client.post("/api/import/clinics", json={"rows": [
-        {"name": "Imported Clinic A", "address": "10 Import St NE", "relationship": "interested", "stage": "contacted"},
+        {"name": "Imported Clinic A", "address": "10 Import St NE", "relationship": "interested", "stage": "prospect"},
         {"name": "Cardiology One Calgary", "address": "1 Heart Way SW"},
         {"name": "", "address": "x"},
         {"name": "Bad Stage", "stage": "nonsense"},

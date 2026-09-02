@@ -19,7 +19,6 @@ export async function render(container) {
         <button class="btn btn-primary" id="add-clinic">+ New interested clinic</button>
       </div>
     </div>
-    <div id="leads-chip"></div>
     <div class="grid-4 mb" id="forecast"></div>
     <div class="toolbar">
       <input type="search" class="search" id="q" placeholder="Search clinics…" value="${attr(state.q)}">
@@ -56,7 +55,6 @@ async function load() {
   const [list, d, comp] = await Promise.all([clinics.list(), dashboard(), competitorsApi()]);
   allClinics = list;
   renderForecast(d);
-  renderLeads();
   renderBoard();
   renderCompetitors(comp);
   renderReasons(d);
@@ -95,17 +93,6 @@ function renderCompetitors(comp) {
       ${comp.providers.length ? `<div class="prov-list">${providers}</div>` : '<p class="muted">No current providers recorded on open prospects.</p>'}
       ${comp.lost_to_competitor ? `<p class="muted small mt">Lost to a competitor: <strong>${comp.lost_to_competitor}</strong>${comp.targets_without_end_date ? ` · ${comp.targets_without_end_date} prospect${comp.targets_without_end_date === 1 ? '' : 's'} missing a contract end date` : ''}</p>` : ''}
     </div>
-  </div>`;
-}
-
-function renderLeads() {
-  const el = document.getElementById('leads-chip');
-  if (!el) return;
-  const leads = allClinics.filter(c => c.stage === 'lead' && !c.archived && c.relationship !== 'do_not_contact');
-  if (!leads.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="lead-banner">
-    <span><strong>${leads.length}</strong> lead${leads.length === 1 ? '' : 's'} waiting to be contacted — not on the board yet.</span>
-    <a class="btn btn-sm" href="#/clinics?stage=lead">Review leads →</a>
   </div>`;
 }
 

@@ -382,6 +382,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
     # Keep the pipeline consistent with the relationship for pre-existing rows.
     conn.execute("UPDATE clinics SET stage = 'won' WHERE relationship = 'current_client' AND stage <> 'won'")
+    # The "Contacted" stage was removed; fold any existing rows up into "Interested".
+    conn.execute("UPDATE clinics SET stage = 'prospect' WHERE stage = 'contacted'")
     if conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0] == 0:
         conn.executemany(
             "INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", DEFAULT_EMAIL_TEMPLATES

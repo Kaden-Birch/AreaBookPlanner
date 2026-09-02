@@ -10,7 +10,7 @@ Priority = Literal["high", "medium", "low"]
 ContactRole = Literal["manager", "doctor", "nurse", "receptionist", "staff", "owner", "it", "other"]
 ApptType = Literal["visit", "call", "demo", "install", "support", "other"]
 ApptStatus = Literal["scheduled", "completed", "cancelled", "no_show"]
-Stage = Literal["lead", "prospect", "contacted", "demo", "proposal", "won", "lost"]
+Stage = Literal["lead", "prospect", "demo", "proposal", "won", "lost"]
 
 
 def _blank_to_none(v):

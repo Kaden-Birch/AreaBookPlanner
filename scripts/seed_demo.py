@@ -31,7 +31,7 @@ CLINICS = [
      "stage": "proposal", "deal_value": 12000, "win_probability": 65, "expected_close": (datetime.now() + timedelta(days=14)).date().isoformat()},
     {"name": "Marlborough Walk-In", "address": "1240 36 St NE", "postal_code": "T2A 6L1",
      "lat": 51.0552, "lng": -113.9836, "relationship": "prospect", "clinic_type": "Walk-in clinic",
-     "it_provider": "In-house", "provider_count": 4, "tags": "NE, walk-in", "stage": "contacted", "deal_value": 6000},
+     "it_provider": "In-house", "provider_count": 4, "tags": "NE, walk-in", "stage": "prospect", "deal_value": 6000},
     {"name": "Southcentre Dental", "address": "100 Anderson Rd SE", "postal_code": "T2J 3V1",
      "lat": 50.9615, "lng": -114.0715, "relationship": "prospect", "clinic_type": "Dental",
      "provider_count": 3, "tags": "SE, dental", "stage": "lost", "deal_value": 4500, "outcome_reason": "competitor",

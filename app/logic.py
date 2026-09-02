@@ -128,6 +128,8 @@ DEFAULT_RACK_UNITS = {
 }
 # Device types that are never physically rack-mounted (a VM lives on its host, etc.).
 NON_RACKABLE_TYPES = ("vm", "wireless", "laptop", "camera")
+# Passive physical fixtures that belong in the rack view but not the network topology.
+NON_TOPOLOGY_TYPES = ("patch_panel", "shelf")
 
 
 def clinic_shorthand(clinic: dict) -> str:

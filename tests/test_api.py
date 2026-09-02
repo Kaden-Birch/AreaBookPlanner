@@ -667,8 +667,13 @@ def test_security_devices_and_1u(client):
     # blank rack fields (None) are allowed
     assert client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall", "rack_position": None, "rack_units": None}).status_code == 201
     # topology places cameras/nvr; racks include the NVR
+    # patch panels and shelves are physical-only: not in the topology
+    client.post(f"/api/clinics/{cid}/devices", json={"device_type": "patch_panel", "designation": "24-port"})
+    shelf = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "shelf", "rack_units": 2}).json()
     topo = client.get(f"/api/clinics/{cid}/topology").json()
     assert any(n["device_type"] == "camera" for n in topo["nodes"])
+    assert not any(n["device_type"] in ("patch_panel", "shelf") for n in topo["nodes"])
+    assert not any(n["device_type"] in ("patch_panel", "shelf") for n in topo["offsite"])
     racks = client.get(f"/api/clinics/{cid}/racks").json()
     rack = racks["racks"][0]
     assert any(d["device_type"] == "nvr" for d in rack["devices"])

@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import (
     DEFAULT_RACK_UNITS, DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, NON_RACKABLE_TYPES,
-    OS_DEVICE_TYPES, USER_DEVICE_TYPES, clinic_shorthand, log_event, now_iso,
+    NON_TOPOLOGY_TYPES, OS_DEVICE_TYPES, USER_DEVICE_TYPES, clinic_shorthand, log_event, now_iso,
 )
 from ..schemas import ConnectionIn, DeviceIn, EdgeOp, TicketIn
 
@@ -231,7 +231,9 @@ def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     more than one uplink.
     """
     _clinic_or_404(conn, clinic_id)
-    devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    all_rows = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    # Passive rack fixtures (patch panels, shelves) are physical only — keep them out of the network diagram.
+    devices = [d for d in all_rows if d["device_type"] not in NON_TOPOLOGY_TYPES]
     by_id = {d["id"]: d for d in devices}
     onsite = [d for d in devices if not d["off_site"]]
     children: dict[int, list[int]] = {d["id"]: [] for d in devices}

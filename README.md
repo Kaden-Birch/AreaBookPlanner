@@ -116,7 +116,8 @@ and is stored in a single SQLite file.
   route as cables down a side rail, while links to devices outside the rack end in a
   labeled chip (naming the device and its rack). Wired, wireless and VM links are
   styled distinctly. Empty rack units are click-to-add: clicking a slot opens the
-  device form with the rack, room and U# pre-filled.
+  device form with the rack, room and U# pre-filled, and a rack device can be
+  dragged from one slot to another empty slot to reposition it.
 - **Quoting** – a price book under Settings (managed IT tiers priced per device or per
   user, VM / physical server / firewall / switch / AP / site management, basic and BDR
   backup, M365 backup, PrimeEMR flat or per user, hourly support rates, onboarding fee,

@@ -4,6 +4,7 @@ import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, con
 import { openDeviceForm, openDeviceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null };
+let rackDragEndAt = 0;  // suppress the click that browsers fire right after a drag
 let clinic = null, meta = null;
 
 export async function render(container, params, routeParams) {
@@ -272,9 +273,10 @@ async function renderRacks(body) {
     return;
   }
   main.innerHTML = rackElevation(selected);
-  main.querySelectorAll('.ru-device').forEach(g => { g.onclick = () => openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); });
+  main.querySelectorAll('.ru-device').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); }; });
   main.querySelectorAll('[data-id2]').forEach(b => { b.onclick = () => openDeviceDetail({ deviceId: Number(b.dataset.id2), clinic, onChanged: load }); });
-  main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => openDeviceForm({ clinic, initial: { device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); });
+  main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceForm({ clinic, initial: { device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); }; });
+  wireRackDrag(main, selected, body);
 }
 
 function rackThumb(r) {
@@ -340,7 +342,7 @@ function rackElevation(r) {
     anchorOf[d.id] = { x: rackX + rackW, y: cy, top, height };
     const label = `${d.name}`;
     const sub = [d.designation, d.ip_address].filter(Boolean).join(' · ');
-    svg += `<g class="ru-device ${d.status === 'retired' ? 'retired' : ''}" data-id="${d.id}" transform="translate(${rackX + 2},${top + 1.5})">
+    svg += `<g class="ru-device ${d.status === 'retired' ? 'retired' : ''}" data-id="${d.id}" data-pos="${pos}" data-h="${h}" transform="translate(${rackX + 2},${top + 1.5})">
       <rect width="${rackW - 4}" height="${height}" rx="3" class="ru-box ${accentFill(d.device_type)}"/>
       <rect width="4" height="${height}" class="ru-accent ${accentFill(d.device_type)}"/>
       <text x="12" y="${Math.min(17, height / 2 + 4)}" class="ru-icon">${esc(d.icon)}</text>
@@ -395,15 +397,101 @@ function rackElevation(r) {
   const legend = `<div class="rack-legend">
     <span><span class="sw fill-network"></span>Network</span><span><span class="sw fill-server"></span>Server</span><span><span class="sw fill-printer"></span>Printer</span><span><span class="sw fill-security"></span>Security</span>
     <span><span class="cable"></span>Cable</span><span><span class="cable wireless"></span>Wireless</span><span><span class="cable virtual"></span>Virtual</span>
-    <span class="muted">Chips on the right are linked devices outside this rack. Click a device for details.</span></div>`;
+    <span class="muted">Chips on the right are linked devices outside this rack. Click a device for details, or drag it to an empty slot to move it.</span></div>`;
 
   return `<div class="card">
     <div class="card-header"><h3>🗄 ${esc(r.name)}</h3><span class="muted small">${esc(r.room || '')} · ${r.device_count} device${r.device_count === 1 ? '' : 's'} · ${U}U</span>
       <div class="actions"><a class="btn btn-sm" href="#/clinics/${clinic.id}/equipment?view=topology">Topology</a></div></div>
-    <div class="rack-scroll"><svg class="rack-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${svg}</svg></div>
+    <div class="rack-scroll"><svg class="rack-svg" data-uh="${UH}" data-racky="${rackY}" data-rackx="${rackX}" data-rackw="${rackW}" data-u="${U}" data-h="${H}" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${svg}</svg></div>
     ${noPos.length ? `<div class="mt small muted">In this rack without a U# set: ${noPos.map(d => `<button class="btn btn-link btn-sm" data-id2="${d.id}">${esc(d.icon)} ${esc(d.name)}</button>`).join(' ')} — edit each to set its position.</div>` : ''}
     ${legend}
   </div>`;
+}
+
+
+// Drag a rack device to another empty position. Clean, snap-to-U, overlap-aware.
+function wireRackDrag(main, rack, body) {
+  const svg = main.querySelector('.rack-svg');
+  if (!svg) return;
+  const UH = +svg.dataset.uh, rackY = +svg.dataset.racky, U = +svg.dataset.u, Hsvg = +svg.dataset.h;
+  const rackX = +svg.dataset.rackx, rackW = +svg.dataset.rackw;
+  // occupied ranges per device (for overlap tests)
+  const items = rack.devices.filter(d => d.position).map(d => ({ id: d.id, pos: d.position, h: d.units || 1 }));
+  const occupiedBy = (u, exceptId) => items.some(it => it.id !== exceptId && u >= it.pos && u < it.pos + it.h);
+  const topEdgeY = (pos, h) => rackY + (U - (pos + h - 1)) * UH;
+
+  svg.querySelectorAll('.ru-device[data-pos]').forEach(g => {
+    if (g.dataset.pos === 'null' || g.dataset.pos === '') return;
+    g.classList.add('draggable');
+    let drag = null, ghost = null;
+    g.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const id = Number(g.dataset.id), h = Number(g.dataset.h), pos = Number(g.dataset.pos);
+      const rect = svg.getBoundingClientRect();
+      const scale = rect.height / Hsvg;
+      const svgY = (e.clientY - rect.top) / scale;
+      const uUnder = Math.min(U, Math.max(1, U - Math.floor((svgY - rackY) / UH)));
+      drag = { id, h, pos, grabOffset: uUnder - pos, scale, rect, target: pos, moved: false };
+      ghost = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      ghost.setAttribute('class', 'ru-ghost');
+      ghost.setAttribute('x', rackX + 2); ghost.setAttribute('width', rackW - 4);
+      ghost.setAttribute('height', h * UH - 3); ghost.setAttribute('rx', 3);
+      ghost.setAttribute('y', topEdgeY(pos, h) + 1.5);
+      svg.appendChild(ghost);
+      g.classList.add('dragging');
+      g.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    g.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const svgY = (e.clientY - drag.rect.top) / drag.scale;
+      const uUnder = Math.min(U, Math.max(1, U - Math.floor((svgY - rackY) / UH)));
+      let target = uUnder - drag.grabOffset;
+      target = Math.min(U - drag.h + 1, Math.max(1, target));
+      drag.target = target;
+      drag.moved = drag.moved || target !== drag.pos;
+      const ok = !rangeOverlaps(target, drag.h, drag.id, occupiedBy);
+      ghost.setAttribute('y', topEdgeY(target, drag.h) + 1.5);
+      ghost.classList.toggle('invalid', !ok);
+      g.setAttribute('transform', `translate(${rackX + 2},${topEdgeY(target, drag.h) + 1.5})`);
+    });
+    const finish = async (e) => {
+      if (!drag) return;
+      const { id, h, pos, target } = drag;
+      if (ghost) ghost.remove();
+      g.classList.remove('dragging');
+      try { g.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      const moved = target !== pos;
+      drag = null; ghost = null;
+      if (!moved) return;  // a plain click: let the click handler open the device
+      rackDragEndAt = Date.now();  // swallow the click the browser fires after this drag
+      if (rangeOverlaps(target, h, id, occupiedBy)) { toast('That spot is occupied', 'error'); renderRacks(body); return; }
+      try {
+        const full = await devices.get(id);
+        await devices.update(id, { ...deviceUpdatePayload(full), rack_position: target });
+        toast(`Moved to U${target}`, 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      renderRacks(body);
+    };
+    g.addEventListener('pointerup', finish);
+    g.addEventListener('pointercancel', finish);
+  });
+}
+
+function rangeOverlaps(pos, h, id, occupiedBy) {
+  for (let u = pos; u < pos + h; u++) if (occupiedBy(u, id)) return true;
+  return false;
+}
+
+// Build a full DeviceIn payload from a fetched device (so PUT keeps every field).
+function deviceUpdatePayload(d) {
+  return {
+    device_type: d.device_type, name: d.name, location_id: d.location_id, designation: d.designation,
+    manufacturer: d.manufacturer, model: d.model, serial: d.serial, ip_address: d.ip_address, mac_address: d.mac_address,
+    os: d.os, user_name: d.user_name, uplink_id: d.uplink_id, link_type: d.device_type === 'vm' ? 'virtual' : d.link_type,
+    status: d.status, off_site: d.off_site, rack: d.rack, rack_room: d.rack_room, rack_position: d.rack_position,
+    rack_units: d.rack_units, services: d.services, purchase_date: d.purchase_date, warranty_until: d.warranty_until, notes: d.notes,
+  };
 }
 
 function trunc(str, m) { return str && str.length > m ? str.slice(0, m - 1) + '…' : (str || ''); }

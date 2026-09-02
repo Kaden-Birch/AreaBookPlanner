@@ -763,6 +763,10 @@ details summary { cursor: pointer; font-weight: 600; }
 .ru-icon { font-size: 13px; }
 .ru-u { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .ru-badge { font-size: 10px; }
+.ru-device.draggable { cursor: grab; }
+.ru-device.dragging { cursor: grabbing; opacity: .85; }
+.ru-ghost { fill: var(--primary); opacity: .18; stroke: var(--primary); stroke-width: 1.5; stroke-dasharray: 5 3; pointer-events: none; }
+.ru-ghost.invalid { fill: var(--c-red); stroke: var(--c-red); }
 .ru-empty { cursor: pointer; }
 .ru-empty rect { fill: transparent; stroke: transparent; }
 .ru-empty-label { fill: transparent; font-size: 11px; font-weight: 600; }

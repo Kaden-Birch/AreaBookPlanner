@@ -122,6 +122,27 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
       </div>
 
       <div class="form-section">
+        <h3>Contract &amp; recurring revenue</h3>
+        <div class="field-row">
+          <div class="field">
+            <label>Monthly recurring revenue</label>
+            <input name="mrr" type="number" min="0" step="50" value="${attr(c.mrr ?? '')}" placeholder="e.g. 950">
+            <div class="help">What they pay per month. ARR is 12× this.</div>
+          </div>
+          <div class="field"><label>Contract start</label><input name="contract_start" type="date" value="${attr(c.contract_start)}"></div>
+          <div class="field"><label>Contract end / renewal</label><input name="contract_end" type="date" value="${attr(c.contract_end)}"></div>
+          <div class="field"><label>Term (months)</label><input name="contract_term_months" type="number" min="0" value="${attr(c.contract_term_months ?? '')}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Renewal reminder</label>
+            <select name="renewal_reminder_days">${options({ 30: '30 days before', 60: '60 days before', 90: '90 days before', 120: '120 days before' }, String(c.renewal_reminder_days ?? 60))}</select>
+          </div>
+          <div class="field" style="align-self:end"><label class="checkbox"><input type="checkbox" name="auto_renew" ${c.auto_renew ? 'checked' : ''}> Contract auto-renews</label></div>
+        </div>
+      </div>
+
+      <div class="form-section">
         <h3>Practice details</h3>
         <div class="field-row">
           <div class="field">
@@ -130,8 +151,15 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
             <datalist id="clinic-types">${meta.clinic_types.map(t => `<option value="${attr(t)}">`).join('')}</datalist>
           </div>
           <div class="field"><label>EMR system</label><input name="emr_system" value="${attr(c.emr_system)}" placeholder="e.g. Telus Wolf, Accuro"></div>
-          <div class="field"><label>Current IT provider</label><input name="it_provider" value="${attr(c.it_provider)}"></div>
+          <div class="field"><label>Current IT provider</label><input name="it_provider" value="${attr(c.it_provider)}" placeholder="Who we'd displace"></div>
           <div class="field"><label># Providers</label><input name="provider_count" type="number" min="0" value="${attr(c.provider_count ?? '')}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Their IT contract ends</label>
+            <input name="competitor_contract_end" type="date" value="${attr(c.competitor_contract_end)}">
+            <div class="help">We'll set a follow-up ~60 days ahead so you catch the renewal window.</div>
+          </div>
         </div>
         <div class="field-row">
           <div class="field"><label>Tags (comma separated)</label><input name="tags" value="${attr(c.tags)}" placeholder="NW, walk-in, referral"></div>

@@ -183,3 +183,5 @@ export const appointments = {
 
 export const geocode = (q) => api.get('/api/geocode', { q });
 export const dashboard = () => api.get('/api/dashboard');
+export const revenue = () => api.get('/api/revenue');
+export const competitors = () => api.get('/api/competitors');

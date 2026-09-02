@@ -307,6 +307,16 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("archived", "INTEGER NOT NULL DEFAULT 0"),
         ("archived_at", "TEXT"),
         ("group_id", "INTEGER REFERENCES clinic_groups(id) ON DELETE SET NULL"),
+        # Client lifecycle & recurring revenue
+        ("mrr", "REAL"),
+        ("contract_start", "TEXT"),
+        ("contract_end", "TEXT"),
+        ("contract_term_months", "INTEGER"),
+        ("auto_renew", "INTEGER NOT NULL DEFAULT 0"),
+        ("renewal_reminder_days", "INTEGER"),
+        ("churned_at", "TEXT"),
+        # Competitor / displacement intelligence
+        ("competitor_contract_end", "TEXT"),
     ],
     "contacts": [
         ("extension", "TEXT"),

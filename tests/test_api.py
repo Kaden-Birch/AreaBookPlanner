@@ -127,7 +127,9 @@ def test_pipeline_tasks_timeline_route(client):
     assert task["overdue"] is True and task["clinic_name"] == "Pipeline Clinic"
     r = client.patch(f"/api/tasks/{task['id']}", json={"done": True})
     assert r.json()["done"] is True and r.json()["done_at"]
-    assert client.get("/api/tasks", params={"done": "false"}).json() == []
+    # (Winning a deal auto-creates onboarding tasks, so the open list is not empty — just
+    # confirm the task we marked done has left it.)
+    assert task["id"] not in [t["id"] for t in client.get("/api/tasks", params={"done": "false"}).json()]
     assert client.post("/api/tasks", json={"clinic_id": 9999, "title": "x"}).status_code == 422
     assert client.post("/api/tasks", json={"title": "   "}).status_code == 422
 
@@ -230,6 +232,71 @@ def test_lead_pipeline_revamp(client):
     assert meta["stages"]["prospect"] == "Interested"
     assert meta["stages"]["demo"] == "In negotiations"
     assert meta["stages"]["proposal"] == "Quote sent"
+
+
+def test_client_lifecycle_revenue_and_onboarding(client):
+    soon = (datetime.now() + timedelta(days=20)).date().isoformat()
+    onboarded = datetime.now().date().isoformat()
+    r = client.post("/api/clinics", json={
+        "name": "Recurring Revenue Clinic", "relationship": "current_client", "shorthand": "RRC",
+        "mrr": 1000, "contract_start": onboarded, "contract_end": soon, "contract_term_months": 12,
+        "renewal_reminder_days": 60, "outcome_date": onboarded,
+    })
+    assert r.status_code == 201, r.text
+    c = r.json()
+    cid = c["id"]
+    assert c["stage"] == "won" and c["is_active_client"] is True
+    assert c["mrr"] == 1000 and c["arr"] == 12000
+    assert c["days_to_renewal"] is not None and c["renewal_due"] is True and c["renewal_overdue"] is False
+
+    # Winning the deal generated onboarding tasks.
+    detail = client.get(f"/api/clinics/{cid}").json()
+    onboarding = [t for t in detail["tasks"] if "onboarding" in t["title"].lower() or "kickoff" in t["title"].lower() or "backups" in t["title"].lower()]
+    assert onboarding, "expected onboarding tasks to be created on win"
+    assert any(e["type"] == "onboarding" for e in detail["timeline"])
+
+    # Revenue endpoint reflects the client.
+    rev = client.get("/api/revenue").json()
+    assert rev["summary"]["mrr"] >= 1000
+    assert rev["summary"]["active_clients"] >= 1
+    assert any(row["id"] == cid for row in rev["renewals"])
+    assert any(m["added"] for m in rev["movement"])  # some MRR was added in a tracked month
+
+    # Churn: won -> lost stamps churned_at, drops the client off the map, stops the MRR.
+    mrr_before = rev["summary"]["mrr"]
+    r = client.patch(f"/api/clinics/{cid}/stage", json={"stage": "lost", "outcome_reason": "price"})
+    churned = r.json()
+    assert churned["churned"] is True and churned["is_active_client"] is False
+    assert churned["relationship"] == "prospect"  # no longer a current client on the map
+    rev2 = client.get("/api/revenue").json()
+    assert rev2["summary"]["mrr"] == round(mrr_before - 1000, 2)
+    assert rev2["summary"]["churned_ytd"] >= 1
+
+    # Re-winning clears the churn stamp.
+    r = client.patch(f"/api/clinics/{cid}/stage", json={"stage": "won"})
+    assert r.json()["churned"] is False and r.json()["is_active_client"] is True
+
+
+def test_competitor_displacement(client):
+    end = (datetime.now() + timedelta(days=45)).date().isoformat()
+    r = client.post("/api/clinics", json={
+        "name": "Displacement Target", "stage": "contacted", "relationship": "interested",
+        "it_provider": "RivalMSP", "competitor_contract_end": end, "deal_value": 8000,
+    })
+    assert r.status_code == 201, r.text
+    c = r.json()
+    assert c["competitor_days"] is not None and c["displacement_hot"] is True
+    # A follow-up was auto-seeded ahead of the competitor contract end.
+    assert c["next_follow_up"] is not None and c["next_follow_up"] < end
+
+    # A lost-to-competitor deal is counted.
+    client.post("/api/clinics", json={"name": "Lost To Rival", "stage": "lost", "outcome_reason": "competitor"})
+
+    comp = client.get("/api/competitors").json()
+    assert any(p["provider"] == "RivalMSP" for p in comp["providers"])
+    assert any(d["id"] == c["id"] and d["hot"] for d in comp["displacement"])
+    assert comp["hot_count"] >= 1
+    assert comp["lost_to_competitor"] >= 1
 
 
 def test_clients_contacts_locations_links_groups(client):

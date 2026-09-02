@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 # Appointment types that count as physically going to the clinic.
 IN_PERSON_TYPES = ("visit", "demo", "install", "support")
@@ -79,6 +79,24 @@ QUICK_LOGS = {
 }
 
 REMINDER_OPTIONS = [15, 30, 45, 60]
+
+# Default renewal reminder lead time (days before a client's contract ends).
+DEFAULT_RENEWAL_REMINDER_DAYS = 60
+# How far before a prospect's competitor contract ends we auto-set a follow-up.
+COMPETITOR_FOLLOWUP_LEAD_DAYS = 60
+# Window (days) within which a competitor contract-end counts as a "hot" displacement chance.
+DISPLACEMENT_HOT_DAYS = 90
+
+# Onboarding checklist auto-created when a deal is won: (title, days_after_win, priority).
+DEFAULT_ONBOARDING_TASKS = [
+    ("Send welcome email and schedule kickoff call", 1, "high"),
+    ("Collect admin credentials and documentation", 3, "high"),
+    ("Deploy RMM / monitoring agents", 5, "medium"),
+    ("Configure and verify backups", 7, "high"),
+    ("Review firewall and security posture", 10, "medium"),
+    ("Document the network in Area Book", 14, "medium"),
+    ("30-day onboarding check-in", 30, "medium"),
+]
 
 # Equipment / network devices. prefix feeds the naming template {SHORTHAND}-{PREFIX}{NNN}.
 DEVICE_TYPES = {
@@ -235,7 +253,38 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
         prob = DEFAULT_PROBABILITY.get(stage, 0)
     clinic["effective_probability"] = prob
     clinic["weighted_value"] = round(value * prob / 100, 2) if stage in OPEN_STAGES else 0
+
+    # ---- Client lifecycle & recurring revenue ----
+    today_d = date.fromisoformat(today)
+    clinic["churned"] = bool(clinic.get("churned_at"))
+    clinic["is_active_client"] = stage == "won" and not clinic["churned"]
+    mrr = clinic.get("mrr") or 0
+    clinic["mrr"] = mrr
+    clinic["arr"] = round(mrr * 12, 2)
+    dtr = _days_until(clinic.get("contract_end"), today_d)
+    clinic["days_to_renewal"] = dtr
+    reminder_days = clinic.get("renewal_reminder_days") or DEFAULT_RENEWAL_REMINDER_DAYS
+    clinic["renewal_due"] = bool(clinic["is_active_client"] and dtr is not None and dtr <= reminder_days)
+    clinic["renewal_overdue"] = bool(clinic["is_active_client"] and dtr is not None and dtr < 0)
+
+    # ---- Competitor / displacement intelligence ----
+    dtc = _days_until(clinic.get("competitor_contract_end"), today_d)
+    clinic["competitor_days"] = dtc
+    clinic["displacement_open"] = not clinic["is_active_client"] and clinic["relationship"] != "do_not_contact"
+    clinic["displacement_hot"] = bool(
+        clinic["displacement_open"] and dtc is not None and 0 <= dtc <= DISPLACEMENT_HOT_DAYS
+    )
     return clinic
+
+
+def _days_until(target: str | None, today: date) -> int | None:
+    """Whole days from `today` until an ISO date (negative if past). None if unparseable."""
+    if not target:
+        return None
+    try:
+        return (date.fromisoformat(target[:10]) - today).days
+    except (ValueError, TypeError):
+        return None
 
 
 # Used when no explicit win probability is set on a clinic.

@@ -51,12 +51,23 @@ class ClinicIn(BaseModel):
     # Client-specific
     shorthand: Optional[str] = Field(default=None, max_length=10)
     group_id: Optional[int] = None
+    # Contract & recurring revenue (mostly relevant once a client)
+    mrr: Optional[float] = Field(default=None, ge=0, description="Monthly recurring revenue")
+    contract_start: Optional[str] = None  # YYYY-MM-DD
+    contract_end: Optional[str] = None  # YYYY-MM-DD
+    contract_term_months: Optional[int] = Field(default=None, ge=0, le=120)
+    auto_renew: bool = False
+    renewal_reminder_days: Optional[int] = Field(default=None, ge=0, le=365)
+    # Competitor / displacement (it_provider holds the competitor's name)
+    competitor_contract_end: Optional[str] = None  # YYYY-MM-DD
 
     _blank = field_validator(
         "address", "city", "province", "postal_code", "phone", "fax", "email", "website",
         "clinic_type", "emr_system", "it_provider", "tags", "notes", "next_follow_up",
         "lat", "lng", "provider_count", "deal_value", "expected_close", "win_probability",
-        "outcome_reason", "outcome_notes", "outcome_date", "shorthand", "group_id", mode="before",
+        "outcome_reason", "outcome_notes", "outcome_date", "shorthand", "group_id",
+        "mrr", "contract_start", "contract_end", "contract_term_months", "renewal_reminder_days",
+        "competitor_contract_end", mode="before",
     )(_blank_to_none)
 
     @field_validator("shorthand")
@@ -259,6 +270,8 @@ class SettingsIn(BaseModel):
     quote_terms: Optional[str] = None
     quote_tax_pct: Optional[float] = None
     quote_valid_days: Optional[int] = None
+    onboarding_enabled: Optional[bool] = None
+    onboarding_template: Optional[list[dict]] = None
 
 
 DeviceStatus = Literal["active", "spare", "retired"]

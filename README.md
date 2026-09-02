@@ -48,6 +48,22 @@ and is stored in a single SQLite file.
   defaults), expected close date, and a weighted forecast on the dashboard.
 - **Won / lost reasons** – capture why each deal closed and see the breakdown on the
   pipeline page.
+- **Recurring revenue & renewals** – the **Clients** page tracks MRR / ARR, average revenue
+  per client, new vs. churned clients this year, and an MRR-movement chart. Record each
+  client's contract (start, end, term, auto-renew) and Area Book surfaces renewals that are
+  coming up or overdue — on the Clients page and the dashboard — plus a data-hygiene list of
+  clients missing an MRR or renewal date.
+- **Onboarding checklist** – winning a deal auto-creates a templated set of onboarding tasks
+  (welcome email, credentials, RMM, backups, security review, documentation, 30-day check-in)
+  so nothing slips. The checklist and whether it runs are editable under Settings.
+- **Churn tracking** – moving a Won client to Lost records the churn, drops them off the map
+  as a client and stops their MRR; churned revenue this year shows on the Clients page.
+  Re-winning them clears the churn.
+- **Competitor / displacement intelligence** – record a prospect's current IT provider and
+  when *their* contract ends. Area Book auto-sets a follow-up ahead of that date and shows a
+  **displacement radar** (prospects whose contracts are ending soon) plus a "who we're up
+  against" breakdown of open prospects by provider — all on the Pipeline page, with the
+  hottest opportunities on the dashboard.
 - **Activity timeline** – every note, appointment, task and status change for a clinic
   in one chronological feed, with filters.
 - **Tasks & reminders** – "Call Sarah Friday" with due dates, priorities and a done
@@ -225,6 +241,8 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET/POST /api/appointments`, `GET/PUT/PATCH/DELETE /api/appointments/{id}` | Appointments |
 | `GET /api/geocode?q=` | Address lookup (Nominatim) |
 | `GET /api/dashboard` | Dashboard summary |
+| `GET /api/revenue` | Recurring revenue, renewals and churn |
+| `GET /api/competitors` | Competitor breakdown and displacement radar |
 | `GET /api/export/{clinics.csv,contacts.csv,appointments.ics,backup.json}` | Exports |
 | `POST /api/import/backup?replace=true` | Restore a backup |
 

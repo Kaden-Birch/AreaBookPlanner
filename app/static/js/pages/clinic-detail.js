@@ -17,6 +17,26 @@ import { devices as devicesApi } from '../api.js';
 let miniMap = null;
 let tlFilter = 'all';
 
+function renewalBadge(c) {
+  if (c.renewal_overdue) return badge('Expired', 'badge-red');
+  if (c.days_to_renewal != null && c.days_to_renewal <= 30) return badge(`Renews in ${c.days_to_renewal}d`, 'badge-high');
+  if (c.renewal_due) return badge(`Renews in ${c.days_to_renewal}d`, 'badge-yellow');
+  return '';
+}
+
+function competitorBadge(c) {
+  if (c.competitor_days == null) return '';
+  if (c.competitor_days < 0) return badge('Contract ended', 'badge-red');
+  if (c.displacement_hot) return badge(`${c.competitor_days}d left`, 'badge-high');
+  return badge(`${c.competitor_days}d`, 'badge-grey');
+}
+
+function contractSummary(c) {
+  if (!c.contract_start && !c.contract_end && !c.contract_term_months) return '<span class="muted">— none recorded</span>';
+  const range = [c.contract_start ? fmtDateOnly(c.contract_start) : '?', c.contract_end ? fmtDateOnly(c.contract_end) : '?'].join(' → ');
+  return esc(range) + (c.contract_term_months ? ` <span class="muted">(${c.contract_term_months} mo)</span>` : '');
+}
+
 export async function render(container, params, routeParams) {
   const id = Number(routeParams.id);
   let clinic;
@@ -91,11 +111,15 @@ export async function render(container, params, routeParams) {
             ${isClient ? `
             <dt>Shorthand</dt><dd>${clinic.shorthand ? shorthandBadge(clinic) : '<span class="muted">— set one under Edit</span>'}</dd>
             <dt>Client since</dt><dd>${clinic.outcome_date ? esc(fmtDateOnly(clinic.outcome_date)) : '<span class="muted">— set the onboarding date under Edit</span>'}</dd>
-            <dt>Annual value</dt><dd class="money">${clinic.deal_value ? fmtMoney(clinic.deal_value) : '—'}</dd>
+            <dt>Monthly revenue</dt><dd class="money">${clinic.mrr ? `${fmtMoney(clinic.mrr)}/mo` : '<span class="muted">— set MRR under Edit</span>'}</dd>
+            <dt>Annual value</dt><dd class="money">${clinic.mrr ? fmtMoney(clinic.arr) : (clinic.deal_value ? fmtMoney(clinic.deal_value) : '—')}</dd>
+            <dt>Contract</dt><dd>${contractSummary(clinic)}</dd>
+            <dt>Renewal</dt><dd>${clinic.contract_end ? `${esc(fmtDateOnly(clinic.contract_end))} ${renewalBadge(clinic)}${clinic.auto_renew ? ' ' + badge('Auto-renew', 'badge-grey') : ''}` : '<span class="muted">— no end date set</span>'}</dd>
             <dt>How we won</dt><dd>${reasonLabel ? esc(reasonLabel) : '—'}</dd>
             ${clinic.outcome_notes ? `<dt>Notes</dt><dd><pre class="wrap">${esc(clinic.outcome_notes)}</pre></dd>` : ''}` : `
             <dt>Stage</dt><dd>${stageBadge(clinic)}</dd>
             <dt>Est. annual value</dt><dd class="money">${clinic.deal_value ? fmtMoney(clinic.deal_value) : '—'}</dd>
+            ${clinic.competitor_contract_end ? `<dt>Competitor contract ends</dt><dd>${esc(fmtDateOnly(clinic.competitor_contract_end))} ${competitorBadge(clinic)}</dd>` : ''}
             ${!closed ? `<dt>Win probability</dt><dd>${clinic.effective_probability}%${clinic.win_probability == null ? ' <span class="muted">(stage default)</span>' : ''}</dd>
             <dt>Weighted value</dt><dd class="money">${clinic.weighted_value ? fmtMoney(clinic.weighted_value) : '—'}</dd>
             <dt>Expected close</dt><dd>${clinic.expected_close ? `${esc(fmtDateOnly(clinic.expected_close))} ${clinic.expected_close < today ? badge('Slipped', 'badge-red') : ''}` : '—'}</dd>` : `

@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 import difflib
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -22,6 +23,8 @@ CLINIC_COLUMNS = [
     "priority", "tags", "notes", "next_follow_up",
     "stage", "deal_value", "expected_close", "win_probability",
     "outcome_reason", "outcome_notes", "outcome_date", "shorthand", "group_id",
+    "mrr", "contract_start", "contract_end", "contract_term_months", "auto_renew",
+    "renewal_reminder_days", "competitor_contract_end", "churned_at",
 ]
 
 LOCATION_COLUMNS = ["name", "address", "city", "province", "postal_code", "phone", "lat", "lng", "notes"]
@@ -46,8 +49,83 @@ def _sync_stage_and_relationship(data: dict, previous: dict | None) -> None:
         data["relationship"] = "interested"
     elif data["stage"] == "lead" and data["stage"] != prev_stage and data["relationship"] == "interested":
         data["relationship"] = "prospect"
+    # Churn: a current client moving to Lost is no longer a client on the map.
+    if data["stage"] == "lost" and prev_stage == "won" and data["relationship"] == "current_client":
+        data["relationship"] = "prospect"
     if data["stage"] in ("won", "lost") and data["stage"] != prev_stage and not data.get("outcome_date"):
         data["outcome_date"] = now_iso()[:10]
+
+
+def _churn_value(previous: dict | None, data: dict) -> str | None:
+    """System-managed churned_at: set when a won client is marked lost, cleared on re-win."""
+    if data["stage"] == "won":
+        return None
+    prev_stage = previous.get("stage") if previous else None
+    if data["stage"] == "lost" and prev_stage == "won":
+        return data.get("outcome_date") or now_iso()[:10]
+    return previous.get("churned_at") if previous else None
+
+
+def _apply_competitor_followup(data: dict, previous: dict | None) -> None:
+    """When a prospect's competitor contract-end is set/changed, seed a follow-up ahead of it."""
+    from ..logic import COMPETITOR_FOLLOWUP_LEAD_DAYS
+
+    end = data.get("competitor_contract_end")
+    prev_end = previous.get("competitor_contract_end") if previous else None
+    if not end or end == prev_end or data.get("relationship") == "current_client":
+        return
+    today = now_iso()[:10]
+    try:
+        target = (date.fromisoformat(end[:10]) - timedelta(days=COMPETITOR_FOLLOWUP_LEAD_DAYS)).isoformat()
+    except (ValueError, TypeError):
+        return
+    # If the renewal window has already opened (or the contract already ended), follow up now.
+    target = max(target, today)
+    # Only pull the follow-up earlier, never push an existing one out.
+    if not data.get("next_follow_up") or data["next_follow_up"] > target:
+        data["next_follow_up"] = target
+
+
+def _maybe_create_onboarding(conn: sqlite3.Connection, clinic_id: int) -> int:
+    """On the first win, generate the onboarding task checklist. Returns tasks created."""
+    from ..logic import DEFAULT_ONBOARDING_TASKS
+
+    enabled = conn.execute("SELECT value FROM settings WHERE key = 'onboarding_enabled'").fetchone()
+    if enabled is not None and str(enabled[0]) == "0":
+        return 0
+    already = conn.execute(
+        "SELECT 1 FROM clinic_events WHERE clinic_id = ? AND event_type = 'onboarding'", (clinic_id,)
+    ).fetchone()
+    if already:
+        return 0
+    template = _onboarding_template(conn)
+    today = date.fromisoformat(now_iso()[:10])
+    for title, offset, priority in template:
+        due = (today + timedelta(days=int(offset))).isoformat()
+        conn.execute(
+            "INSERT INTO tasks (clinic_id, title, due_date, priority) VALUES (?, ?, ?, ?)",
+            (clinic_id, title, due, priority if priority in ("high", "medium", "low") else "medium"),
+        )
+    log_event(conn, clinic_id, "onboarding", f"Onboarding checklist created ({len(template)} tasks)")
+    return len(template)
+
+
+def _onboarding_template(conn: sqlite3.Connection) -> list[tuple]:
+    from ..logic import DEFAULT_ONBOARDING_TASKS
+
+    row = conn.execute("SELECT value FROM settings WHERE key = 'onboarding_template'").fetchone()
+    if row and row[0]:
+        import json
+
+        try:
+            items = json.loads(row[0])
+            out = [(str(i["title"]).strip(), int(i.get("offset_days", 0)), i.get("priority", "medium"))
+                   for i in items if str(i.get("title", "")).strip()]
+            if out:
+                return out
+        except (ValueError, KeyError, TypeError):
+            pass
+    return list(DEFAULT_ONBOARDING_TASKS)
 
 
 def _log_changes(conn: sqlite3.Connection, clinic_id: int, before: dict, after: dict) -> None:
@@ -158,6 +236,8 @@ def list_clinics(
 def create_clinic(payload: ClinicIn, conn: sqlite3.Connection = Depends(db_dependency)):
     data = payload.model_dump()
     _sync_stage_and_relationship(data, None)
+    _apply_competitor_followup(data, None)
+    data["churned_at"] = _churn_value(None, data)
     cols = ", ".join(CLINIC_COLUMNS)
     marks = ", ".join("?" * len(CLINIC_COLUMNS))
     cur = conn.execute(
@@ -165,6 +245,8 @@ def create_clinic(payload: ClinicIn, conn: sqlite3.Connection = Depends(db_depen
     )
     log_event(conn, cur.lastrowid, "created", "Clinic added",
               f"{STAGE_LABELS[data['stage']]} · {RELATIONSHIP_LABELS[data['relationship']]}")
+    if data["stage"] == "won":
+        _maybe_create_onboarding(conn, cur.lastrowid)
     return enrich_clinic(conn, _get_clinic_or_404(conn, cur.lastrowid))
 
 
@@ -309,13 +391,18 @@ def change_stage(clinic_id: int, payload: StageChange, conn: sqlite3.Connection 
     if data["stage"] != "won":
         data["archived"] = 0
         data["archived_at"] = None
+    churned_at = _churn_value(before, data)
     conn.execute(
         """UPDATE clinics SET stage = ?, relationship = ?, outcome_reason = ?, outcome_notes = ?,
-           outcome_date = ?, archived = ?, archived_at = ?, updated_at = ? WHERE id = ?""",
+           outcome_date = ?, archived = ?, archived_at = ?, churned_at = ?, updated_at = ? WHERE id = ?""",
         (data["stage"], data["relationship"], data["outcome_reason"], data["outcome_notes"],
-         data["outcome_date"], int(bool(data.get("archived"))), data.get("archived_at"), now_iso(), clinic_id),
+         data["outcome_date"], int(bool(data.get("archived"))), data.get("archived_at"), churned_at, now_iso(), clinic_id),
     )
     _log_changes(conn, clinic_id, before, data)
+    if data["stage"] == "won" and before.get("stage") != "won":
+        _maybe_create_onboarding(conn, clinic_id)
+    if churned_at and not before.get("churned_at"):
+        log_event(conn, clinic_id, "churn", "Client churned", payload.outcome_notes)
     return enrich_clinic(conn, _get_clinic_or_404(conn, clinic_id))
 
 
@@ -428,12 +515,18 @@ def update_clinic(clinic_id: int, payload: ClinicIn, conn: sqlite3.Connection = 
     before = _get_clinic_or_404(conn, clinic_id)
     data = payload.model_dump()
     _sync_stage_and_relationship(data, before)
+    _apply_competitor_followup(data, before)
+    data["churned_at"] = _churn_value(before, data)
     sets = ", ".join(f"{c} = ?" for c in CLINIC_COLUMNS)
     conn.execute(
         f"UPDATE clinics SET {sets}, updated_at = ? WHERE id = ?",
         [data[c] for c in CLINIC_COLUMNS] + [now_iso(), clinic_id],
     )
     _log_changes(conn, clinic_id, before, data)
+    if data["stage"] == "won" and before.get("stage") != "won":
+        _maybe_create_onboarding(conn, clinic_id)
+    if data["churned_at"] and not before.get("churned_at"):
+        log_event(conn, clinic_id, "churn", "Client churned", data.get("outcome_notes"))
     return enrich_clinic(conn, _get_clinic_or_404(conn, clinic_id))
 
 

@@ -538,11 +538,24 @@ def _mask(key: str | None) -> str | None:
 
 @router.get("/settings")
 def read_settings(conn: sqlite3.Connection = Depends(db_dependency)):
+    from ..logic import DEFAULT_ONBOARDING_TASKS
+
     key = get_setting(conn, "openai_api_key")
+    tpl_raw = get_setting(conn, "onboarding_template")
+    onboarding_template = None
+    if tpl_raw:
+        try:
+            onboarding_template = json.loads(tpl_raw)
+        except ValueError:
+            onboarding_template = None
+    if not onboarding_template:
+        onboarding_template = [{"title": t, "offset_days": d, "priority": p} for t, d, p in DEFAULT_ONBOARDING_TASKS]
     return {
         "ai_configured": bool(key),
         "openai_api_key_masked": _mask(key),
         "openai_model": get_setting(conn, "openai_model") or DEFAULT_OPENAI_MODEL,
+        "onboarding_enabled": get_setting(conn, "onboarding_enabled") != "0",
+        "onboarding_template": onboarding_template,
     }
 
 
@@ -556,6 +569,16 @@ def write_settings(payload: SettingsIn, conn: sqlite3.Connection = Depends(db_de
         v = getattr(payload, k, None)
         if v is not None:
             set_setting(conn, k, str(v).strip())
+    if payload.onboarding_enabled is not None:
+        set_setting(conn, "onboarding_enabled", "1" if payload.onboarding_enabled else "0")
+    if payload.onboarding_template is not None:
+        cleaned = [
+            {"title": str(i.get("title", "")).strip(),
+             "offset_days": int(i.get("offset_days", 0) or 0),
+             "priority": i.get("priority") if i.get("priority") in ("high", "medium", "low") else "medium"}
+            for i in payload.onboarding_template if str(i.get("title", "")).strip()
+        ]
+        set_setting(conn, "onboarding_template", json.dumps(cleaned) if cleaned else None)
     return read_settings(conn)
 
 

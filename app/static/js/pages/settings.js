@@ -9,6 +9,7 @@ export async function render(container) {
     api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(), pricebook.get(),
   ]);
   const perm = notif.permission();
+  const onbText = (ai.onboarding_template || []).map(i => `${i.title} | ${i.offset_days} | ${i.priority}`).join('\n');
   container.innerHTML = `
     <div class="page-header"><h1>Settings</h1></div>
     <div class="card mb">
@@ -55,6 +56,16 @@ export async function render(container) {
             <div class="flex"><input id="ai-key" type="password" class="grow" placeholder="${ai.ai_configured ? `Saved (${attr(ai.openai_api_key_masked)}) — paste a new key to replace` : 'sk-…'}" autocomplete="off"><button class="btn" id="ai-save">Save</button>${ai.ai_configured ? '<button class="btn btn-danger" id="ai-clear">Remove</button>' : ''}</div>
             <div class="help">Get one at platform.openai.com → API keys. Status: <strong>${ai.ai_configured ? 'configured' : 'not configured'}</strong></div></div>
           <div class="field"><label>Model</label><input id="ai-model" value="${attr(ai.openai_model)}" placeholder="gpt-4o-mini"><div class="help">Any OpenAI model that accepts images, e.g. gpt-4o-mini, gpt-4.1-mini or gpt-5-mini. gpt-4o-mini is cheap and accurate for cards.</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Onboarding checklist</h3></div>
+          <p class="small">When a deal is marked Won, Area Book can create these tasks automatically so nothing slips during onboarding.</p>
+          <label class="checkbox"><input type="checkbox" id="onb-enabled" ${ai.onboarding_enabled ? 'checked' : ''}> Create onboarding tasks when a deal is won</label>
+          <div class="field mt"><label>Checklist — one per line: <code>Title | days after win | priority</code></label>
+            <textarea id="onb-template" rows="8" style="font-family:var(--mono,monospace);font-size:12px">${esc(onbText)}</textarea>
+            <div class="help">Priority is high, medium or low. Example: <code>Configure and verify backups | 7 | high</code></div></div>
+          <button class="btn" id="onb-save">Save checklist</button>
         </div>
 
         <div class="card">
@@ -157,6 +168,16 @@ export async function render(container) {
     } catch (e) { toast(e.message, 'error'); }
   };
   container.querySelector('#save-rep').onclick = () => { setRepName(container.querySelector('#rep-name').value.trim()); toast('Name saved', 'success'); };
+  container.querySelector('#onb-save').onclick = async () => {
+    const lines = container.querySelector('#onb-template').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+      const [title, days, priority] = l.split('|').map(s => (s || '').trim());
+      return { title, offset_days: Number(days) || 0, priority: (priority || 'medium').toLowerCase() };
+    }).filter(i => i.title);
+    try {
+      await settingsApi.update({ onboarding_enabled: container.querySelector('#onb-enabled').checked, onboarding_template: lines });
+      toast('Onboarding checklist saved', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  };
   container.querySelector('#ai-save').onclick = async () => {
     const key = container.querySelector('#ai-key').value.trim();
     const model = container.querySelector('#ai-model').value.trim();

@@ -163,6 +163,27 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
     ]
     leads.sort(key=lambda x: (x["created_at"] or ""))
 
+    # Renewals: active clients whose contract is ending (or has ended).
+    renewals = [
+        {"id": c["id"], "name": c["name"], "shorthand": c["shorthand"], "mrr": c["mrr"],
+         "contract_end": c["contract_end"], "days_to_renewal": c["days_to_renewal"],
+         "auto_renew": bool(c["auto_renew"]), "overdue": c["renewal_overdue"]}
+        for c in clinics if c["renewal_due"] or c["renewal_overdue"]
+    ]
+    renewals.sort(key=lambda x: (x["days_to_renewal"] if x["days_to_renewal"] is not None else 99999))
+
+    # Displacement: prospects whose competitor contract is ending soon.
+    displacement = [
+        {"id": c["id"], "name": c["name"], "competitor": c["it_provider"], "stage": c["stage"],
+         "stage_label": c["stage_label"], "competitor_contract_end": c["competitor_contract_end"],
+         "competitor_days": c["competitor_days"], "deal_value": c["deal_value"], "color": c["color"]}
+        for c in clinics if c["displacement_hot"]
+    ]
+    displacement.sort(key=lambda x: (x["competitor_days"] if x["competitor_days"] is not None else 99999))
+
+    active_clients = [c for c in clinics if c["is_active_client"]]
+    mrr_total = round(sum(c["mrr"] for c in active_clients), 2)
+
     pipeline = {s: {"count": 0, "value": 0.0, "weighted": 0.0} for s in STAGE_LABELS}
     for c in clinics:
         p = pipeline[c["stage"]]
@@ -236,6 +257,122 @@ def dashboard(conn: sqlite3.Connection = Depends(db_dependency)):
         "unmapped": unmapped,
         "leads": leads[:20],
         "leads_count": len(leads),
+        "renewals": renewals[:10],
+        "renewals_count": len(renewals),
+        "displacement": displacement[:10],
+        "displacement_count": len(displacement),
+        "revenue": {
+            "mrr": mrr_total,
+            "arr": round(mrr_total * 12, 2),
+            "active_clients": len(active_clients),
+        },
+    }
+
+
+# ---- Clients: recurring revenue, renewals, churn ----------------------------
+
+def _month_keys(today: date, months: int) -> list[str]:
+    keys = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    keys.reverse()
+    return keys
+
+
+@router.get("/revenue")
+def revenue(months: int = 12, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Recurring-revenue snapshot for current clients: MRR/ARR, movement, renewals, hygiene."""
+    clinics = [enrich_clinic(conn, c) for c in rows_to_list(conn.execute("SELECT * FROM clinics"))]
+    today = date.today()
+    year = today.isoformat()[:4]
+    active = [c for c in clinics if c["is_active_client"]]
+    mrr = round(sum(c["mrr"] for c in active), 2)
+    new_clients = [c for c in active if (c["outcome_date"] or "")[:4] == year]
+    churned_year = [c for c in clinics if c["churned"] and (c["churned_at"] or "")[:4] == year]
+
+    keys = _month_keys(today, months)
+    added = {k: 0.0 for k in keys}
+    lost = {k: 0.0 for k in keys}
+    for c in clinics:
+        if c["is_active_client"] and (c["outcome_date"] or "")[:7] in added:
+            added[(c["outcome_date"])[:7]] += c["mrr"]
+        if c["churned"] and (c["churned_at"] or "")[:7] in lost:
+            lost[(c["churned_at"])[:7]] += c["mrr"]
+    movement = [{"month": k, "added": round(added[k], 2), "churned": round(lost[k], 2),
+                 "net": round(added[k] - lost[k], 2)} for k in keys]
+
+    def _client_row(c: dict) -> dict:
+        return {
+            "id": c["id"], "name": c["name"], "shorthand": c["shorthand"], "color": c["color"],
+            "mrr": c["mrr"], "arr": c["arr"], "contract_start": c["contract_start"],
+            "contract_end": c["contract_end"], "contract_term_months": c["contract_term_months"],
+            "auto_renew": bool(c["auto_renew"]), "days_to_renewal": c["days_to_renewal"],
+            "renewal_due": c["renewal_due"], "renewal_overdue": c["renewal_overdue"],
+        }
+
+    renewals = sorted(
+        (_client_row(c) for c in active if c["contract_end"]),
+        key=lambda x: (x["days_to_renewal"] if x["days_to_renewal"] is not None else 99999),
+    )
+    no_contract = [_client_row(c) for c in active if not c["contract_end"] or not c["mrr"]]
+    clients = sorted((_client_row(c) for c in active), key=lambda x: -x["mrr"])
+    return {
+        "summary": {
+            "mrr": mrr, "arr": round(mrr * 12, 2), "active_clients": len(active),
+            "avg_mrr": round(mrr / len(active), 2) if active else 0,
+            "new_clients_ytd": len(new_clients),
+            "churned_ytd": len(churned_year),
+            "churned_mrr_ytd": round(sum(c["mrr"] for c in churned_year), 2),
+            "renewals_due": sum(1 for c in active if c["renewal_due"] or c["renewal_overdue"]),
+        },
+        "movement": movement,
+        "renewals": renewals,
+        "no_contract": no_contract,
+        "clients": clients,
+    }
+
+
+@router.get("/competitors")
+def competitors(conn: sqlite3.Connection = Depends(db_dependency)):
+    """Displacement intelligence: who we're up against and whose contracts are ending."""
+    clinics = [enrich_clinic(conn, c) for c in rows_to_list(conn.execute("SELECT * FROM clinics"))]
+    open_targets = [c for c in clinics if c["displacement_open"] and c["stage"] != "lost"]
+
+    by_provider: dict[str, dict] = {}
+    for c in open_targets:
+        name = (c["it_provider"] or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        slot = by_provider.setdefault(key, {"provider": name, "count": 0, "pipeline_value": 0.0, "with_end_date": 0})
+        slot["count"] += 1
+        slot["pipeline_value"] += c["deal_value"] or 0
+        if c["competitor_contract_end"]:
+            slot["with_end_date"] += 1
+    providers = sorted(by_provider.values(), key=lambda x: (-x["count"], -x["pipeline_value"]))
+    for p in providers:
+        p["pipeline_value"] = round(p["pipeline_value"], 2)
+
+    displacement = sorted(
+        ({
+            "id": c["id"], "name": c["name"], "competitor": c["it_provider"], "stage": c["stage"],
+            "stage_label": c["stage_label"], "color": c["color"], "deal_value": c["deal_value"],
+            "competitor_contract_end": c["competitor_contract_end"], "competitor_days": c["competitor_days"],
+            "hot": c["displacement_hot"], "next_follow_up": c["next_follow_up"],
+        } for c in open_targets if c["competitor_contract_end"]),
+        key=lambda x: (x["competitor_days"] if x["competitor_days"] is not None else 99999),
+    )
+    lost_to_competitor = sum(1 for c in clinics if c["stage"] == "lost" and c["outcome_reason"] == "competitor")
+    return {
+        "providers": providers,
+        "displacement": displacement,
+        "hot_count": sum(1 for d in displacement if d["hot"]),
+        "lost_to_competitor": lost_to_competitor,
+        "targets_without_end_date": sum(1 for c in open_targets if c["it_provider"] and not c["competitor_contract_end"]),
     }
 
 
@@ -261,7 +398,9 @@ def export_clinics(conn: sqlite3.Connection = Depends(db_dependency)):
         "id", "name", "shorthand", "relationship_label", "color_label", "address", "city", "province", "postal_code",
         "phone", "fax", "email", "website", "clinic_type", "emr_system", "it_provider", "provider_count",
         "priority", "tags", "stage_label", "deal_value", "expected_close", "effective_probability",
-        "outcome_reason", "outcome_date", "last_visit", "next_follow_up", "lat", "lng", "notes",
+        "outcome_reason", "outcome_date", "mrr", "arr", "contract_start", "contract_end",
+        "contract_term_months", "days_to_renewal", "competitor_contract_end",
+        "last_visit", "next_follow_up", "lat", "lng", "notes",
     ]
     return _csv_response(clinics, cols, "clinics.csv")
 

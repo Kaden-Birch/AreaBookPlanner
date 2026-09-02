@@ -33,6 +33,7 @@ export async function render(container) {
         ${d.leads_count ? `<a class="lead-line" href="#/clinics?stage=lead"><span class="n">${d.leads_count}</span> lead${d.leads_count === 1 ? '' : 's'} waiting to be contacted →</a>` : ''}
         <div class="stage-bar">${(meta.pipeline_stages || Object.keys(meta.stages).filter(s => s !== 'lead')).map(s => `
           <a href="#/pipeline"><span class="n">${d.pipeline[s].count}</span>${esc(meta.stages[s])}<span class="v">${d.pipeline[s].value ? fmtMoney(d.pipeline[s].value) : '&nbsp;'}</span></a>`).join('')}</div>
+        <a class="lead-line" href="#/clients"><span class="n">${fmtMoney(d.revenue.mrr) || '$0'}</span> MRR · ${d.revenue.active_clients} active client${d.revenue.active_clients === 1 ? '' : 's'} →</a>
       </div>
       <div class="card">
         <div class="card-header"><h3>Clinics by status</h3><div class="actions"><a class="btn btn-sm" href="#/map">Open map</a></div></div>
@@ -77,6 +78,24 @@ export async function render(container) {
         </div>
       </div>
       <div>
+        ${d.renewals && d.renewals.length ? `
+        <div class="card">
+          <div class="card-header"><h3>Renewals due</h3><span class="muted small">Client contracts ending soon</span><div class="actions"><a class="btn btn-sm" href="#/clients">Clients</a></div></div>
+          ${listOrEmpty(d.renewals, r => `
+            <li><span class="when">${r.days_to_renewal != null ? (r.days_to_renewal < 0 ? 'expired' : r.days_to_renewal + 'd') : ''}</span>
+              <div class="body"><div class="title"><a href="#/clinics/${r.id}">${esc(r.name)}</a> ${r.overdue ? badge('Expired', 'badge-red') : badge('Renewal', 'badge-yellow')} ${r.auto_renew ? badge('Auto', 'badge-grey') : ''}</div>
+              <div class="muted small">${r.contract_end ? `Ends ${esc(fmtDateOnly(r.contract_end))}` : ''}${r.mrr ? ` · ${fmtMoney(r.mrr)}/mo` : ''}</div></div></li>`,
+            'No renewals due.')}
+        </div>` : ''}
+        ${d.displacement && d.displacement.length ? `
+        <div class="card">
+          <div class="card-header"><h3>Displacement radar</h3><span class="muted small">Competitor contracts ending soon</span><div class="actions"><a class="btn btn-sm" href="#/pipeline">Pipeline</a></div></div>
+          ${listOrEmpty(d.displacement, c => `
+            <li><span class="when">${c.competitor_days != null ? c.competitor_days + 'd' : ''}</span>
+              <div class="body"><div class="title">${dot(c.color)}<a href="#/clinics/${c.id}">${esc(c.name)}</a> ${badge('Hot', 'badge-high')}</div>
+              <div class="muted small">${c.competitor ? esc(c.competitor) + ' · ' : ''}ends ${esc(fmtDateOnly(c.competitor_contract_end))}</div></div></li>`,
+            '')}
+        </div>` : ''}
         <div class="card">
           <div class="card-header"><h3>Closing soon</h3><span class="muted small">Open deals expected to close within 30 days</span></div>
           ${listOrEmpty(d.closing_soon, c => `

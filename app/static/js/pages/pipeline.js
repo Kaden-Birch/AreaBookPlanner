@@ -1,5 +1,5 @@
 // Pipeline page: Kanban board of clinics by sales stage, with deal totals and won/lost reasons.
-import { clinics, dashboard, getMeta } from '../api.js';
+import { clinics, dashboard, competitors as competitorsApi, getMeta } from '../api.js';
 import { esc, attr, dot, fmtMoney, fmtDate, fmtDateOnly, relativeDays, options, debounce, setTitle, badge, toast, shorthandBadge } from '../ui.js';
 import { changeStage, openClinicForm } from '../forms.js';
 
@@ -36,6 +36,7 @@ export async function render(container) {
       <span class="muted small">Drag cards between columns to move them along the pipeline. Won / Lost clear at month-end.</span>
     </div>
     <div id="board"></div>
+    <div id="displacement" class="mt"></div>
     <div class="grid-2 mt" id="reasons"></div>`;
 
   container.querySelector('#add-clinic').onclick = () => openClinicForm({ initial: { stage: 'prospect' }, onSaved: load });
@@ -52,12 +53,49 @@ export async function render(container) {
 export function destroy(container) { container.classList.remove('wide'); }
 
 async function load() {
-  const [list, d] = await Promise.all([clinics.list(), dashboard()]);
+  const [list, d, comp] = await Promise.all([clinics.list(), dashboard(), competitorsApi()]);
   allClinics = list;
   renderForecast(d);
   renderLeads();
   renderBoard();
+  renderCompetitors(comp);
   renderReasons(d);
+}
+
+function renderCompetitors(comp) {
+  const el = document.getElementById('displacement');
+  if (!el) return;
+  const hasData = (comp.displacement && comp.displacement.length) || (comp.providers && comp.providers.length);
+  if (!hasData) {
+    el.innerHTML = `<div class="card"><div class="card-header"><h3>Displacement radar</h3></div>
+      <p class="muted">Set a clinic's <strong>Current IT provider</strong> and <strong>their contract end date</strong> to see who you're up against and when their contracts free up.</p></div>`;
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const radar = comp.displacement.map(c => {
+    const days = c.competitor_days;
+    const cls = days == null ? '' : (days < 0 ? 'badge-red' : (c.hot ? 'badge-high' : 'badge-grey'));
+    const label = days == null ? '' : (days < 0 ? 'Ended' : `${days}d`);
+    return `<li><span class="when">${label ? badge(label, cls) : ''}</span>
+      <div class="body"><div class="title">${dot(c.color)}<a href="#/clinics/${c.id}">${esc(c.name)}</a> <span class="badge badge-stage-${esc(c.stage)}">${esc(c.stage_label)}</span></div>
+      <div class="muted small">${c.competitor ? esc(c.competitor) : 'Unknown provider'} · contract ends ${esc(fmtDateOnly(c.competitor_contract_end))}${c.deal_value ? ` · ${fmtMoney(c.deal_value)}` : ''}</div></div></li>`;
+  }).join('');
+  const maxCount = Math.max(1, ...comp.providers.map(p => p.count));
+  const providers = comp.providers.map(p => `
+    <div class="prov-row"><div class="prov-name">${esc(p.provider)}</div>
+      <div class="prov-bar"><div style="width:${(p.count / maxCount) * 100}%"></div></div>
+      <div class="prov-n"><strong>${p.count}</strong>${p.pipeline_value ? ` · ${fmtMoney(p.pipeline_value)}` : ''}</div></div>`).join('');
+  el.innerHTML = `<div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>Displacement radar</h3><span class="muted small">Prospects whose IT contract is ending</span></div>
+      ${comp.displacement.length ? `<ul class="list">${radar}</ul>` : '<p class="muted">No competitor contract end-dates recorded yet.</p>'}
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Who we're up against</h3><span class="muted small">Open prospects by current provider</span></div>
+      ${comp.providers.length ? `<div class="prov-list">${providers}</div>` : '<p class="muted">No current providers recorded on open prospects.</p>'}
+      ${comp.lost_to_competitor ? `<p class="muted small mt">Lost to a competitor: <strong>${comp.lost_to_competitor}</strong>${comp.targets_without_end_date ? ` · ${comp.targets_without_end_date} prospect${comp.targets_without_end_date === 1 ? '' : 's'} missing a contract end date` : ''}</p>` : ''}
+    </div>
+  </div>`;
 }
 
 function renderLeads() {

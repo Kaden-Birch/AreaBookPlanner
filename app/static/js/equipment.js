@@ -58,7 +58,7 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
         <div class="field"><label id="desig-label">Designation</label><input name="designation" list="desig-list" value="${attr(d.designation)}" placeholder="e.g. Exam room"><datalist id="desig-list"></datalist></div>
         <div class="field user-field"><label>User / assigned to</label><input name="user_name" value="${attr(d.user_name)}" placeholder="e.g. Dr. Lee, Front desk"></div>
         <div class="field"><label>Status</label><select name="status">${options(meta.statuses, d.status)}</select></div>
-        ${locations.length ? `<div class="field"><label>Location / site</label><select name="location_id"><option value="">Main</option>${locations.map(l => `<option value="${l.id}" ${String(l.id) === String(d.location_id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>` : ''}
+        ${locations.length ? `<div class="field"><label>Site</label><select name="location_id"><option value="">🏢 Main Site</option>${locations.map(l => `<option value="${l.id}" ${String(l.id) === String(d.location_id) ? 'selected' : ''}>📍 ${esc(l.name)}</option>`).join('')}</select></div>` : ''}
       </div>
       <div class="field"><label class="checkbox"><input type="checkbox" name="off_site" ${d.off_site ? 'checked' : ''}> Off-site device <span class="muted">(shown in its own section, not wired into the network diagram)</span></label></div>
       <div class="form-section"><h3>Network</h3>

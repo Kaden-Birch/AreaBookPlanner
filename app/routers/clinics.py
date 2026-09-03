@@ -29,7 +29,7 @@ CLINIC_COLUMNS = [
     "renewal_reminder_days", "competitor_contract_end", "churned_at",
 ]
 
-LOCATION_COLUMNS = ["name", "address", "city", "province", "postal_code", "phone", "lat", "lng", "notes"]
+LOCATION_COLUMNS = ["name", "address", "display_address", "city", "province", "postal_code", "phone", "lat", "lng", "notes"]
 
 # @-mentions embedded in note bodies as @[Display Name](c:<contact_id>).
 MENTION_RE = re.compile(r"@\[([^\]]+)\]\(c:(\d+)\)")

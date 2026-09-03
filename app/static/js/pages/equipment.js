@@ -3,7 +3,7 @@ import { clinics, devices } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
 
-let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null };
+let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [] };
 let rackDragEndAt = 0;  // suppress the click that browsers fire right after a drag
 let clinic = null, meta = null;
 
@@ -17,6 +17,13 @@ export async function render(container, params, routeParams) {
   if (params.get('type')) state.type = params.get('type');
   if (params.get('rack')) { state.view = 'racks'; state.rack = params.get('rack'); }
 
+  // Sites: the clinic itself is the "Main Site"; each secondary location is another site.
+  // Equipment, topology and racks are scoped to the selected site.
+  try { state.sites = (await devices.sites(clinic.id)).sites; } catch { state.sites = []; }
+  const hasSites = state.sites.length > 1;
+  const paramSite = params.get('site');
+  state.site = paramSite || (hasSites ? 'main' : 'all');
+
   container.innerHTML = `
     <div class="mb"><a href="#/clinics/${clinic.id}">← ${esc(clinic.name)}</a></div>
     <div class="page-header">
@@ -28,10 +35,11 @@ export async function render(container, params, routeParams) {
           <button class="btn ${state.view === 'topology' ? 'active' : ''}" data-view="topology" style="border:none;border-radius:0;border-left:1px solid var(--border)">🕸 Topology</button>
           <button class="btn ${state.view === 'racks' ? 'active' : ''}" data-view="racks" style="border:none;border-radius:0;border-left:1px solid var(--border)">🗄 Racks</button>
         </div>
-        <a class="btn" href="${devices.csvUrl(clinic.id)}" download>Export CSV</a>
+        <a class="btn" id="csv-link" href="${devices.csvUrl(clinic.id, state.site)}" download>Export CSV</a>
         <button class="btn btn-primary" id="add-device">+ Add equipment</button>
       </div>
     </div>
+    <div id="site-switcher" class="site-switcher mb"></div>
     <div id="summary" class="mb"></div>
     <div class="equip-toolbar" id="list-tools">
       <input type="search" class="search" id="q" placeholder="Search name, IP, user, serial, model…" value="${attr(state.q)}">
@@ -40,8 +48,9 @@ export async function render(container, params, routeParams) {
     </div>
     <div id="equip-body"></div>`;
 
+  renderSwitcher(container);
   container.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => { state.view = b.dataset.view; container.querySelectorAll('[data-view]').forEach(x => x.classList.toggle('active', x === b)); load(); }; });
-  container.querySelector('#add-device').onclick = () => openDeviceForm({ clinic, onSaved: load });
+  container.querySelector('#add-device').onclick = () => openDeviceForm({ clinic, initial: siteInitial(), onSaved: load });
   const q = container.querySelector('#q');
   q.addEventListener('input', debounce(() => { state.q = q.value; load(); }, 150));
   container.querySelector('#type').onchange = (e) => { state.type = e.target.value; load(); };
@@ -52,8 +61,30 @@ export async function render(container, params, routeParams) {
 
 export function destroy(container) { container.classList.remove('wide'); }
 
+// The location_id a new device gets when added from the current site view (null = Main Site).
+function siteInitial() { return (state.site && state.site !== 'all' && state.site !== 'main') ? { location_id: Number(state.site) } : {}; }
+// The `site` query value to send to the API (undefined = every site).
+function siteParam() { return state.site && state.site !== 'all' ? state.site : undefined; }
+
+function renderSwitcher(root = document) {
+  const el = root.querySelector ? root.querySelector('#site-switcher') : document.getElementById('site-switcher');
+  if (!el) return;
+  if (state.sites.length <= 1) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const chip = (id, name, count, primary) => `<button class="site-chip ${String(state.site) === String(id) ? 'active' : ''}" data-site="${attr(String(id))}">${primary ? '🏢' : '📍'} ${esc(name)}${count != null ? ` <span class="n">${count}</span>` : ''}</button>`;
+  el.innerHTML = `<span class="site-label">Site:</span>`
+    + chip('all', 'All sites', state.sites.reduce((s, x) => s + x.count, 0), false)
+    + state.sites.map(s => chip(s.id, s.name, s.count, s.primary)).join('')
+    + `<a class="site-manage" href="#/clinics/${clinic.id}">Manage sites →</a>`;
+  el.querySelectorAll('[data-site]').forEach(b => { b.onclick = () => { if (String(state.site) === b.dataset.site) return; state.site = b.dataset.site; state.source = null; state.rack = null; load(); }; });
+}
+
 async function load() {
-  const data = await devices.list(clinic.id, { q: state.q, device_type: state.type });
+  try { state.sites = (await devices.sites(clinic.id)).sites; } catch { /* keep prior */ }
+  renderSwitcher();
+  const csv = document.getElementById('csv-link');
+  if (csv) csv.href = devices.csvUrl(clinic.id, state.site);
+  const data = await devices.list(clinic.id, { q: state.q, device_type: state.type, site: siteParam() });
   let list = data.devices;
   if (state.status === '') list = list.filter(d => d.status !== 'retired');
   else if (state.status !== 'all') list = list.filter(d => d.status === state.status);
@@ -100,7 +131,7 @@ function renderList(body, list, data) {
     </tbody></table></div>`;
   body.querySelectorAll('tr.clickable').forEach(tr => { tr.onclick = (e) => { if (e.target.closest('button')) return; openDeviceDetail({ deviceId: Number(tr.dataset.id), clinic, onChanged: load }); }; });
   body.querySelectorAll('[data-edit]').forEach(b => { b.onclick = () => { const d = list.find(x => x.id === Number(b.dataset.edit)); openDeviceForm({ clinic, device: d, onSaved: load }); }; });
-  body.querySelectorAll('[data-add-type]').forEach(b => { b.onclick = () => openDeviceForm({ clinic, initial: { device_type: b.dataset.addType }, onSaved: load }); });
+  body.querySelectorAll('[data-add-type]').forEach(b => { b.onclick = () => openDeviceForm({ clinic, initial: { ...siteInitial(), device_type: b.dataset.addType }, onSaved: load }); });
 }
 
 // ---- Topology ---------------------------------------------------------------------
@@ -130,7 +161,7 @@ function svcLines(n, h, trunc) {
 }
 
 async function renderTopology(body) {
-  const topo = await devices.topology(clinic.id);
+  const topo = await devices.topology(clinic.id, siteParam());
   const byId = Object.fromEntries([...topo.nodes, ...(topo.offsite || [])].map(n => [n.id, n]));
   if (!topo.nodes.length && !(topo.offsite || []).length) { body.innerHTML = '<div class="card empty">Nothing to draw yet. Add a firewall or router first, then plug other devices into it via “Uplink device”.</div>'; return; }
 
@@ -266,7 +297,7 @@ async function renderTopology(body) {
 // ---- Rack elevation ---------------------------------------------------------------
 
 async function renderRacks(body) {
-  const data = await devices.racks(clinic.id);
+  const data = await devices.racks(clinic.id, siteParam());
   if (!data.racks.length) {
     body.innerHTML = `<div class="card empty">No racks yet. Edit a rack-mountable device (server, switch, firewall, router, AP) and fill in its <strong>Room</strong>, <strong>Rack</strong> and <strong>U#</strong> to place it in a rack.
       ${data.unracked_infra && data.unracked_infra.length ? `<div class="mt small">Not yet racked: ${data.unracked_infra.map(d => `<button class="btn btn-link btn-sm" data-open="${d.id}">${esc(d.icon)} ${esc(d.name)}</button>`).join(' ')}</div>` : ''}</div>`;
@@ -304,7 +335,7 @@ async function renderRacks(body) {
   main.innerHTML = rackElevation(selected);
   main.querySelectorAll('.ru-device').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceDetail({ deviceId: Number(g.dataset.id), clinic, onChanged: load }); }; });
   main.querySelectorAll('[data-id2]').forEach(b => { b.onclick = () => openDeviceDetail({ deviceId: Number(b.dataset.id2), clinic, onChanged: load }); });
-  main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceForm({ clinic, initial: { device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); }; });
+  main.querySelectorAll('.ru-empty').forEach(g => { g.onclick = () => { if (Date.now() - rackDragEndAt < 350) return; openDeviceForm({ clinic, initial: { ...siteInitial(), device_type: 'server', rack: selected.name, rack_room: selected.room || '', rack_position: Number(g.dataset.u) }, onSaved: () => renderRacks(body) }); }; });
   // shelf items open their own detail and shouldn't start a shelf drag
   main.querySelectorAll('.shelf-item[data-id]').forEach(g => {
     g.addEventListener('pointerdown', (e) => e.stopPropagation());

@@ -145,9 +145,35 @@ def _validate(conn: sqlite3.Connection, clinic_id: int, data: dict) -> None:
         data["off_site"] = 0
 
 
-def _summary(conn: sqlite3.Connection, clinic_id: int) -> dict:
+def _site_clause(site: str | None) -> tuple[str, list]:
+    """A device is at the 'Main Site' when it has no location_id, or at a secondary site
+    matching its location_id. `site` is 'main', a numeric location id, or None/'all' for
+    every site. Returns an SQL fragment (prefixed ' AND ...') and its params."""
+    if not site or site == "all":
+        return "", []
+    if site == "main":
+        return " AND d.location_id IS NULL", []
+    try:
+        return " AND d.location_id = ?", [int(site)]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Unknown site")
+
+
+def _sites_with_counts(conn: sqlite3.Connection, clinic_id: int) -> list[dict]:
+    counts: dict = {}
+    for r in conn.execute("SELECT location_id, COUNT(*) AS n FROM devices WHERE clinic_id = ? GROUP BY location_id", (clinic_id,)):
+        counts[r["location_id"]] = r["n"]
+    sites = [{"id": "main", "name": "Main Site", "count": counts.get(None, 0), "primary": True}]
+    for l in rows_to_list(conn.execute(
+            "SELECT id, name FROM clinic_locations WHERE clinic_id = ? ORDER BY name COLLATE NOCASE", (clinic_id,))):
+        sites.append({"id": l["id"], "name": l["name"], "count": counts.get(l["id"], 0), "primary": False})
+    return sites
+
+
+def _summary(conn: sqlite3.Connection, clinic_id: int, site: str | None = None) -> dict:
+    clause, sp = _site_clause(site)
     rows = conn.execute(
-        "SELECT device_type, status, COUNT(*) AS n FROM devices WHERE clinic_id = ? GROUP BY device_type, status", (clinic_id,)).fetchall()
+        f"SELECT device_type, status, COUNT(*) AS n FROM devices d WHERE clinic_id = ?{clause} GROUP BY device_type, status", [clinic_id, *sp]).fetchall()
     by_type = {t: {"label": v["label"], "icon": v["icon"], "prefix": v["prefix"], "active": 0, "spare": 0, "retired": 0, "total": 0} for t, v in DEVICE_TYPES.items()}
     for r in rows:
         b = by_type[r["device_type"]] if r["device_type"] in by_type else by_type["other"]
@@ -178,12 +204,19 @@ def device_meta():
 
 # ---- Per clinic ---------------------------------------------------------------
 
+@router.get("/clinics/{clinic_id}/sites")
+def list_sites(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    _clinic_or_404(conn, clinic_id)
+    return {"sites": _sites_with_counts(conn, clinic_id)}
+
+
 @router.get("/clinics/{clinic_id}/devices")
 def list_devices(clinic_id: int, q: str | None = None, device_type: str | None = None, status: str | None = None,
-                 conn: sqlite3.Connection = Depends(db_dependency)):
+                 site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
     clinic = _clinic_or_404(conn, clinic_id)
-    sql = f"{SELECT} WHERE d.clinic_id = ?"
-    params: list = [clinic_id]
+    site_clause, site_params = _site_clause(site)
+    sql = f"{SELECT} WHERE d.clinic_id = ?{site_clause}"
+    params: list = [clinic_id, *site_params]
     if q:
         like = f"%{q.strip()}%"
         sql += " AND (d.name LIKE ? OR d.ip_address LIKE ? OR d.user_name LIKE ? OR d.serial LIKE ? OR d.model LIKE ? OR d.designation LIKE ? OR d.notes LIKE ?)"
@@ -199,7 +232,8 @@ def list_devices(clinic_id: int, q: str | None = None, device_type: str | None =
     svc = _services_by_device(conn, [d["id"] for d in devices])
     for d in devices:
         d["services"] = svc.get(d["id"], [])
-    return {"devices": devices, "summary": _summary(conn, clinic_id), "shorthand": clinic_shorthand(clinic),
+    return {"devices": devices, "summary": _summary(conn, clinic_id, site), "shorthand": clinic_shorthand(clinic),
+            "sites": _sites_with_counts(conn, clinic_id),
             "locations": rows_to_list(conn.execute("SELECT id, name FROM clinic_locations WHERE clinic_id = ? ORDER BY name", (clinic_id,)))}
 
 
@@ -276,7 +310,7 @@ def _edge_link_type(d: dict) -> str:
 
 
 @router.get("/clinics/{clinic_id}/topology")
-def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
     """Nodes + edges for the network diagram.
 
     The primary uplink forms the on-site tree (roots = on-site devices with no uplink).
@@ -285,7 +319,8 @@ def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     more than one uplink.
     """
     _clinic_or_404(conn, clinic_id)
-    all_rows = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    site_clause, site_params = _site_clause(site)
+    all_rows = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ?{site_clause} ORDER BY d.device_type, d.number", [clinic_id, *site_params]))]
     # Passive rack fixtures (patch panels, shelves) are physical only — keep them out of the network diagram.
     devices = [d for d in all_rows if d["device_type"] not in NON_TOPOLOGY_TYPES]
     by_id = {d["id"]: d for d in devices}
@@ -382,9 +417,11 @@ def disconnect_devices(clinic_id: int, payload: EdgeOp, conn: sqlite3.Connection
 
 
 @router.get("/clinics/{clinic_id}/devices.csv")
-def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+def export_devices(clinic_id: int, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
     clinic = _clinic_or_404(conn, clinic_id)
-    devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.device_type, d.number", (clinic_id,)))]
+    site_clause, site_params = _site_clause(site)
+    devices = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ?{site_clause} ORDER BY d.device_type, d.number", [clinic_id, *site_params]))]
+    svc = _services_by_device(conn, [d["id"] for d in devices])
     cols = ["name", "type_label", "designation", "status", "user_name", "ip_address", "mac_address", "os", "manufacturer", "model", "serial",
             "uplink_name", "link_label", "location_name", "purchase_date", "warranty_until", "services", "notes"]
     buf = io.StringIO()
@@ -392,7 +429,7 @@ def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_depende
     w.writeheader()
     for d in devices:
         d = dict(d)
-        d["services"] = "; ".join(d["services"])
+        d["services"] = "; ".join(s["name"] for s in svc.get(d["id"], []))
         w.writerow(d)
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", clinic["shorthand"] or clinic["name"])
     return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{safe}-equipment.csv"'})
@@ -401,13 +438,14 @@ def export_devices(clinic_id: int, conn: sqlite3.Connection = Depends(db_depende
 # ---- Racks (physical elevation) -------------------------------------------------
 
 @router.get("/clinics/{clinic_id}/racks")
-def racks(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+def racks(clinic_id: int, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
     """Group rack devices into racks. Mounted devices carry a U position; a shelf carries
     the loose devices sitting on it (shelf_id). Links are directional (up = the member's
     uplink, down = something that uplinks into the member) so the view can put upstream
     devices on the left and downstream on the right."""
     _clinic_or_404(conn, clinic_id)
-    all_devs = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ? ORDER BY d.rack, d.rack_position DESC, d.name", (clinic_id,)))]
+    site_clause, site_params = _site_clause(site)
+    all_devs = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.clinic_id = ?{site_clause} ORDER BY d.rack, d.rack_position DESC, d.name", [clinic_id, *site_params]))]
     by_id = {d["id"]: d for d in all_devs}
 
     # directed uplinks: uplinks_of[x] = set of devices x connects UP to

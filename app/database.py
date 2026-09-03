@@ -464,6 +464,10 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("from_value", "TEXT"),
         ("to_value", "TEXT"),
     ],
+    "clinic_locations": [
+        # Address shown in the UI for a secondary site (may differ from the geocoding address).
+        ("display_address", "TEXT"),
+    ],
 }
 
 DEFAULT_EMAIL_TEMPLATES = [

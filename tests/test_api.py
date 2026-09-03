@@ -1056,3 +1056,41 @@ def test_shelves_patch_panels_directional_links(client):
     assert not any(l for l in links_for(fw["id"]) if not l["in_rack"] and l["direction"] == "down")
     backup = client.get("/api/export/backup.json").json()
     assert any(d.get("shelf_id") for d in backup["devices"])
+
+
+def test_sites_scoping(client):
+    cid = client.post("/api/clinics", json={"name": "Multisite Clinic", "shorthand": "MSC"}).json()["id"]
+    # A secondary site with a displayed address.
+    site = client.post(f"/api/clinics/{cid}/locations", json={
+        "name": "MSC North", "address": "10 North Rd", "display_address": "Suite 400", "lat": 51.2, "lng": -114.1}).json()
+    assert site["display_address"] == "Suite 400"
+
+    # Equipment: two devices at the Main Site (no location_id), one at the North site.
+    main_srv = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server"}).json()
+    main_fw = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "firewall"}).json()
+    north_ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation", "location_id": site["id"]}).json()
+    assert north_ws["location_id"] == site["id"] and north_ws["location_name"] == "MSC North"
+
+    # Sites listing carries per-site device counts, Main first and flagged primary.
+    sites = client.get(f"/api/clinics/{cid}/sites").json()["sites"]
+    assert sites[0] == {"id": "main", "name": "Main Site", "count": 2, "primary": True}
+    north = next(s for s in sites if s["id"] == site["id"])
+    assert north["name"] == "MSC North" and north["count"] == 1 and north["primary"] is False
+
+    # Device list is scoped by ?site.
+    all_ids = {d["id"] for d in client.get(f"/api/clinics/{cid}/devices").json()["devices"]}
+    assert {main_srv["id"], main_fw["id"], north_ws["id"]} <= all_ids
+    main_only = client.get(f"/api/clinics/{cid}/devices", params={"site": "main"}).json()
+    assert {d["id"] for d in main_only["devices"]} == {main_srv["id"], main_fw["id"]}
+    assert main_only["summary"]["total"] == 2
+    north_only = client.get(f"/api/clinics/{cid}/devices", params={"site": site["id"]}).json()
+    assert {d["id"] for d in north_only["devices"]} == {north_ws["id"]}
+
+    # Topology is scoped too: each site sees only its own devices.
+    main_topo = client.get(f"/api/clinics/{cid}/topology", params={"site": "main"}).json()
+    assert {n["id"] for n in main_topo["nodes"]} == {main_srv["id"], main_fw["id"]}
+    north_topo = client.get(f"/api/clinics/{cid}/topology", params={"site": site["id"]}).json()
+    assert {n["id"] for n in north_topo["nodes"]} == {north_ws["id"]}
+
+    # An unknown site value is rejected.
+    assert client.get(f"/api/clinics/{cid}/devices", params={"site": "nope"}).status_code == 422

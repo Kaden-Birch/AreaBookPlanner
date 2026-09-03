@@ -162,6 +162,14 @@ and is stored in a single SQLite file.
   Every service form and detail states prominently that **passwords, credentials, API
   keys, private keys, recovery codes and other secrets must never be stored here** — keep
   those in the approved password manager.
+- **Multi-site clients** – a clinic is its own **Main Site**, and each secondary location
+  is another site with its own address, displayed address, map pin and notes. Equipment
+  belongs to a site (via the device's Site field), and the Equipment page has a **site
+  switcher** (🏢 Main Site · 📍 each location · All sites, each with a live device count)
+  that scopes the list, topology and rack views to the selected site — so each site gets
+  its own network diagram and rack elevation. Existing clinics keep all current equipment
+  on their Main Site, so nothing needs migrating. Adding equipment while a site is selected
+  files it under that site automatically.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
@@ -283,7 +291,8 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET /api/analytics` | Analytics figures |
 | `/api/views`, `/api/templates` | Saved map views, email templates |
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
-| `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory |
+| `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory (`?site=main\|<id>\|all` scopes devices/topology/racks) |
+| `GET …/clinics/{id}/sites`, `…/clinics/{id}/locations` | Sites (Main Site + secondary locations) |
 | `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |

@@ -127,12 +127,13 @@ export const quotes = {
 let deviceMetaPromise = null;
 export const devices = {
   meta: () => (deviceMetaPromise ||= api.get('/api/meta/devices')),
+  sites: (clinicId) => api.get(`/api/clinics/${clinicId}/sites`),
   list: (clinicId, params) => api.get(`/api/clinics/${clinicId}/devices`, params),
   nextName: (clinicId, deviceType) => api.get(`/api/clinics/${clinicId}/devices/next-name`, { device_type: deviceType }),
   create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/devices`, data),
-  topology: (clinicId) => api.get(`/api/clinics/${clinicId}/topology`),
-  racks: (clinicId) => api.get(`/api/clinics/${clinicId}/racks`),
-  csvUrl: (clinicId) => `/api/clinics/${clinicId}/devices.csv`,
+  topology: (clinicId, site) => api.get(`/api/clinics/${clinicId}/topology`, site ? { site } : undefined),
+  racks: (clinicId, site) => api.get(`/api/clinics/${clinicId}/racks`, site ? { site } : undefined),
+  csvUrl: (clinicId, site) => `/api/clinics/${clinicId}/devices.csv${site && site !== 'all' ? `?site=${encodeURIComponent(site)}` : ''}`,
   get: (id) => api.get(`/api/devices/${id}`),
   update: (id, data) => api.put(`/api/devices/${id}`, data),
   remove: (id) => api.del(`/api/devices/${id}`),

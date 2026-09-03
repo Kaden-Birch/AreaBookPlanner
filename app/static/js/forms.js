@@ -883,6 +883,7 @@ export async function openLocationForm({ clinic, location = null, onSaved }) {
       <div class="field"><label>Street address</label>
         <div class="flex"><input name="address" value="${attr(l.address)}" class="grow"><button type="button" class="btn" id="loc-geocode">Find on map</button></div>
         <div class="geocode-results hidden" id="loc-geocode-results"></div></div>
+      <div class="field"><label>Displayed address <span class="muted">(optional)</span></label><input name="display_address" value="${attr(l.display_address)}" placeholder="e.g. Suite 210 — shown instead of the address above"></div>
       <div class="field-row">
         <div class="field"><label>City</label><input name="city" value="${attr(l.city)}"></div>
         <div class="field"><label>Province</label><input name="province" value="${attr(l.province)}"></div>

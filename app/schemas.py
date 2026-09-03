@@ -183,6 +183,7 @@ class ArchiveIn(BaseModel):
 class LocationIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     address: Optional[str] = None
+    display_address: Optional[str] = None  # shown in the UI; falls back to `address`
     city: Optional[str] = "Calgary"
     province: Optional[str] = "AB"
     postal_code: Optional[str] = None
@@ -191,7 +192,7 @@ class LocationIn(BaseModel):
     lng: Optional[float] = None
     notes: Optional[str] = None
 
-    _blank = field_validator("address", "city", "province", "postal_code", "phone", "lat", "lng", "notes", mode="before")(_blank_to_none)
+    _blank = field_validator("address", "display_address", "city", "province", "postal_code", "phone", "lat", "lng", "notes", mode="before")(_blank_to_none)
 
 
 class LinkIn(BaseModel):

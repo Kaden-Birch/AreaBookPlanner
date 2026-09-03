@@ -368,6 +368,48 @@ CREATE TABLE IF NOT EXISTS clinic_tickets (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+-- Reusable external/custom VPN endpoints (e.g. AHS). Shared with every clinic unless
+-- private_clinic_id is set, in which case only that clinic can use it.
+CREATE TABLE IF NOT EXISTS vpn_endpoints (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    description       TEXT,
+    address           TEXT,
+    display_address   TEXT,
+    lat               REAL,
+    lng               REAL,
+    vendor            TEXT,
+    support_info      TEXT,
+    private_clinic_id INTEGER REFERENCES clinics(id) ON DELETE CASCADE,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+-- A VPN link is one canonical, two-sided record. Side A is always a clinic site (the side
+-- it was created from). Side B is either another clinic site (b_kind='site') or a custom
+-- endpoint (b_kind='endpoint'). A location_id of NULL means that side's Main Site.
+CREATE TABLE IF NOT EXISTS vpn_links (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT,
+    vpn_type       TEXT,
+    status         TEXT NOT NULL DEFAULT 'unknown'
+                   CHECK (status IN ('unknown','up','down','disabled')),
+    notes          TEXT,
+    a_clinic_id    INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    a_location_id  INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    a_device_id    INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    b_kind         TEXT NOT NULL DEFAULT 'site' CHECK (b_kind IN ('site','endpoint')),
+    b_clinic_id    INTEGER REFERENCES clinics(id) ON DELETE CASCADE,
+    b_location_id  INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    b_device_id    INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    b_endpoint_id  INTEGER REFERENCES vpn_endpoints(id) ON DELETE CASCADE,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vpn_links_a ON vpn_links(a_clinic_id);
+CREATE INDEX IF NOT EXISTS idx_vpn_links_b ON vpn_links(b_clinic_id);
+CREATE INDEX IF NOT EXISTS idx_vpn_endpoints_private ON vpn_endpoints(private_clinic_id);
 CREATE INDEX IF NOT EXISTS idx_locations_clinic ON clinic_locations(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_clinic ON clinic_links(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_other ON clinic_links(other_clinic_id);

@@ -1094,3 +1094,65 @@ def test_sites_scoping(client):
 
     # An unknown site value is rejected.
     assert client.get(f"/api/clinics/{cid}/devices", params={"site": "nope"}).status_code == 422
+
+
+def test_vpn_links_and_endpoints(client):
+    # Two clinics, each with equipment; a secondary site on the first.
+    a = client.post("/api/clinics", json={"name": "VPN HQ", "shorthand": "VHQ", "lat": 51.0, "lng": -114.0}).json()["id"]
+    b = client.post("/api/clinics", json={"name": "VPN Remote", "shorthand": "VRM", "lat": 51.1, "lng": -114.2}).json()["id"]
+    a_site = client.post(f"/api/clinics/{a}/locations", json={"name": "VHQ North", "lat": 51.2, "lng": -114.3}).json()["id"]
+    a_fw = client.post(f"/api/clinics/{a}/devices", json={"device_type": "firewall"}).json()
+    b_fw = client.post(f"/api/clinics/{b}/devices", json={"device_type": "router"}).json()
+    ws = client.post(f"/api/clinics/{a}/devices", json={"device_type": "workstation"}).json()
+
+    # A shared endpoint and a private one.
+    shared = client.post(f"/api/clinics/{a}/vpn/endpoints", json={"name": "AHS Netcare", "vendor": "AHS", "lat": 51.05, "lng": -114.08}).json()
+    assert shared["private"] is False
+    priv = client.post(f"/api/clinics/{a}/vpn/endpoints", json={"name": "HQ lab box", "private": True}).json()
+    assert priv["private"] is True
+    # Clinic B sees the shared endpoint but not clinic A's private one.
+    b_eps = {e["id"] for e in client.get(f"/api/clinics/{b}/vpn/endpoints").json()["endpoints"]}
+    assert shared["id"] in b_eps and priv["id"] not in b_eps
+
+    # Clinic-to-clinic link, created from A's Main Site firewall to B's router.
+    link = client.post(f"/api/clinics/{a}/vpn/links", json={
+        "name": "HQ ↔ Remote", "status": "up", "vpn_type": "IPsec",
+        "a_device_id": a_fw["id"], "remote_kind": "site", "b_clinic_id": b, "b_device_id": b_fw["id"]}).json()
+    assert link["status"] == "up" and link["local"]["clinic_id"] == a and link["remote"]["clinic_id"] == b
+    assert link["remote"]["device"]["name"] == b_fw["name"]
+
+    # The SAME canonical link appears from clinic B, with local/remote flipped.
+    b_links = client.get(f"/api/clinics/{b}/vpn/links").json()["links"]
+    assert len(b_links) == 1 and b_links[0]["id"] == link["id"]
+    assert b_links[0]["local"]["clinic_id"] == b and b_links[0]["remote"]["clinic_id"] == a
+
+    # A link to a shared endpoint from the secondary site.
+    ep_link = client.post(f"/api/clinics/{a}/vpn/links", json={
+        "a_location_id": a_site, "remote_kind": "endpoint", "b_endpoint_id": shared["id"]}).json()
+    assert ep_link["remote"]["kind"] == "endpoint" and ep_link["remote"]["name"] == "AHS Netcare"
+
+    # Site scoping: A's Main Site sees the clinic link; A's North site sees the endpoint link.
+    main_links = client.get(f"/api/clinics/{a}/vpn/links", params={"site": "main"}).json()["links"]
+    assert [l["id"] for l in main_links] == [link["id"]]
+    north_links = client.get(f"/api/clinics/{a}/vpn/links", params={"site": a_site}).json()["links"]
+    assert [l["id"] for l in north_links] == [ep_link["id"]]
+
+    # Validation: terminator must be a router/firewall; can't use another clinic's private endpoint.
+    assert client.post(f"/api/clinics/{a}/vpn/links", json={"a_device_id": ws["id"], "remote_kind": "site", "b_clinic_id": b}).status_code == 422
+    assert client.post(f"/api/clinics/{b}/vpn/links", json={"remote_kind": "endpoint", "b_endpoint_id": priv["id"]}).status_code == 422
+    assert client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "site", "b_clinic_id": a}).status_code == 422  # site to itself (main↔main)
+
+    # Editing the canonical link updates it everywhere; deleting removes both sides.
+    client.put(f"/api/vpn/links/{link['id']}", json={"name": "Renamed tunnel", "status": "down", "a_device_id": a_fw["id"], "remote_kind": "site", "b_clinic_id": b})
+    assert client.get(f"/api/vpn/links/{link['id']}").json()["status"] == "down"
+    assert client.delete(f"/api/vpn/links/{link['id']}").status_code == 204
+    assert client.get(f"/api/clinics/{b}/vpn/links").json()["links"] == []
+
+    # Deleting a clinic cascades its links; deleting an endpoint removes links using it.
+    assert client.delete(f"/api/vpn/endpoints/{shared['id']}").status_code == 204
+    assert client.get(f"/api/clinics/{a}/vpn/links").json()["links"] == []
+
+    # Backup round-trips VPN data.
+    backup = client.get("/api/export/backup.json").json()
+    assert "vpn_endpoints" in backup and "vpn_links" in backup
+    assert any(e["id"] == priv["id"] for e in backup["vpn_endpoints"])

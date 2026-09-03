@@ -150,6 +150,17 @@ export const services = {
   update: (id, data) => api.put(`/api/services/${id}`, data),
   remove: (id) => api.del(`/api/services/${id}`),
 };
+export const vpn = {
+  endpoints: (clinicId) => api.get(`/api/clinics/${clinicId}/vpn/endpoints`),
+  createEndpoint: (clinicId, data) => api.post(`/api/clinics/${clinicId}/vpn/endpoints`, data),
+  updateEndpoint: (id, data) => api.put(`/api/vpn/endpoints/${id}`, data),
+  removeEndpoint: (id) => api.del(`/api/vpn/endpoints/${id}`),
+  links: (clinicId, site) => api.get(`/api/clinics/${clinicId}/vpn/links`, site && site !== 'all' ? { site } : undefined),
+  createLink: (clinicId, data) => api.post(`/api/clinics/${clinicId}/vpn/links`, data),
+  getLink: (id) => api.get(`/api/vpn/links/${id}`),
+  updateLink: (id, data) => api.put(`/api/vpn/links/${id}`, data),
+  removeLink: (id) => api.del(`/api/vpn/links/${id}`),
+};
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {
   const fd = new FormData();

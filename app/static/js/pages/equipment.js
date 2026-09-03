@@ -2,6 +2,7 @@
 import { clinics, devices } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
+import { openVpnPanel } from '../vpn.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [] };
 let rackDragEndAt = 0;  // suppress the click that browsers fire right after a drag
@@ -35,6 +36,7 @@ export async function render(container, params, routeParams) {
           <button class="btn ${state.view === 'topology' ? 'active' : ''}" data-view="topology" style="border:none;border-radius:0;border-left:1px solid var(--border)">🕸 Topology</button>
           <button class="btn ${state.view === 'racks' ? 'active' : ''}" data-view="racks" style="border:none;border-radius:0;border-left:1px solid var(--border)">🗄 Racks</button>
         </div>
+        <button class="btn" id="vpn-btn" title="VPN links between this clinic's sites and other clinics or endpoints">🔒 VPN links</button>
         <a class="btn" id="csv-link" href="${devices.csvUrl(clinic.id, state.site)}" download>Export CSV</a>
         <button class="btn btn-primary" id="add-device">+ Add equipment</button>
       </div>
@@ -51,6 +53,7 @@ export async function render(container, params, routeParams) {
   renderSwitcher(container);
   container.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => { state.view = b.dataset.view; container.querySelectorAll('[data-view]').forEach(x => x.classList.toggle('active', x === b)); load(); }; });
   container.querySelector('#add-device').onclick = () => openDeviceForm({ clinic, initial: siteInitial(), onSaved: load });
+  container.querySelector('#vpn-btn').onclick = () => openVpnPanel({ clinic, site: siteParam(), onChanged: () => { if (state.view === 'topology') load(); } });
   const q = container.querySelector('#q');
   q.addEventListener('input', debounce(() => { state.q = q.value; load(); }, 150));
   container.querySelector('#type').onchange = (e) => { state.type = e.target.value; load(); };

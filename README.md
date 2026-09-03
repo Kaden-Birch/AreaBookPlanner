@@ -170,6 +170,19 @@ and is stored in a single SQLite file.
   its own network diagram and rack elevation. Existing clinics keep all current equipment
   on their Main Site, so nothing needs migrating. Adding equipment while a site is selected
   files it under that site automatically.
+- **VPN links** – document the VPN tunnels between a client's sites and other clinics or
+  external endpoints. A VPN link is **one canonical, two-sided record**: create it from a
+  router or firewall on one site and it immediately appears on the other clinic too, with
+  the local/remote perspective flipped. Editing or deleting the link updates both sides at
+  once. Each link records a name, VPN type/vendor, status (unknown/up/down/disabled),
+  terminating router/firewall at each end, and notes. Reach it from the **🔒 VPN links**
+  button on the Equipment page; the list is scoped to the selected site. A prominent notice
+  keeps secrets (pre-shared keys, configs, recovery codes) out — they belong in the
+  password manager.
+- **VPN endpoints** – a reusable directory of external endpoints (e.g. an AHS gateway) with
+  a name, vendor, description, optional address/coordinates and support info. Endpoints are
+  **shared** with every clinic by default, or can be marked **private** to the clinic that
+  created one. A VPN link's far side can be another clinic site or one of these endpoints.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
@@ -293,6 +306,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory (`?site=main\|<id>\|all` scopes devices/topology/racks) |
 | `GET …/clinics/{id}/sites`, `…/clinics/{id}/locations` | Sites (Main Site + secondary locations) |
+| `…/clinics/{id}/vpn/links`, `/api/vpn/links/{id}`, `…/clinics/{id}/vpn/endpoints`, `/api/vpn/endpoints/{id}` | Canonical VPN links + reusable endpoint directory |
 | `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |

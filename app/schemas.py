@@ -551,3 +551,51 @@ class ClinicTicketIn(BaseModel):
         if not v.strip():
             raise ValueError("title is required")
         return v.strip()
+
+
+VpnStatus = Literal["unknown", "up", "down", "disabled"]
+
+
+class VpnEndpointIn(BaseModel):
+    """A reusable external/custom VPN endpoint (e.g. AHS). Shared unless `private` is set."""
+    name: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = None
+    address: Optional[str] = None
+    display_address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    vendor: Optional[str] = None
+    support_info: Optional[str] = None
+    private: bool = False          # true → available only to the creating clinic
+
+    _blank = field_validator(
+        "description", "address", "display_address", "lat", "lng", "vendor", "support_info", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
+
+
+class VpnLinkIn(BaseModel):
+    """One canonical two-sided VPN link. Side A is the clinic it is created from; side B is
+    either another clinic site (remote_kind='site') or a custom endpoint ('endpoint')."""
+    name: Optional[str] = None
+    vpn_type: Optional[str] = None
+    status: VpnStatus = "unknown"
+    notes: Optional[str] = None
+    # Local side (side A) — the site within the clinic this link is created from.
+    a_location_id: Optional[int] = None       # None = Main Site
+    a_device_id: Optional[int] = None          # terminating router/firewall (optional)
+    # Remote side (side B).
+    remote_kind: Literal["site", "endpoint"] = "site"
+    b_clinic_id: Optional[int] = None          # required when remote_kind == 'site'
+    b_location_id: Optional[int] = None        # None = the remote clinic's Main Site
+    b_device_id: Optional[int] = None
+    b_endpoint_id: Optional[int] = None        # required when remote_kind == 'endpoint'
+
+    _blank = field_validator(
+        "name", "vpn_type", "notes", "a_location_id", "a_device_id",
+        "b_clinic_id", "b_location_id", "b_device_id", "b_endpoint_id", mode="before")(_blank_to_none)

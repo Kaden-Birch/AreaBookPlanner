@@ -1,10 +1,11 @@
 // Equipment page for one clinic: list view and network topology view.
-import { clinics, devices } from '../api.js';
+import { clinics, devices, vpn as vpnApi } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
-import { openVpnPanel } from '../vpn.js';
+import { openVpnPanel, openLinkForm } from '../vpn.js';
 
-let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [] };
+let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
+const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
 let rackDragEndAt = 0;  // suppress the click that browsers fire right after a drag
 let clinic = null, meta = null;
 
@@ -35,6 +36,7 @@ export async function render(container, params, routeParams) {
           <button class="btn ${state.view === 'list' ? 'active' : ''}" data-view="list" style="border:none;border-radius:0">☰ List</button>
           <button class="btn ${state.view === 'topology' ? 'active' : ''}" data-view="topology" style="border:none;border-radius:0;border-left:1px solid var(--border)">🕸 Topology</button>
           <button class="btn ${state.view === 'racks' ? 'active' : ''}" data-view="racks" style="border:none;border-radius:0;border-left:1px solid var(--border)">🗄 Racks</button>
+          <button class="btn ${state.view === 'vpn' ? 'active' : ''}" data-view="vpn" style="border:none;border-radius:0;border-left:1px solid var(--border)" title="VPN connectivity map for this clinic">🔒 VPN map</button>
         </div>
         <button class="btn" id="vpn-btn" title="VPN links between this clinic's sites and other clinics or endpoints">🔒 VPN links</button>
         <a class="btn" id="csv-link" href="${devices.csvUrl(clinic.id, state.site)}" download>Export CSV</a>
@@ -97,6 +99,7 @@ async function load() {
   const body = document.getElementById('equip-body');
   if (state.view === 'list') renderList(body, list, data);
   else if (state.view === 'racks') await renderRacks(body);
+  else if (state.view === 'vpn') await renderVpnGraph(body);
   else await renderTopology(body);
 }
 
@@ -248,6 +251,34 @@ async function renderTopology(body) {
       ${svcLines(n, h, trunc)}
     </g>`;
   }
+  // VPN links terminating at this site: a distinct dashed node per remote end, on the right.
+  const VPN = topo.vpn || [];
+  const vpnColX = W + 10, vpnBoxW = 200, vpnBoxH = 42, vpnGap = 12, vpnTop = 30;
+  if (VPN.length) {
+    svg += `<text class="topo-section" x="${ox + vpnColX}" y="${oy + 16}">🔒 VPN links</text>`;
+    VPN.forEach((v, i) => {
+      const px = ox + vpnColX, py = oy + vpnTop + i * (vpnBoxH + vpnGap);
+      const dev = (v.device_id != null && pos[v.device_id]) ? v.device_id : null;
+      if (dev != null) {
+        const dd = nodeDim(byId[dev]);
+        const ax = ox + pos[dev].x + (NODE_W - dd.w) / 2 + dd.w, ay = boxTop(dev) + dd.h / 2;
+        const by = py + vpnBoxH / 2;
+        svg += `<path class="topo-vpn-edge status-${v.status}" d="M${ax},${ay} C${ax + 40},${ay} ${px - 40},${by} ${px},${by}"/>`;
+      }
+      const rem = v.remote;
+      const label = rem.kind === 'endpoint' ? `🌐 ${rem.name}` : `${rem.clinic_name} · ${rem.site_name}`;
+      const remoteAttr = rem.kind === 'site' ? `data-remote-clinic="${rem.clinic_id}" data-remote-site="${rem.site_id}"` : '';
+      svg += `<g class="topo-vpn-node status-${v.status}" data-vpn="${v.vpn_id}" ${remoteAttr} transform="translate(${px},${py})">
+        <title>VPN · ${attr(label)}${v.name ? ' · ' + attr(v.name) : ''} · ${attr(v.status_label)}</title>
+        <rect width="${vpnBoxW}" height="${vpnBoxH}" rx="8"/>
+        <text class="vlock" x="10" y="18">🔒</text>
+        <text class="vremote" x="30" y="17">${esc(trunc(label, 24))}</text>
+        <text class="vsub" x="30" y="33">${esc([v.name, v.status_label].filter(Boolean).join(' · '))}</text>
+      </g>`;
+    });
+  }
+  const fullW = VPN.length ? vpnColX + vpnBoxW + 20 : W;
+  const fullH = Math.max(H, VPN.length ? vpnTop + VPN.length * (vpnBoxH + vpnGap) + 20 : 0);
   body.innerHTML = `
     <div class="topo-wrap ${state.edit ? 'editing' : ''}" id="topo-wrap">
       <div class="topo-tools">
@@ -255,12 +286,12 @@ async function renderTopology(body) {
         <button class="btn btn-sm ${state.edit ? 'active' : ''}" id="edit-conn" title="Draw or remove connections between devices">${state.edit ? '✓ Done editing' : '✎ Edit connections'}</button>
       </div>
       ${state.edit ? `<div class="topo-hint" id="topo-hint">${state.source ? `Now click the device that <strong>${esc(byId[state.source] ? byId[state.source].name : '')}</strong> connects up to (its uplink). Or click a line to remove it.` : 'Click a device, then its uplink, to connect them. Click a line to remove it. The primary uplink is kept unless you remove it.'}</div>` : ''}
-      <svg class="topo-svg" viewBox="0 0 ${W + ox} ${H + oy}" width="${(W + ox) * state.zoom}" height="${(H + oy) * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
+      <svg class="topo-svg" viewBox="0 0 ${fullW + ox} ${fullH + oy}" width="${(fullW + ox) * state.zoom}" height="${(fullH + oy) * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
     </div>
     <div class="topo-legend">
-      <span><span class="line"></span>Wired</span><span><span class="line wireless"></span>Wireless</span><span><span class="line virtual"></span>VM → host</span><span><span class="line extra"></span>Extra link</span>
+      <span><span class="line"></span>Wired</span><span><span class="line wireless"></span>Wireless</span><span><span class="line virtual"></span>VM → host</span><span><span class="line extra"></span>Extra link</span>${VPN.length ? '<span><span class="line vpn"></span>VPN</span>' : ''}
       <span>Left stripe: <span style="color:var(--c-interested)">■</span> network · <span style="color:#7c5cd6">■</span> server/VM · <span style="color:var(--c-client)">■</span> workstation/laptop · <span style="color:#eda100">■</span> phone · <span style="color:#8a8f98">■</span> printer · <span style="color:#d9342b">■</span> security</span>
-      <span>🧊 = smaller box is a VM. Click a device for details.</span>
+      <span>🧊 = smaller box is a VM. Click a device for details.${VPN.length ? ' Click a 🔒 VPN node to open its link.' : ''}</span>
     </div>`;
   body.querySelectorAll('.topo-node').forEach(g => {
     g.onclick = async () => {
@@ -280,6 +311,15 @@ async function renderTopology(body) {
       openServiceDetail({ clinic, serviceId: Number(t.dataset.svc), onChanged: () => renderTopology(body) });
     };
   });
+  body.querySelectorAll('.topo-vpn-node').forEach(g => {
+    g.onclick = async () => {
+      if (state.edit) return;
+      try {
+        const link = await vpnApi.getLink(Number(g.dataset.vpn));
+        openLinkForm({ clinic, site: siteParam(), link, onSaved: () => renderTopology(body) });
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  });
   body.querySelectorAll('.topo-edge-hit').forEach(h => {
     h.onclick = async () => {
       if (!state.edit) return;
@@ -295,6 +335,133 @@ async function renderTopology(body) {
   body.querySelector('#zoom-out').onclick = () => setZoom(state.zoom - 0.2);
   body.querySelector('#zoom-reset').onclick = () => setZoom(1);
   body.querySelector('#edit-conn').onclick = () => { state.edit = !state.edit; state.source = null; renderTopology(body); };
+}
+
+// ---- VPN connectivity map ---------------------------------------------------------
+// A focused graph of this clinic's VPN links. Remote clinic sites can be expanded to
+// reveal *their* direct VPN links, building out a deliberate spiderweb.
+
+async function ensureClinicLinks(clinicId) {
+  if (!clinicLinksCache.has(clinicId)) clinicLinksCache.set(clinicId, (await vpnApi.links(clinicId)).links);
+  return clinicLinksCache.get(clinicId);
+}
+
+const siteKeyOf = (s) => `c:${s.clinic_id}:${s.site_id}`;
+const remoteKeyOf = (r) => r.kind === 'endpoint' ? `e:${r.endpoint_id}` : `c:${r.clinic_id}:${r.site_id}`;
+
+function buildVpnGraph() {
+  const nodes = new Map(), edges = [], seen = new Set();
+  const ensureSite = (s, origin) => {
+    const k = siteKeyOf(s);
+    if (!nodes.has(k)) nodes.set(k, { key: k, kind: 'site', label: `${s.clinic_name} · ${s.site_name}`, clinicId: s.clinic_id, siteId: s.site_id, origin, expandable: s.clinic_id !== clinic.id });
+    if (origin) nodes.get(k).origin = true;
+    return k;
+  };
+  const ensureRemote = (r) => {
+    const k = remoteKeyOf(r);
+    if (!nodes.has(k)) nodes.set(k, r.kind === 'endpoint'
+      ? { key: k, kind: 'endpoint', label: r.name, endpointId: r.endpoint_id, expandable: false }
+      : { key: k, kind: 'site', label: `${r.clinic_name} · ${r.site_name}`, clinicId: r.clinic_id, siteId: r.site_id, expandable: r.clinic_id !== clinic.id });
+    return k;
+  };
+  const addLink = (l) => {
+    const a = ensureSite(l.local, false), b = ensureRemote(l.remote);
+    if (seen.has(l.id)) return;
+    seen.add(l.id);
+    edges.push({ a, b, vpn_id: l.id, status: l.status, status_label: l.status_label, name: l.name });
+  };
+  (clinicLinksCache.get(clinic.id) || []).forEach(l => { ensureSite(l.local, true); addLink(l); });
+  // Fixpoint: an expanded node that is present pulls in that site's own links.
+  const done = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const key of state.vpnExpanded) {
+      if (!nodes.has(key) || done.has(key)) continue;
+      const node = nodes.get(key);
+      if (node.kind !== 'site' || node.clinicId == null) { done.add(key); continue; }
+      (clinicLinksCache.get(node.clinicId) || []).filter(l => siteKeyOf(l.local) === key).forEach(addLink);
+      done.add(key); changed = true;
+    }
+  }
+  // BFS depth from the origin nodes for a left-to-right layered layout.
+  const adj = {}; nodes.forEach(n => adj[n.key] = []);
+  edges.forEach(e => { adj[e.a].push(e.b); adj[e.b].push(e.a); });
+  const depth = {}, q = [];
+  nodes.forEach(n => { if (n.origin) { depth[n.key] = 0; q.push(n.key); } });
+  while (q.length) { const k = q.shift(); for (const nb of adj[k]) if (depth[nb] == null) { depth[nb] = depth[k] + 1; q.push(nb); } }
+  nodes.forEach(n => { n.depth = depth[n.key] ?? 0; n.expanded = state.vpnExpanded.has(n.key); });
+  return { nodes: [...nodes.values()], edges };
+}
+
+async function renderVpnGraph(body) {
+  body.innerHTML = '<div class="muted mt">Loading VPN map…</div>';
+  await ensureClinicLinks(clinic.id);
+  for (const key of state.vpnExpanded) { const m = key.match(/^c:(\d+):/); if (m) await ensureClinicLinks(Number(m[1])); }
+  const graph = buildVpnGraph();
+  if (!graph.edges.length) {
+    body.innerHTML = `<div class="card empty">No VPN links for ${esc(clinic.name)} yet. Use the <strong>🔒 VPN links</strong> button above to connect a router or firewall to another site or an endpoint.</div>`;
+    return;
+  }
+  const colW = 214, colGap = 78, boxH = 50, rowGap = 20, ox = 20, oy = 34;
+  const cols = {};
+  graph.nodes.forEach(n => (cols[n.depth] ||= []).push(n));
+  const posOf = {};
+  let maxDepth = 0, maxRows = 1;
+  Object.entries(cols).forEach(([d, list]) => {
+    maxDepth = Math.max(maxDepth, Number(d)); maxRows = Math.max(maxRows, list.length);
+    list.forEach((n, i) => { posOf[n.key] = { x: ox + Number(d) * (colW + colGap), y: oy + i * (boxH + rowGap) }; });
+  });
+  const W = ox + (maxDepth + 1) * (colW + colGap) + 20;
+  const H = oy + maxRows * (boxH + rowGap) + 20;
+
+  let svg = '';
+  for (const e of graph.edges) {
+    const pa = posOf[e.a], pb = posOf[e.b];
+    if (!pa || !pb) continue;
+    const [l, r] = pa.x <= pb.x ? [pa, pb] : [pb, pa];
+    const ax = l.x + colW, ay = l.y + boxH / 2, bx = r.x, by = r.y + boxH / 2;
+    svg += `<path class="vpn-graph-edge status-${e.status}" data-vpn="${e.vpn_id}" d="M${ax},${ay} C${ax + 40},${ay} ${bx - 40},${by} ${bx},${by}"/>`;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    if (e.status && e.status !== 'unknown') svg += `<text class="vpn-graph-elabel" x="${mx}" y="${my - 4}" text-anchor="middle">${esc(e.status_label)}</text>`;
+  }
+  for (const n of graph.nodes) {
+    const p = posOf[n.key];
+    const nav = n.kind === 'site' && !n.origin;
+    const cls = ['vpn-graph-node', n.kind === 'endpoint' ? 'is-endpoint' : '', n.origin ? 'is-origin' : '', nav ? 'nav' : '', n.expanded ? 'is-expanded' : ''].join(' ');
+    const icon = n.kind === 'endpoint' ? '🌐' : (n.origin ? '🏢' : '🔒');
+    svg += `<g class="${cls}" transform="translate(${p.x},${p.y})" ${nav ? `data-nav-clinic="${n.clinicId}" data-nav-site="${n.siteId}"` : ''}>
+      <rect width="${colW}" height="${boxH}" rx="9"/>
+      <text class="vg-icon" x="12" y="30">${icon}</text>
+      <text class="vg-label" x="34" y="24">${esc(trunc(n.label, 24))}</text>
+      <text class="vg-sub" x="34" y="40">${esc(n.origin ? 'This clinic' : (n.kind === 'endpoint' ? 'External endpoint' : 'Remote site — click to open'))}</text>
+      ${n.expandable ? `<g class="vg-toggle" data-toggle="${n.key}" transform="translate(${colW - 26},${boxH / 2 - 11})"><circle cx="11" cy="11" r="11"/><text x="11" y="16" text-anchor="middle">${n.expanded ? '−' : '+'}</text></g>` : ''}
+    </g>`;
+  }
+  body.innerHTML = `
+    <div class="topo-wrap" id="topo-wrap">
+      <div class="topo-hint">Showing VPN links for <strong>${esc(clinic.name)}</strong>. Click <strong>+</strong> on a remote site to reveal its own VPN links; click a link to open it, or a remote site to jump to its topology.</div>
+      <svg class="topo-svg" viewBox="0 0 ${W} ${H}" width="${W * state.zoom}" height="${H * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
+    </div>
+    <div class="topo-legend">
+      <span><span class="line vpn"></span>VPN link</span>
+      <span>🏢 this clinic · 🔒 remote site · 🌐 external endpoint</span>
+      <span>Line colour shows status: <span style="color:#2fae66">■</span> up · <span style="color:#d9342b">■</span> down · <span style="color:#8a8f98">■</span> disabled.</span>
+    </div>`;
+  body.querySelectorAll('.vpn-graph-edge').forEach(el => el.onclick = async () => {
+    try { const link = await vpnApi.getLink(Number(el.dataset.vpn)); openLinkForm({ clinic, link, onSaved: () => { clinicLinksCache.clear(); renderVpnGraph(body); } }); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+  body.querySelectorAll('.vg-toggle').forEach(el => el.onclick = (ev) => {
+    ev.stopPropagation();
+    const key = el.dataset.toggle;
+    if (state.vpnExpanded.has(key)) state.vpnExpanded.delete(key); else state.vpnExpanded.add(key);
+    renderVpnGraph(body);
+  });
+  body.querySelectorAll('[data-nav-clinic]').forEach(el => el.onclick = () => {
+    const cid = el.dataset.navClinic, s = el.dataset.navSite;
+    location.hash = `#/clinics/${cid}/equipment?view=topology${s && s !== 'main' ? `&site=${s}` : ''}`;
+  });
 }
 
 // ---- Rack elevation ---------------------------------------------------------------

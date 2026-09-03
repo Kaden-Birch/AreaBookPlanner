@@ -718,6 +718,42 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-node text.topo-svc:hover { fill: var(--primary); text-decoration: underline; }
 .topo-node text.topo-svc-more { fill: var(--faint); font-size: 10px; }
 
+/* VPN links drawn in the site topology */
+.topo-vpn-edge { fill: none; stroke: #6366f1; stroke-width: 2; stroke-dasharray: 6 4; }
+.topo-vpn-edge.status-down { stroke: var(--overdue-ring, #d9342b); }
+.topo-vpn-edge.status-disabled { stroke: #8a8f98; }
+.topo-vpn-node { cursor: pointer; }
+.topo-vpn-node rect { fill: var(--surface-2); stroke: #6366f1; stroke-width: 1.5; stroke-dasharray: 5 3; }
+.topo-vpn-node:hover rect { stroke-width: 2.5; }
+.topo-vpn-node.status-up rect { stroke: #2fae66; }
+.topo-vpn-node.status-down rect { stroke: var(--overdue-ring, #d9342b); }
+.topo-vpn-node.status-disabled rect { stroke: #8a8f98; }
+.topo-vpn-node .vremote { fill: var(--text); font-size: 12px; font-weight: 600; }
+.topo-vpn-node .vsub { fill: var(--muted); font-size: 10px; }
+.topo-legend .line.vpn { border-top-style: dashed; border-color: #6366f1; }
+
+/* VPN connectivity map (focused graph view) */
+.vpn-graph-edge { fill: none; stroke: #6366f1; stroke-width: 2; stroke-dasharray: 6 4; cursor: pointer; }
+.vpn-graph-edge:hover { stroke-width: 3.5; }
+.vpn-graph-edge.status-up { stroke: #2fae66; }
+.vpn-graph-edge.status-down { stroke: var(--overdue-ring, #d9342b); }
+.vpn-graph-edge.status-disabled { stroke: #8a8f98; }
+.vpn-graph-elabel { fill: var(--muted); font-size: 10px; }
+.vpn-graph-node rect { fill: var(--surface-2); stroke: #6366f1; stroke-width: 1.5; }
+.vpn-graph-node.is-origin rect { fill: var(--primary-soft, #eef2ff); stroke: var(--primary); stroke-width: 2; }
+.vpn-graph-node.is-endpoint rect { stroke-dasharray: 5 3; }
+.vpn-graph-node.is-expanded rect { stroke-width: 2.5; }
+.vpn-graph-node.nav { cursor: pointer; }
+.vpn-graph-node.nav:hover rect { stroke-width: 2.5; }
+.vpn-graph-node .vg-icon { font-size: 16px; }
+.vpn-graph-node .vg-label { fill: var(--text); font-size: 12px; font-weight: 600; }
+.vpn-graph-node .vg-sub { fill: var(--muted); font-size: 10px; }
+.vpn-graph-node .vg-toggle { cursor: pointer; }
+.vpn-graph-node .vg-toggle circle { fill: var(--surface-3); stroke: var(--border); }
+.vpn-graph-node .vg-toggle:hover circle { fill: var(--primary); }
+.vpn-graph-node .vg-toggle text { fill: var(--text); font-size: 15px; font-weight: 700; }
+.vpn-graph-node .vg-toggle:hover text { fill: #fff; }
+
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .svc-card { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: block; width: 100%; }

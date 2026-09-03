@@ -183,6 +183,15 @@ and is stored in a single SQLite file.
   a name, vendor, description, optional address/coordinates and support info. Endpoints are
   **shared** with every clinic by default, or can be marked **private** to the clinic that
   created one. A VPN link's far side can be another clinic site or one of these endpoints.
+- **VPN visualisation** – VPN links appear in two places. In the **site topology**, each link
+  draws as a distinct dashed indigo connection from its terminating router/firewall to a node
+  for the remote clinic site or endpoint (colour-coded by status); clicking it opens the link.
+  A dedicated **🔒 VPN map** view draws a focused connectivity graph for the clinic — its
+  sites, their direct VPN links, and the directly-connected remote sites/endpoints. Remote
+  clinic sites carry an **expand (+)** control that pulls in *their* VPN links, so you can
+  deliberately build out a connected spiderweb (and collapse it again); clicking a remote site
+  jumps to that site's topology, and clicking a link opens it. The full company-wide graph is
+  never shown unprompted.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a

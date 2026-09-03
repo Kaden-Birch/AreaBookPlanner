@@ -341,7 +341,9 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
         """SELECT dl.* FROM device_links dl JOIN devices d ON d.id = dl.device_id WHERE d.clinic_id = ?""", (clinic_id,))):
         if l["device_id"] in by_id and l["uplink_id"] in by_id:
             edges.append({"from": l["uplink_id"], "to": l["device_id"], "link_type": l["link_type"] or "ethernet", "primary": False, "link_id": l["id"]})
-    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes}
+    from .vpn import topology_links
+    vpn = topology_links(conn, clinic_id, site)
+    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn}
 
 
 # ---- Extra connections (multiple uplinks / edge cases) ---------------------------

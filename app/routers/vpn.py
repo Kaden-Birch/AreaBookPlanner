@@ -200,6 +200,27 @@ def list_links(clinic_id: int, site: str | None = None, conn: sqlite3.Connection
     return {"links": out, "statuses": VPN_STATUSES, "secrets_notice": SECRETS_NOTICE}
 
 
+def topology_links(conn: sqlite3.Connection, clinic_id: int, site: str | None = None) -> list[dict]:
+    """VPN links that terminate at this clinic (optionally one site), shaped for the topology
+    diagram: the local terminating device id, and the remote end to draw a node for."""
+    rows = rows_to_list(conn.execute(
+        "SELECT * FROM vpn_links WHERE a_clinic_id = ? OR (b_kind = 'site' AND b_clinic_id = ?) ORDER BY id",
+        (clinic_id, clinic_id)))
+    out = []
+    for l in rows:
+        chosen = next((s for s in _clinic_sides(l, clinic_id) if _site_matches(s[1], site)), None)
+        if chosen is None:
+            continue
+        local_side = chosen[0]
+        remote = _side(conn, l, "b" if local_side == "a" else "a")
+        out.append({
+            "vpn_id": l["id"], "device_id": l["a_device_id"] if local_side == "a" else l["b_device_id"],
+            "name": l["name"], "status": l["status"], "status_label": VPN_STATUSES.get(l["status"], l["status"]),
+            "remote": remote,
+        })
+    return out
+
+
 @router.get("/vpn/links/{link_id}")
 def get_link(link_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     link = _link_or_404(conn, link_id)

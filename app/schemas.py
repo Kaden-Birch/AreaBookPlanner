@@ -507,3 +507,22 @@ class InvoiceIn(BaseModel):
 
 class InvoiceStatusIn(BaseModel):
     status: Literal["draft", "sent", "paid", "void"]
+
+
+class ClinicTicketIn(BaseModel):
+    """A support ticket (e.g. from SyncroMSP) linked to a clinic."""
+    title: str = Field(min_length=1, max_length=300)
+    url: Optional[str] = None
+    ticket_at: Optional[str] = None          # ISO datetime; defaults to now if omitted
+    device_id: Optional[int] = None          # existing machine in the topology
+    device_name: Optional[str] = None        # or a name; created as a workstation if it doesn't exist
+    notes: Optional[str] = None
+
+    _blank = field_validator("url", "ticket_at", "device_id", "device_name", "notes", mode="before")(_blank_to_none)
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("title is required")
+        return v.strip()

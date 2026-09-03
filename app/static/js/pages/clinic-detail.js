@@ -9,7 +9,7 @@ import {
 import { attachMentionAutocomplete, wireMentionChips, openPhotoModal, contactName } from '../notes.js';
 import {
   openClinicForm, deleteClinic, openContactForm, openAppointmentForm, openLogVisit, openTaskForm, changeStage,
-  openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker, openCardScanner,
+  openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker, openCardScanner, openTicketForm,
 } from '../forms.js';
 import { taskRow, wireTaskRows } from './tasks.js';
 import { openDeviceForm, plural } from '../equipment.js';
@@ -18,6 +18,7 @@ import { openInvoiceForm } from '../billing-forms.js';
 
 let miniMap = null;
 let tlFilter = 'all';
+let activityOpen = false;  // Activity history is collapsed by default; the composer stays visible.
 
 function renewalBadge(c) {
   if (c.renewal_overdue) return badge('Expired', 'badge-red');
@@ -223,7 +224,8 @@ export async function render(container, params, routeParams) {
 
       <div>
         <div class="card">
-          <div class="card-header"><h3>Activity</h3><span class="muted small">Notes, visits, tasks and status changes in one feed</span></div>
+          <div class="card-header"><h3>Activity</h3><span class="muted small">Log a note; open the history for the full feed</span>
+            <div class="actions"><button class="btn btn-sm" id="activity-toggle">${activityOpen ? 'Hide history ▲' : 'Show history ▼'}</button></div></div>
           ${quickLogButtons(meta)}
           <form id="note-form" class="mb note-compose">
             <textarea name="body" rows="2" placeholder="Add a note… type @ to mention a contact (e.g. Called @Sarah, back Tuesday)"></textarea>
@@ -238,11 +240,13 @@ export async function render(container, params, routeParams) {
               <button class="btn btn-primary btn-sm" type="submit">Add note</button>
             </div>
           </form>
-          <div class="tl-filters" id="tl-filters">
-            ${[['all', 'All'], ['note', 'Notes'], ['appointment', 'Appointments'], ['task', 'Tasks'], ['change', 'Changes']].map(([k, l]) =>
-              `<button class="btn btn-sm ${tlFilter === k ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
+          <div id="activity-history" class="${activityOpen ? '' : 'hidden'}">
+            <div class="tl-filters" id="tl-filters">
+              ${[['all', 'All'], ['note', 'Notes'], ['appointment', 'Appointments'], ['task', 'Tasks'], ['change', 'Changes']].map(([k, l]) =>
+                `<button class="btn btn-sm ${tlFilter === k ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
+            </div>
+            <ul class="timeline" id="timeline"></ul>
           </div>
-          <ul class="timeline" id="timeline"></ul>
         </div>
 
         <div class="card">
@@ -275,6 +279,17 @@ export async function render(container, params, routeParams) {
           <div class="card-header"><h3>Past appointments (${past.length})</h3></div>
           ${past.length ? past.slice(0, 8).map(a => apptRow(a, meta)).join('') : '<p class="muted">No past appointments or visits logged.</p>'}
           ${past.length > 8 ? `<p class="muted small mt">${past.length - 8} older appointments are in the activity feed.</p>` : ''}
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Tickets (${(clinic.tickets || []).length})</h3><div class="actions"><button class="btn btn-sm" id="btn-ticket">+ Link ticket</button></div></div>
+          ${(clinic.tickets || []).length ? clinic.tickets.map(t => `
+            <div class="doc-row" data-id="${t.id}">
+              <span>🎫</span>
+              <div class="body"><div class="name">${t.url ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : esc(t.title)}</div>
+                <div class="sub">${t.ticket_at ? esc(fmtDateTime(t.ticket_at)) : ''}${t.device_name ? ` · 💻 <a href="#/clinics/${clinic.id}/equipment">${esc(t.device_name)}</a>` : ''}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
+              <button class="btn btn-sm btn-link" data-act="del-ticket" data-id="${t.id}">Delete</button>
+            </div>`).join('') : '<p class="muted">No tickets linked. Add a SyncroMSP ticket — title, link, date and (optionally) the machine it’s about.</p>'}
         </div>
 
         <div class="card">
@@ -343,6 +358,10 @@ export async function render(container, params, routeParams) {
   container.querySelector('#btn-location').onclick = () => openLocationForm({ clinic, onSaved: reload });
   container.querySelector('#btn-device').onclick = () => openDeviceForm({ clinic, onSaved: reload });
   container.querySelector('#btn-invoice').onclick = () => openInvoiceForm({ clinicId: clinic.id, onSaved: (iv) => iv && navigate(`#/invoices/${iv.id}`) });
+  container.querySelector('#btn-ticket').onclick = () => openTicketForm({ clinic, onSaved: reload });
+  container.querySelectorAll('[data-act=del-ticket]').forEach(b => {
+    b.onclick = async () => { if (!(await confirmDialog('Remove this ticket link?'))) return; await clinics.removeTicket(clinic.id, Number(b.dataset.id)); toast('Ticket removed'); reload(); };
+  });
   container.querySelector('#btn-link').onclick = () => openLinkForm({ clinic, onSaved: reload });
   wireTaskRows(container.querySelector('#task-list'), clinic.tasks, reload);
   container.querySelectorAll('[data-quick]').forEach(b => { b.onclick = () => quickLog(clinic, b.dataset.quick, reload); });
@@ -438,6 +457,12 @@ export async function render(container, params, routeParams) {
   container.querySelectorAll('#tl-filters button').forEach(b => {
     b.onclick = () => { tlFilter = b.dataset.filter; container.querySelectorAll('#tl-filters button').forEach(x => x.classList.toggle('active', x === b)); renderTimeline(); };
   });
+  const activityToggle = container.querySelector('#activity-toggle');
+  activityToggle.onclick = () => {
+    activityOpen = !activityOpen;
+    container.querySelector('#activity-history').classList.toggle('hidden', !activityOpen);
+    activityToggle.textContent = activityOpen ? 'Hide history ▲' : 'Show history ▼';
+  };
   renderTimeline();
 
   // Mini map with main + secondary locations

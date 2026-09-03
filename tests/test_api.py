@@ -406,6 +406,38 @@ def test_notes_mentions_photos(client):
     assert any(n["id"] == note["id"] for n in client.get(f"/api/clinics/{a}/notes").json())
 
 
+def test_tickets_and_activity_filter(client):
+    cid = client.post("/api/clinics", json={"name": "Ticket Clinic"}).json()["id"]
+
+    # Link a ticket to a machine that doesn't exist yet -> it's created as a workstation.
+    t1 = client.post(f"/api/clinics/{cid}/tickets", json={
+        "title": "Printer offline", "url": "https://x.syncromsp.com/tickets/1", "device_name": "REC-PC"}).json()
+    assert t1["title"] == "Printer offline" and t1["ticket_at"]  # auto-filled date
+    assert t1["device_name"] == "REC-PC"
+    devs = client.get(f"/api/clinics/{cid}/devices").json()["devices"]
+    made = [d for d in devs if d["name"] == "REC-PC"]
+    assert len(made) == 1 and made[0]["device_type"] == "workstation"
+
+    # Linking the same machine again (case-insensitive) reuses it — no duplicate.
+    client.post(f"/api/clinics/{cid}/tickets", json={"title": "Follow-up", "device_name": "rec-pc"})
+    assert len([d for d in client.get(f"/api/clinics/{cid}/devices").json()["devices"] if d["name"] == "REC-PC"]) == 1
+
+    # A custom date/time is kept as given.
+    t3 = client.post(f"/api/clinics/{cid}/tickets", json={"title": "Scheduled", "ticket_at": "2026-01-02T08:30"}).json()
+    assert t3["ticket_at"] == "2026-01-02T08:30" and t3["device_id"] is None
+
+    # Tickets show on the clinic profile.
+    detail = client.get(f"/api/clinics/{cid}").json()
+    assert len(detail["tickets"]) == 3
+
+    # Equipment/topology events (incl. the auto-created workstation) are kept out of the activity feed.
+    tl = client.get(f"/api/clinics/{cid}/timeline").json()
+    assert not any(i["type"] == "equipment" for i in tl)
+
+    assert client.delete(f"/api/clinics/{cid}/tickets/{t1['id']}").status_code == 204
+    assert len(client.get(f"/api/clinics/{cid}/tickets").json()) == 2
+
+
 def test_display_address_and_hours(client):
     r = client.post("/api/clinics", json={
         "name": "Hours Clinic", "address": "500 5 Ave SW", "display_address": "Suite 300, 500 5 Ave SW",

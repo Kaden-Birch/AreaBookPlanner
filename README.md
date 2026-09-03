@@ -41,6 +41,13 @@ and is stored in a single SQLite file.
   **Photos** section. Clicking a photo opens it with a link back to the appointment / task /
   note it came from, and photos added straight to the Photos section can have their own
   notes added in place.
+- **Activity feed** – notes, appointments, tasks and status changes in one feed. It's
+  collapsed by default (the quick-note composer stays visible); open "Show history" for the
+  full timeline. Equipment/topology changes are kept out of the feed — they live in the
+  Equipment section.
+- **Tickets** – link support tickets (e.g. SyncroMSP) to a clinic: title, link, and a
+  date/time (defaults to now, editable). Optionally point a ticket at a machine — pick one
+  from the topology, or type a new name and it's added as a workstation you can refine later.
 - **Contacts** – clinic managers, doctors, nurses, reception and other staff, with a
   primary-contact flag. Global contacts page plus per-clinic lists.
 - **Calendar & appointments** – month and agenda views. Create appointments from the
@@ -273,6 +280,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
 | `GET/POST /api/clinics/{id}/notes` | Dated note log (with @mentions + appointment/task/photo context) |
 | `GET /api/clinics/{id}/attachments/{aid}/notes` | Notes attached to one photo |
+| `GET/POST /api/clinics/{id}/tickets`, `DELETE …/tickets/{tid}` | Linked support tickets |
 | `GET/POST /api/contacts`, `GET/PUT/DELETE /api/contacts/{id}` | Contacts |
 | `GET/POST /api/appointments`, `GET/PUT/PATCH/DELETE /api/appointments/{id}` | Appointments |
 | `GET /api/geocode?q=` | Address lookup (Nominatim) |

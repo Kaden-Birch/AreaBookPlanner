@@ -341,6 +341,17 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS clinic_tickets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id   INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    device_id   INTEGER REFERENCES devices(id) ON DELETE SET NULL,   -- machine the ticket is about
+    title       TEXT NOT NULL,
+    url         TEXT,                                                -- link to the ticket (e.g. SyncroMSP)
+    ticket_at   TEXT,                                                -- when the ticket was raised
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_locations_clinic ON clinic_locations(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_clinic ON clinic_links(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_other ON clinic_links(other_clinic_id);
@@ -356,6 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_clinic2 ON invoices(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item_id);
 CREATE INDEX IF NOT EXISTS idx_orders_clinic ON orders(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_clinic_tickets_clinic ON clinic_tickets(clinic_id);
 """
 
 

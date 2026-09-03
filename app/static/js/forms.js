@@ -1,5 +1,5 @@
 // Modal forms for clinics, contacts and appointments (shared across pages).
-import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, settings as settingsApi } from './api.js';
+import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, devices, settings as settingsApi } from './api.js';
 import {
   esc, attr, openModal, confirmDialog, toast, formData, showFormError, options,
   toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl,
@@ -687,6 +687,47 @@ export async function openLogVisit({ clinic, onSaved }) {
       toast('Visit logged', 'success');
       modal.close();
       onSaved && onSaved(saved);
+    } catch (e) { showFormError(form, e.message); }
+  };
+  modal.root.querySelector('[data-act=save]').onclick = save;
+  form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+}
+
+// ---- Tickets (SyncroMSP etc.) --------------------------------------------
+
+export async function openTicketForm({ clinic, onSaved }) {
+  const list = await devices.list(clinic.id).then(r => r.devices || []).catch(() => []);
+  const deviceOpts = list.map(d => `<option value="${attr(d.name)}">${attr([d.user_name, d.type_label].filter(Boolean).join(' · '))}</option>`).join('');
+  const now = toLocalInput(new Date());
+  const modal = openModal({
+    title: `Link a ticket · ${clinic.name}`,
+    body: `<form id="ticket-form" autocomplete="off">
+      <div class="field"><label>Title *</label><input name="title" required placeholder="e.g. Printer offline in reception"></div>
+      <div class="field"><label>Ticket link</label><input name="url" placeholder="https://…syncromsp.com/tickets/12345"></div>
+      <div class="field-row">
+        <div class="field"><label>Date &amp; time</label><input name="ticket_at" type="datetime-local" value="${attr(now)}"></div>
+        <div class="field"><label>Machine (optional)</label>
+          <input name="device_name" list="ticket-devices" placeholder="Link or type a new machine">
+          <datalist id="ticket-devices">${deviceOpts}</datalist>
+          <div class="help">Pick a machine from the topology, or type a new name — it's added as a workstation you can edit later.</div></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+    </form>`,
+    footer: `<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">Link ticket</button>`,
+  });
+  const form = modal.body.querySelector('#ticket-form');
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const save = async () => {
+    const data = formData(form);
+    if (!data.title.trim()) { showFormError(form, 'A title is required.'); return; }
+    try {
+      await clinics.addTicket(clinic.id, {
+        title: data.title, url: data.url, ticket_at: data.ticket_at || null,
+        device_name: (data.device_name || '').trim() || null, notes: data.notes,
+      });
+      toast('Ticket linked', 'success');
+      modal.close();
+      onSaved && onSaved();
     } catch (e) { showFormError(form, e.message); }
   };
   modal.root.querySelector('[data-act=save]').onclick = save;

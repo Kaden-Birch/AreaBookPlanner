@@ -14,7 +14,7 @@ from ..logic import (
     LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, QUICK_LOGS, RELATIONSHIP_LABELS, STAGE_LABELS, WON_REASONS,
     enrich_clinic, hours_to_json, log_event, normalize_address, normalize_name, now_iso,
 )
-from ..schemas import ArchiveIn, ClinicIn, LinkIn, LocationIn, NoteIn, QuickLogIn, StageChange
+from ..schemas import ArchiveIn, ClinicIn, ClinicTicketIn, LinkIn, LocationIn, NoteIn, QuickLogIn, StageChange
 
 router = APIRouter(prefix="/api/clinics", tags=["clinics"])
 
@@ -359,6 +359,9 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
         "SELECT id, title, status, total, issue_date, due_date, ticket_url, created_at FROM invoices WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,)))
     for inv in clinic["invoices"]:
         inv["number"] = f"INV-{(inv['created_at'] or '')[:4]}-{inv['id']:04d}"
+    clinic["tickets"] = rows_to_list(conn.execute(
+        """SELECT t.*, d.name AS device_name FROM clinic_tickets t LEFT JOIN devices d ON d.id = t.device_id
+           WHERE t.clinic_id = ? ORDER BY t.ticket_at DESC, t.id DESC""", (clinic_id,)))
     clinic["group"] = None
     clinic["group_members"] = []
     if clinic.get("group_id"):
@@ -428,6 +431,9 @@ def build_timeline(conn: sqlite3.Connection, clinic_id: int) -> list[dict]:
             "body": t["notes"], "done": bool(t["done"]), "future": (not t["done"]) and at > now_iso(),
         })
     for e in rows_to_list(conn.execute("SELECT * FROM clinic_events WHERE clinic_id = ?", (clinic_id,))):
+        # Equipment/topology changes are their own section — keep them out of the activity feed.
+        if e["event_type"] == "equipment":
+            continue
         items.append({"type": e["event_type"], "at": e["created_at"], "id": e["id"], "title": e["title"], "body": e["detail"]})
     items.sort(key=lambda x: x["at"], reverse=True)
     return items
@@ -673,4 +679,45 @@ def delete_note(clinic_id: int, note_id: int, conn: sqlite3.Connection = Depends
     cur = conn.execute("DELETE FROM clinic_notes WHERE id = ? AND clinic_id = ?", (note_id, clinic_id))
     if cur.rowcount == 0:
         raise HTTPException(status_code=404, detail="Note not found")
+    return None
+
+
+# ---- Tickets (e.g. SyncroMSP) ---------------------------------------------
+
+def _ticket_detail(conn: sqlite3.Connection, ticket_id: int) -> dict:
+    return row_to_dict(conn.execute(
+        """SELECT t.*, d.name AS device_name FROM clinic_tickets t LEFT JOIN devices d ON d.id = t.device_id
+           WHERE t.id = ?""", (ticket_id,)).fetchone())
+
+
+@router.get("/{clinic_id}/tickets")
+def list_tickets(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    _get_clinic_or_404(conn, clinic_id)
+    return rows_to_list(conn.execute(
+        """SELECT t.*, d.name AS device_name FROM clinic_tickets t LEFT JOIN devices d ON d.id = t.device_id
+           WHERE t.clinic_id = ? ORDER BY t.ticket_at DESC, t.id DESC""", (clinic_id,)))
+
+
+@router.post("/{clinic_id}/tickets", status_code=201)
+def add_ticket(clinic_id: int, payload: ClinicTicketIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    _get_clinic_or_404(conn, clinic_id)
+    device_id = payload.device_id
+    if device_id is not None and conn.execute(
+            "SELECT 1 FROM devices WHERE id = ? AND clinic_id = ?", (device_id, clinic_id)).fetchone() is None:
+        device_id = None
+    if device_id is None and payload.device_name:
+        from .devices import ensure_device_by_name
+        device_id = ensure_device_by_name(conn, clinic_id, payload.device_name)
+    at = payload.ticket_at or now_iso()
+    cur = conn.execute(
+        "INSERT INTO clinic_tickets (clinic_id, device_id, title, url, ticket_at, notes) VALUES (?, ?, ?, ?, ?, ?)",
+        (clinic_id, device_id, payload.title, payload.url, at, payload.notes))
+    return _ticket_detail(conn, cur.lastrowid)
+
+
+@router.delete("/{clinic_id}/tickets/{ticket_id}", status_code=204)
+def delete_ticket(clinic_id: int, ticket_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM clinic_tickets WHERE id = ? AND clinic_id = ?", (ticket_id, clinic_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Ticket not found")
     return None

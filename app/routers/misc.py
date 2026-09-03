@@ -488,6 +488,7 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "orders": rows_to_list(conn.execute("SELECT * FROM orders")),
         "invoices": rows_to_list(conn.execute("SELECT * FROM invoices")),
         "invoice_lines": rows_to_list(conn.execute("SELECT * FROM invoice_lines")),
+        "clinic_tickets": rows_to_list(conn.execute("SELECT * FROM clinic_tickets")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -507,7 +508,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
               "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_links", "device_tickets", "quotes",
-              "inventory_items", "invoices", "invoice_lines", "orders"]
+              "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -679,6 +680,15 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         conn.execute(f"INSERT INTO orders ({cols}) VALUES ({marks})", list(row.values()))
+    for row in data.get("clinic_tickets", []):
+        row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["device_id"] = device_map.get(row.get("device_id"))
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO clinic_tickets ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

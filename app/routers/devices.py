@@ -215,6 +215,30 @@ def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     return created if qty > 1 else created[0]
 
 
+def ensure_device_by_name(conn: sqlite3.Connection, clinic_id: int, name: str, device_type: str = "workstation") -> int | None:
+    """Return the id of the clinic's device with this name, creating a workstation if none matches.
+
+    Used when linking a machine to a ticket by name — an unknown name drops a placeholder into
+    the topology that can be corrected later.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    row = conn.execute(
+        "SELECT id FROM devices WHERE clinic_id = ? AND name = ? COLLATE NOCASE", (clinic_id, name)).fetchone()
+    if row:
+        return row[0]
+    clinic = _clinic_or_404(conn, clinic_id)
+    n = next_number(conn, clinic_id, device_type)
+    parsed = _parse_number(clinic, device_type, name)
+    number = parsed if parsed is not None else n
+    cur = conn.execute(
+        "INSERT INTO devices (clinic_id, device_type, name, number, status) VALUES (?, ?, ?, ?, 'active')",
+        (clinic_id, device_type, name, number))
+    log_event(conn, clinic_id, "equipment", f"Added workstation {name} (linked from a ticket)")
+    return cur.lastrowid
+
+
 def _edge_link_type(d: dict) -> str:
     if d["device_type"] == "vm":
         return "virtual"

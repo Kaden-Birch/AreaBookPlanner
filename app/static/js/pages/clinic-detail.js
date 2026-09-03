@@ -4,8 +4,9 @@ import { clinics, appointments, attachments, getMeta } from '../api.js';
 import {
   esc, attr, dot, badge, tagList, fmtDate, fmtDateTime, fmtDateOnly, fmtMoney, relativeDays, isPast,
   fullAddress, directionsUrl, pinIcon, secondaryPinIcon, toast, confirmDialog, navigate, setTitle, options,
-  stageBadge, shorthandBadge, getRepName,
+  stageBadge, shorthandBadge, getRepName, renderNoteBody,
 } from '../ui.js';
+import { attachMentionAutocomplete, wireMentionChips, openPhotoModal, contactName } from '../notes.js';
 import {
   openClinicForm, deleteClinic, openContactForm, openAppointmentForm, openLogVisit, openTaskForm, changeStage,
   openLocationForm, openLinkForm, quickLog, quickLogButtons, openEmailPicker, openCardScanner,
@@ -224,9 +225,18 @@ export async function render(container, params, routeParams) {
         <div class="card">
           <div class="card-header"><h3>Activity</h3><span class="muted small">Notes, visits, tasks and status changes in one feed</span></div>
           ${quickLogButtons(meta)}
-          <form id="note-form" class="mb">
-            <textarea name="body" rows="2" placeholder="Add a note… (e.g. Called, spoke with receptionist, manager back Tuesday)"></textarea>
-            <div class="right mt"><button class="btn btn-primary btn-sm" type="submit">Add note</button></div>
+          <form id="note-form" class="mb note-compose">
+            <textarea name="body" rows="2" placeholder="Add a note… type @ to mention a contact (e.g. Called @Sarah, back Tuesday)"></textarea>
+            <div class="note-compose-row">
+              <select id="note-context" title="Attach this note to an appointment or task">
+                <option value="">General note</option>
+                ${upcoming.concat(past).length ? `<optgroup label="Appointments">${clinic.appointments.map(a => `<option value="appt:${a.id}">${esc(a.title)} · ${esc(fmtDateOnly(a.start_time))}</option>`).join('')}</optgroup>` : ''}
+                ${clinic.tasks.length ? `<optgroup label="Tasks">${clinic.tasks.map(t => `<option value="task:${t.id}">${esc(t.title)}</option>`).join('')}</optgroup>` : ''}
+              </select>
+              <label class="btn btn-sm" style="margin:0" title="Attach a photo — it also shows in Photos">📷 Photo <input type="file" id="note-photo" class="hidden" accept="image/*"></label>
+              <span class="muted small" id="note-photo-name"></span>
+              <button class="btn btn-primary btn-sm" type="submit">Add note</button>
+            </div>
           </form>
           <div class="tl-filters" id="tl-filters">
             ${[['all', 'All'], ['note', 'Notes'], ['appointment', 'Appointments'], ['task', 'Tasks'], ['change', 'Changes']].map(([k, l]) =>
@@ -287,12 +297,12 @@ export async function render(container, params, routeParams) {
               <label class="btn btn-sm" style="margin:0">Upload… <input type="file" id="photo-file" class="hidden" accept="image/*" multiple></label>
             </div></div>
           ${photos.length ? `<div class="photo-grid">${photos.map(p => `
-            <a href="${attachments.fileUrl(p.id)}" target="_blank" rel="noopener" data-id="${p.id}" title="${attr(p.caption || p.filename)}">
+            <button type="button" class="photo-tile" data-id="${p.id}" title="${attr(p.caption || p.filename)}">
               <img src="${attachments.fileUrl(p.id)}" alt="${attr(p.caption || p.filename)}" loading="lazy">
-              <span class="cap">${esc(p.caption || p.filename)}</span>
-            </a>`).join('')}</div>
-            <div class="mt small muted">Right-click a photo to delete it, or use the list: ${photos.map(p => `<button class="btn btn-link btn-sm" data-act="del-att" data-id="${p.id}">delete ${esc(p.caption || p.filename)}</button>`).join(' ')}</div>`
-            : '<p class="muted">Storefront, parking, a business card… Photos taken on a phone are attached straight to this clinic.</p>'}
+              ${p.origin || p.note_count ? `<span class="photo-badge">${p.origin ? esc(originIcon(p.origin)) : ''}${p.note_count ? ` 📝${p.note_count}` : ''}</span>` : ''}
+            </button>`).join('')}</div>
+            <p class="mt small muted">Click a photo to view it, add notes, or jump to the appointment / task / note it came from.</p>`
+            : '<p class="muted">Storefront, parking, a business card… Photos taken on a phone are attached straight to this clinic. Add one to a note and it appears here.</p>'}
         </div>
 
         <div class="card">
@@ -369,14 +379,37 @@ export async function render(container, params, routeParams) {
   container.querySelector('#doc-file').onchange = (e) => { if (e.target.files.length) uploadFiles([...e.target.files], null); };
   container.querySelector('#photo-file').onchange = (e) => { if (e.target.files.length) uploadFiles([...e.target.files], 'photo'); };
   container.querySelector('#photo-capture').onchange = (e) => { if (e.target.files.length) uploadFiles([...e.target.files], 'photo'); };
+  const onOrigin = (o) => {
+    if (o.type === 'appointment') openAppointmentForm({ appointment: clinic.appointments.find(a => a.id === o.id), lockClinic: true, onSaved: reload });
+    else if (o.type === 'task') openTaskForm({ task: clinic.tasks.find(t => t.id === o.id), onSaved: reload });
+  };
+  container.querySelectorAll('.photo-tile').forEach(b => b.onclick = () => {
+    const p = photos.find(x => x.id === Number(b.dataset.id));
+    if (p) openPhotoModal({ clinic, photo: p, onSaved: reload, onContact: (id) => openContactById(id), onOrigin });
+  });
+  const openContactById = (id) => {
+    const ct = clinic.contacts.find(c => c.id === id);
+    if (ct) openContactForm({ contact: ct, onSaved: reload });
+  };
   const noteForm = container.querySelector('#note-form');
+  attachMentionAutocomplete(noteForm.elements.body, clinic.contacts);
+  const notePhoto = noteForm.querySelector('#note-photo');
+  notePhoto.onchange = () => { noteForm.querySelector('#note-photo-name').textContent = notePhoto.files[0] ? notePhoto.files[0].name : ''; };
   noteForm.onsubmit = async (e) => {
     e.preventDefault();
     const body = noteForm.elements.body.value.trim();
-    if (!body) return;
-    await clinics.addNote(clinic.id, body, 'note', getRepName() || null);
-    toast('Note added', 'success');
-    reload();
+    const file = notePhoto.files[0];
+    if (!body && !file) return;
+    const ctx = noteForm.querySelector('#note-context').value;
+    const extra = {};
+    if (ctx.startsWith('appt:')) extra.appointment_id = Number(ctx.slice(5));
+    else if (ctx.startsWith('task:')) extra.task_id = Number(ctx.slice(5));
+    try {
+      const note = await clinics.addNote(clinic.id, body || (file ? `Photo: ${file.name}` : ''), 'note', getRepName() || null, extra);
+      if (file) await attachments.upload(clinic.id, file, null, 'photo', note.id);
+      toast('Note added', 'success');
+      reload();
+    } catch (err) { toast(err.message, 'error'); }
   };
 
   // Timeline
@@ -397,6 +430,10 @@ export async function render(container, params, routeParams) {
     ul.querySelectorAll('[data-act=open-task]').forEach(b => {
       b.onclick = () => openTaskForm({ task: clinic.tasks.find(t => t.id === Number(b.dataset.id)), onSaved: reload });
     });
+    ul.querySelectorAll('[data-act=open-photo]').forEach(b => {
+      b.onclick = () => { const p = clinic.attachments.find(a => a.id === Number(b.dataset.id)); if (p) openPhotoModal({ clinic, photo: p, onSaved: reload, onContact: openContactById }); };
+    });
+    wireMentionChips(ul, openContactById);
   };
   container.querySelectorAll('#tl-filters button').forEach(b => {
     b.onclick = () => { tlFilter = b.dataset.filter; container.querySelectorAll('#tl-filters button').forEach(x => x.classList.toggle('active', x === b)); renderTimeline(); };
@@ -431,7 +468,19 @@ export function destroy() {
 
 function fmtSize(b) { return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b > 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`; }
 
-const TL_ICONS = { note: '📝', appointment: '📍', task: '☑', stage_change: '➜', relationship_change: '◆', created: '＋', location: '🏥', link: '🔗', attachment: '📎' };
+const TL_ICONS = { note: '📝', appointment: '📍', task: '☑', stage_change: '➜', relationship_change: '◆', created: '＋', location: '🏥', link: '🔗', attachment: '📎', invoice: '🧾', onboarding: '✅', quote: '💲', churn: '📉' };
+
+function originIcon(o) {
+  return { appointment: '📍', task: '☑', note: '📝', photo: '📷' }[o.type] || '🔗';
+}
+
+function contextLink(ctx) {
+  if (!ctx) return '';
+  if (ctx.type === 'appointment') return `<a class="tl-ctx" data-act="open-appt" data-id="${ctx.id}">📍 on ${esc(ctx.label)}</a>`;
+  if (ctx.type === 'task') return `<a class="tl-ctx" data-act="open-task" data-id="${ctx.id}">☑ on ${esc(ctx.label)}</a>`;
+  if (ctx.type === 'photo') return `<a class="tl-ctx" data-act="open-photo" data-id="${ctx.id}">📷 on a photo</a>`;
+  return '';
+}
 
 function timelineItem(t) {
   let actions = '';
@@ -445,7 +494,8 @@ function timelineItem(t) {
       <div class="tl-icon tl-icon-${esc(iconCls)}">${TL_ICONS[t.type] || '•'}</div>
       <div class="tl-body">
         <div class="tl-title">${esc(t.title)} ${extra}<span class="tl-time">${esc(fmtDateTime(t.at))}${t.future ? ' · upcoming' : ''}</span><span class="tl-actions">${actions}</span></div>
-        ${t.body ? `<div class="tl-text">${esc(t.body)}</div>` : ''}
+        ${t.body ? `<div class="tl-text">${t.type === 'note' ? renderNoteBody(t.body) : esc(t.body)}</div>` : ''}
+        ${t.context ? `<div class="tl-context">${contextLink(t.context)}</div>` : ''}
       </div>
     </li>`;
 }

@@ -362,6 +362,50 @@ def test_inventory_orders_invoices(client):
     assert backup["inventory_items"] and backup["invoices"] and backup["invoice_lines"] and backup["orders"]
 
 
+def test_notes_mentions_photos(client):
+    a = client.post("/api/clinics", json={"name": "Notes Clinic A"}).json()["id"]
+    b = client.post("/api/clinics", json={"name": "Notes Clinic B"}).json()["id"]
+    a1 = client.post("/api/contacts", json={"clinic_id": a, "first_name": "Sarah", "last_name": "Alpha"}).json()["id"]
+    b1 = client.post("/api/contacts", json={"clinic_id": b, "first_name": "Sarah", "last_name": "Beta"}).json()["id"]
+    appt = client.post("/api/appointments", json={"clinic_id": a, "title": "Intro visit", "start_time": "2026-09-01T09:00"}).json()["id"]
+
+    # A note attached to the appointment, mentioning a same-clinic contact AND a contact at
+    # another clinic — the cross-clinic mention must be downgraded to plain text.
+    body = f"Met @[Sarah Alpha](c:{a1}); do NOT confuse with @[Sarah Beta](c:{b1})"
+    note = client.post(f"/api/clinics/{a}/notes", json={"body": body, "appointment_id": appt}).json()
+    assert note["context"] == {"type": "appointment", "id": appt, "label": "Intro visit"}
+    assert f"@[Sarah Alpha](c:{a1})" in note["body"]
+    assert f"c:{b1}" not in note["body"] and "@Sarah Beta" in note["body"]  # stripped to plain text
+    assert note["mentions"] == [{"id": a1, "name": "Sarah Alpha"}]
+
+    # Attaching to another clinic's appointment/task is rejected.
+    assert client.post(f"/api/clinics/{a}/notes", json={"body": "x", "appointment_id": 999999}).status_code == 422
+
+    # Upload a photo tied to that note -> it appears in the clinic's photos with an origin
+    # pointing back to the appointment.
+    up = client.post(f"/api/clinics/{a}/attachments",
+                     files={"file": ("site.jpg", b"\xff\xd8\xffdata", "image/jpeg")},
+                     data={"kind": "photo", "note_id": str(note["id"])})
+    assert up.status_code == 201, up.text
+    photo_id = up.json()["id"]
+    detail = client.get(f"/api/clinics/{a}").json()
+    photo = next(p for p in detail["attachments"] if p["id"] == photo_id)
+    assert photo["origin"] == {"type": "appointment", "id": appt, "label": "Intro visit"}
+    assert photo["note_count"] == 0
+
+    # A photo added directly can have notes attached to it.
+    pnote = client.post(f"/api/clinics/{a}/notes", json={"body": "Back of the rack", "attachment_id": photo_id}).json()
+    assert pnote["context"]["type"] == "photo"
+    photo_notes = client.get(f"/api/clinics/{a}/attachments/{photo_id}/notes").json()
+    assert [n["id"] for n in photo_notes] == [pnote["id"]]
+    assert next(p for p in client.get(f"/api/clinics/{a}").json()["attachments"] if p["id"] == photo_id)["note_count"] == 1
+
+    # Deleting the photo cascades its attached notes but keeps the clinic's other notes.
+    client.delete(f"/api/attachments/{photo_id}")
+    assert client.get(f"/api/clinics/{a}/attachments/{photo_id}/notes").json() == []
+    assert any(n["id"] == note["id"] for n in client.get(f"/api/clinics/{a}/notes").json())
+
+
 def test_display_address_and_hours(client):
     r = client.post("/api/clinics", json={
         "name": "Hours Clinic", "address": "500 5 Ave SW", "display_address": "Suite 300, 500 5 Ave SW",

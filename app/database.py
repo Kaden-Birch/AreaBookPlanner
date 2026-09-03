@@ -420,6 +420,14 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     ],
     "clinic_notes": [
         ("kind", "TEXT NOT NULL DEFAULT 'note'"),
+        # A note can be about an appointment, a task, or a photo (attachment). All null = clinic-level.
+        ("appointment_id", "INTEGER REFERENCES appointments(id) ON DELETE SET NULL"),
+        ("task_id", "INTEGER REFERENCES tasks(id) ON DELETE SET NULL"),
+        ("attachment_id", "INTEGER REFERENCES attachments(id) ON DELETE CASCADE"),
+    ],
+    "attachments": [
+        # The note a photo was uploaded with (so it links back to that note's context).
+        ("note_id", "INTEGER REFERENCES clinic_notes(id) ON DELETE SET NULL"),
     ],
     "clinic_events": [
         ("from_value", "TEXT"),

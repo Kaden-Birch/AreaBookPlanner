@@ -98,7 +98,8 @@ def list_attachments(clinic_id: int, conn: sqlite3.Connection = Depends(db_depen
 @router.post("/clinics/{clinic_id}/attachments", status_code=201)
 async def upload_attachment(
     clinic_id: int, file: UploadFile = File(...), caption: str | None = Form(default=None),
-    kind: str | None = Form(default=None), conn: sqlite3.Connection = Depends(db_dependency),
+    kind: str | None = Form(default=None), note_id: int | None = Form(default=None),
+    conn: sqlite3.Connection = Depends(db_dependency),
 ):
     if conn.execute("SELECT 1 FROM clinics WHERE id = ?", (clinic_id,)).fetchone() is None:
         raise HTTPException(status_code=404, detail="Clinic not found")
@@ -110,10 +111,14 @@ async def upload_attachment(
     content_type = file.content_type or "application/octet-stream"
     if kind not in ("document", "photo"):
         kind = "photo" if content_type.startswith("image/") else "document"
+    # Only link to a note that belongs to this clinic.
+    if note_id is not None and conn.execute(
+            "SELECT 1 FROM clinic_notes WHERE id = ? AND clinic_id = ?", (note_id, clinic_id)).fetchone() is None:
+        note_id = None
     filename = _safe_name(file.filename or "file")
     cur = conn.execute(
-        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (clinic_id, filename, "", content_type, len(data), kind, caption),
+        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption, note_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, filename, "", content_type, len(data), kind, caption, note_id),
     )
     stored = f"{cur.lastrowid}_{filename}"
     Path(ATTACHMENTS_DIR).mkdir(parents=True, exist_ok=True)

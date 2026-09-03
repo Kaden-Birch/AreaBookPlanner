@@ -575,6 +575,11 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
                 row["clinic_id"] = clinic_map[row["clinic_id"]]
             if "contact_id" in row:
                 row["contact_id"] = contact_map.get(row.get("contact_id"))
+            # Cross-references (appointments/tasks/notes/photos) aren't remapped on merge — clear
+            # them so a merged note/photo never points at an unrelated record.
+            for ref in ("appointment_id", "task_id", "attachment_id", "note_id"):
+                if ref in row:
+                    row[ref] = None
             cols = ", ".join(row.keys())
             marks = ", ".join("?" * len(row))
             conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(row.values()))

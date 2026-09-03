@@ -32,6 +32,15 @@ and is stored in a single SQLite file.
 - **Opening hours** – set each weekday's hours with an interactive per-day editor (with a
   "copy Monday to all" shortcut); the profile shows the week at a glance with today
   highlighted.
+- **Rich notes** – notes can be attached to an appointment or task (an "attach to"
+  picker in the note composer), and they link back both ways in the activity feed. Type
+  **@** to mention a contact — the picker only offers this clinic's own contacts plus any
+  shared across its group, so two people with the same name at different clinics stay
+  distinct; mentions render as clickable chips.
+- **Photos tied to notes** – attach a photo to a note and it also lands in the clinic's
+  **Photos** section. Clicking a photo opens it with a link back to the appointment / task /
+  note it came from, and photos added straight to the Photos section can have their own
+  notes added in place.
 - **Contacts** – clinic managers, doctors, nurses, reception and other staff, with a
   primary-contact flag. Global contacts page plus per-clinic lists.
 - **Calendar & appointments** – month and agenda views. Create appointments from the
@@ -262,7 +271,8 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET/POST …/clinics/{id}/invoices`, `GET/PUT/DELETE /api/invoices/{id}`, `…/status`, `…/export.csv` | Client invoices |
 | `POST /api/route` | Optimised driving order for a set of clinics |
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
-| `GET/POST /api/clinics/{id}/notes` | Dated note log |
+| `GET/POST /api/clinics/{id}/notes` | Dated note log (with @mentions + appointment/task/photo context) |
+| `GET /api/clinics/{id}/attachments/{aid}/notes` | Notes attached to one photo |
 | `GET/POST /api/contacts`, `GET/PUT/DELETE /api/contacts/{id}` | Contacts |
 | `GET/POST /api/appointments`, `GET/PUT/PATCH/DELETE /api/appointments/{id}` | Appointments |
 | `GET /api/geocode?q=` | Address lookup (Nominatim) |

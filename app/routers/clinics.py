@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 import difflib
+import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,6 +30,54 @@ CLINIC_COLUMNS = [
 ]
 
 LOCATION_COLUMNS = ["name", "address", "city", "province", "postal_code", "phone", "lat", "lng", "notes"]
+
+# @-mentions embedded in note bodies as @[Display Name](c:<contact_id>).
+MENTION_RE = re.compile(r"@\[([^\]]+)\]\(c:(\d+)\)")
+
+
+def _mentionable_contact_ids(conn: sqlite3.Connection, clinic_id: int) -> set[int]:
+    """Contacts a clinic's notes may mention: its own contacts + contacts shared across its group.
+
+    Contacts are never mentionable across unrelated clinics, so two people with the same name
+    at different clinics stay distinct.
+    """
+    row = conn.execute("SELECT group_id FROM clinics WHERE id = ?", (clinic_id,)).fetchone()
+    gid = row["group_id"] if row else None
+    ids = {r[0] for r in conn.execute("SELECT id FROM contacts WHERE clinic_id = ?", (clinic_id,))}
+    if gid:
+        ids |= {r[0] for r in conn.execute("SELECT id FROM contacts WHERE group_id = ?", (gid,))}
+    return ids
+
+
+def _sanitize_mentions(conn: sqlite3.Connection, clinic_id: int, body: str) -> str:
+    """Downgrade any @mention token whose contact isn't mentionable from this clinic to plain text."""
+    allowed = _mentionable_contact_ids(conn, clinic_id)
+    return MENTION_RE.sub(lambda m: m.group(0) if int(m.group(2)) in allowed else "@" + m.group(1), body or "")
+
+
+def _parse_mentions(body: str | None) -> list[dict]:
+    seen: dict[int, str] = {}
+    for m in MENTION_RE.finditer(body or ""):
+        seen[int(m.group(2))] = m.group(1)
+    return [{"id": k, "name": v} for k, v in seen.items()]
+
+
+def _note_context(conn: sqlite3.Connection, note: dict) -> dict | None:
+    if note.get("appointment_id"):
+        r = conn.execute("SELECT title FROM appointments WHERE id = ?", (note["appointment_id"],)).fetchone()
+        return {"type": "appointment", "id": note["appointment_id"], "label": r["title"] if r else "appointment"}
+    if note.get("task_id"):
+        r = conn.execute("SELECT title FROM tasks WHERE id = ?", (note["task_id"],)).fetchone()
+        return {"type": "task", "id": note["task_id"], "label": r["title"] if r else "task"}
+    if note.get("attachment_id"):
+        return {"type": "photo", "id": note["attachment_id"], "label": "photo"}
+    return None
+
+
+def _enrich_note(conn: sqlite3.Connection, note: dict) -> dict:
+    note["mentions"] = _parse_mentions(note.get("body"))
+    note["context"] = _note_context(conn, note)
+    return note
 
 
 def _sync_stage_and_relationship(data: dict, previous: dict | None) -> None:
@@ -269,12 +318,14 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
             (clinic_id,),
         )
     )
-    clinic["note_log"] = rows_to_list(
-        conn.execute(
-            "SELECT * FROM clinic_notes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC",
-            (clinic_id,),
+    clinic["note_log"] = [
+        _enrich_note(conn, n) for n in rows_to_list(
+            conn.execute(
+                "SELECT * FROM clinic_notes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC",
+                (clinic_id,),
+            )
         )
-    )
+    ]
     clinic["tasks"] = rows_to_list(
         conn.execute(
             "SELECT * FROM tasks WHERE clinic_id = ? ORDER BY done ASC, due_date IS NULL, due_date ASC, id DESC",
@@ -289,6 +340,14 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
     clinic["attachments"] = rows_to_list(
         conn.execute("SELECT * FROM attachments WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,))
     )
+    for a in clinic["attachments"]:
+        a["note_count"] = conn.execute(
+            "SELECT COUNT(*) FROM clinic_notes WHERE attachment_id = ?", (a["id"],)).fetchone()[0]
+        a["origin"] = None
+        if a.get("note_id"):
+            n = row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (a["note_id"],)).fetchone())
+            if n:
+                a["origin"] = _note_context(conn, n) or {"type": "note", "id": n["id"], "label": "note"}
     from .devices import _summary as device_summary
 
     clinic["equipment"] = device_summary(conn, clinic_id)
@@ -350,7 +409,8 @@ def build_timeline(conn: sqlite3.Connection, clinic_id: int) -> list[dict]:
         title = {"quick": "Quick log", "email": "Email sent"}.get(n.get("kind") or "note", "Note")
         if n.get("author"):
             title += f" · {n['author']}"
-        items.append({"type": "note", "at": n["created_at"], "id": n["id"], "title": title, "body": n["body"], "kind": n.get("kind") or "note"})
+        items.append({"type": "note", "at": n["created_at"], "id": n["id"], "title": title, "body": n["body"],
+                      "kind": n.get("kind") or "note", "context": _note_context(conn, n), "mentions": _parse_mentions(n["body"])})
     for a in rows_to_list(conn.execute(
         """SELECT a.*, c.first_name, c.last_name FROM appointments a
            LEFT JOIN contacts c ON c.id = a.contact_id WHERE a.clinic_id = ?""", (clinic_id,))):
@@ -565,23 +625,47 @@ def delete_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependen
 @router.get("/{clinic_id}/notes")
 def list_notes(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     _get_clinic_or_404(conn, clinic_id)
-    return rows_to_list(
-        conn.execute(
-            "SELECT * FROM clinic_notes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC",
-            (clinic_id,),
+    return [
+        _enrich_note(conn, n) for n in rows_to_list(
+            conn.execute(
+                "SELECT * FROM clinic_notes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC",
+                (clinic_id,),
+            )
         )
-    )
+    ]
 
 
 @router.post("/{clinic_id}/notes", status_code=201)
 def add_note(clinic_id: int, payload: NoteIn, conn: sqlite3.Connection = Depends(db_dependency)):
     _get_clinic_or_404(conn, clinic_id)
+    # A note may be attached to an appointment, task or photo of THIS clinic.
+    if payload.appointment_id and conn.execute(
+            "SELECT 1 FROM appointments WHERE id = ? AND clinic_id = ?", (payload.appointment_id, clinic_id)).fetchone() is None:
+        raise HTTPException(status_code=422, detail="Appointment does not belong to this clinic")
+    if payload.task_id and conn.execute(
+            "SELECT 1 FROM tasks WHERE id = ? AND clinic_id = ?", (payload.task_id, clinic_id)).fetchone() is None:
+        raise HTTPException(status_code=422, detail="Task does not belong to this clinic")
+    if payload.attachment_id and conn.execute(
+            "SELECT 1 FROM attachments WHERE id = ? AND clinic_id = ?", (payload.attachment_id, clinic_id)).fetchone() is None:
+        raise HTTPException(status_code=422, detail="Photo does not belong to this clinic")
+    body = _sanitize_mentions(conn, clinic_id, payload.body.strip())
     cur = conn.execute(
-        "INSERT INTO clinic_notes (clinic_id, body, author, kind) VALUES (?, ?, ?, ?)",
-        (clinic_id, payload.body.strip(), payload.author, payload.kind if payload.kind in ("note", "quick", "email", "call") else "note"),
+        "INSERT INTO clinic_notes (clinic_id, body, author, kind, appointment_id, task_id, attachment_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, body, payload.author, payload.kind if payload.kind in ("note", "quick", "email", "call") else "note",
+         payload.appointment_id, payload.task_id, payload.attachment_id),
     )
     conn.execute("UPDATE clinics SET updated_at = ? WHERE id = ?", (now_iso(), clinic_id))
-    return row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (cur.lastrowid,)).fetchone())
+    return _enrich_note(conn, row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (cur.lastrowid,)).fetchone()))
+
+
+@router.get("/{clinic_id}/attachments/{att_id}/notes")
+def list_photo_notes(clinic_id: int, att_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Notes attached directly to one photo (for the photo detail view)."""
+    return [
+        _enrich_note(conn, n) for n in rows_to_list(conn.execute(
+            "SELECT * FROM clinic_notes WHERE clinic_id = ? AND attachment_id = ? ORDER BY created_at ASC, id ASC",
+            (clinic_id, att_id)))
+    ]
 
 
 @router.delete("/{clinic_id}/notes/{note_id}", status_code=204)

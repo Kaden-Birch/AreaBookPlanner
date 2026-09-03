@@ -575,9 +575,28 @@ details summary { cursor: pointer; font-weight: 600; }
 .quick-log { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .quick-log .btn { font-size: 12px; }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-.photo-grid a { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative; aspect-ratio: 4/3; background: var(--surface-3); }
+.photo-grid a, .photo-tile { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative; aspect-ratio: 4/3; background: var(--surface-3); padding: 0; cursor: pointer; }
 .photo-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .photo-grid .cap { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.photo-badge { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+/* @-mentions */
+.mention { color: var(--primary); font-weight: 600; cursor: pointer; text-decoration: none; }
+.mention:hover { text-decoration: underline; }
+.mention-menu { position: absolute; z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); max-width: 320px; overflow: hidden; }
+.mention-menu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 6px 10px; font-size: 13px; color: var(--text); cursor: pointer; }
+.mention-menu button:hover, .mention-menu button.active { background: var(--primary-soft); }
+.note-compose-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.note-compose-row select { max-width: 240px; }
+.note-compose-row button[type=submit] { margin-left: auto; }
+.tl-context { margin-top: 3px; }
+.tl-ctx { font-size: 12px; color: var(--muted); cursor: pointer; }
+.tl-ctx:hover { color: var(--primary); text-decoration: none; }
+/* Photo detail modal */
+.photo-detail img { width: 100%; max-height: 340px; object-fit: contain; background: var(--surface-3); border-radius: 8px; }
+.photo-origin { margin: 10px 0; font-size: 13px; }
+.photo-notes { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.photo-note { border-left: 2px solid var(--border); padding-left: 10px; }
+.photo-note .body { white-space: pre-wrap; }
 .doc-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .doc-row:last-child { border-bottom: none; }
 .doc-row .body { flex: 1; min-width: 0; }

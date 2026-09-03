@@ -149,8 +149,12 @@ class NoteIn(BaseModel):
     body: str = Field(min_length=1)
     author: Optional[str] = None
     kind: str = "note"
+    # Optional context this note is attached to (at most one).
+    appointment_id: Optional[int] = None
+    task_id: Optional[int] = None
+    attachment_id: Optional[int] = None
 
-    _blank = field_validator("author", mode="before")(_blank_to_none)
+    _blank = field_validator("author", "appointment_id", "task_id", "attachment_id", mode="before")(_blank_to_none)
 
 
 class QuickLogIn(BaseModel):

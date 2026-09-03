@@ -22,6 +22,23 @@ export function esc(v) {
 
 export function attr(v) { return esc(v); }
 
+// Note bodies may contain @[Name](c:ID) mention tokens. Escape the text, then render
+// the tokens as clickable mention chips (data-contact carries the contact id).
+const MENTION_TOKEN = /@\[([^\]]+)\]\(c:(\d+)\)/g;
+export function renderNoteBody(body) {
+  if (!body) return '';
+  let out = '';
+  let last = 0;
+  const raw = String(body);
+  for (const m of raw.matchAll(MENTION_TOKEN)) {
+    out += esc(raw.slice(last, m.index));
+    out += `<a class="mention" data-contact="${m[2]}">@${esc(m[1])}</a>`;
+    last = m.index + m[0].length;
+  }
+  out += esc(raw.slice(last));
+  return out;
+}
+
 // ---- Dates ------------------------------------------------------------
 const DATE_OPTS = { year: 'numeric', month: 'short', day: 'numeric' };
 const TIME_OPTS = { hour: 'numeric', minute: '2-digit' };

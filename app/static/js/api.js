@@ -59,8 +59,9 @@ export const clinics = {
   update: (id, data) => api.put(`/api/clinics/${id}`, data),
   setLocation: (id, lat, lng) => api.patch(`/api/clinics/${id}/location`, { lat, lng }),
   remove: (id) => api.del(`/api/clinics/${id}`),
-  addNote: (id, body, kind = 'note', author = null) => api.post(`/api/clinics/${id}/notes`, { body, kind, author }),
+  addNote: (id, body, kind = 'note', author = null, extra = {}) => api.post(`/api/clinics/${id}/notes`, { body, kind, author, ...extra }),
   removeNote: (id, noteId) => api.del(`/api/clinics/${id}/notes/${noteId}`),
+  photoNotes: (id, attId) => api.get(`/api/clinics/${id}/attachments/${attId}/notes`),
   setStage: (id, body) => api.patch(`/api/clinics/${id}/stage`, body),
   timeline: (id) => api.get(`/api/clinics/${id}/timeline`),
   archive: (id, archived) => api.patch(`/api/clinics/${id}/archive`, { archived }),
@@ -84,11 +85,12 @@ export const groups = {
 };
 
 export const attachments = {
-  upload: async (clinicId, file, caption, kind) => {
+  upload: async (clinicId, file, caption, kind, noteId) => {
     const fd = new FormData();
     fd.append('file', file);
     if (caption) fd.append('caption', caption);
     if (kind) fd.append('kind', kind);
+    if (noteId != null) fd.append('note_id', noteId);
     const res = await fetch(`/api/clinics/${clinicId}/attachments`, { method: 'POST', body: fd });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(extractError(data) || `${res.status} ${res.statusText}`);

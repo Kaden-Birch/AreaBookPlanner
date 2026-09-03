@@ -185,3 +185,33 @@ export const geocode = (q) => api.get('/api/geocode', { q });
 export const dashboard = () => api.get('/api/dashboard');
 export const revenue = () => api.get('/api/revenue');
 export const competitors = () => api.get('/api/competitors');
+
+let billingMetaPromise = null;
+export const billingMeta = () => (billingMetaPromise ||= api.get('/api/meta/billing'));
+
+export const inventory = {
+  list: (params) => api.get('/api/inventory', params),
+  get: (id) => api.get(`/api/inventory/${id}`),
+  create: (data) => api.post('/api/inventory', data),
+  update: (id, data) => api.put(`/api/inventory/${id}`, data),
+  adjust: (id, delta, note) => api.post(`/api/inventory/${id}/adjust`, { delta, note }),
+  remove: (id) => api.del(`/api/inventory/${id}`),
+};
+
+export const orders = {
+  list: (params) => api.get('/api/orders', params),
+  create: (data) => api.post('/api/orders', data),
+  update: (id, data) => api.put(`/api/orders/${id}`, data),
+  receive: (id, data) => api.post(`/api/orders/${id}/receive`, data),
+  remove: (id) => api.del(`/api/orders/${id}`),
+};
+
+export const invoices = {
+  list: (params) => api.get('/api/invoices', params),
+  get: (id) => api.get(`/api/invoices/${id}`),
+  create: (clinicId, data) => api.post(`/api/clinics/${clinicId}/invoices`, data),
+  update: (id, data) => api.put(`/api/invoices/${id}`, data),
+  setStatus: (id, status) => api.patch(`/api/invoices/${id}/status`, { status }),
+  remove: (id) => api.del(`/api/invoices/${id}`),
+  csvUrl: (id) => `/api/invoices/${id}/export.csv`,
+};

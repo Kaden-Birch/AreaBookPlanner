@@ -400,3 +400,104 @@ class QuoteIn(BaseModel):
 
 class QuoteStatusIn(BaseModel):
     status: Literal["draft", "sent", "accepted", "declined", "expired"]
+
+
+# ---- Inventory / orders / invoices ------------------------------------------
+
+class InventoryItemIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    sku: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    unit_price: Optional[float] = Field(default=None, ge=0)
+    cost: Optional[float] = Field(default=None, ge=0)
+    quantity: int = Field(default=0, ge=0)
+    reorder_level: Optional[int] = Field(default=None, ge=0)
+    supplier: Optional[str] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("sku", "category", "description", "location", "unit_price", "cost",
+                             "reorder_level", "supplier", "notes", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
+
+
+class StockAdjustIn(BaseModel):
+    delta: int  # +/- change to quantity on hand
+    note: Optional[str] = None
+
+    _blank = field_validator("note", mode="before")(_blank_to_none)
+
+
+OrderStatus = Literal["ordered", "received", "cancelled"]
+
+
+class OrderIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    item_id: Optional[int] = None          # link to an existing inventory item, or None for a new/custom item
+    clinic_id: Optional[int] = None         # ordered on behalf of a specific clinic
+    sku: Optional[str] = None
+    supplier: Optional[str] = None
+    quantity: int = Field(default=1, ge=1)
+    unit_cost: Optional[float] = Field(default=None, ge=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
+    status: OrderStatus = "ordered"
+    ordered_date: Optional[str] = None
+    expected_date: Optional[str] = None
+    ticket_url: Optional[str] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("item_id", "clinic_id", "sku", "supplier", "unit_cost", "unit_price",
+                             "ordered_date", "expected_date", "ticket_url", "notes", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
+
+
+class OrderReceiveIn(BaseModel):
+    """How to handle an order when it arrives."""
+    disposition: Literal["inventory", "invoice"]
+    # disposition == "inventory": add to (item_id) or create a new inventory item
+    item_id: Optional[int] = None
+    # disposition == "invoice": append a line to (invoice_id), or start a new draft invoice for (clinic_id)
+    invoice_id: Optional[int] = None
+    clinic_id: Optional[int] = None
+
+    _blank = field_validator("item_id", "invoice_id", "clinic_id", mode="before")(_blank_to_none)
+
+
+class InvoiceLineIn(BaseModel):
+    item_id: Optional[int] = None
+    description: str = Field(min_length=1, max_length=300)
+    quantity: float = Field(default=1, ge=0)
+    unit_price: float = Field(default=0, ge=0)
+
+    _blank = field_validator("item_id", mode="before")(_blank_to_none)
+
+
+class InvoiceIn(BaseModel):
+    title: Optional[str] = None
+    contact_id: Optional[int] = None
+    issue_date: Optional[str] = None
+    due_date: Optional[str] = None
+    ticket_url: Optional[str] = None
+    notes: Optional[str] = None
+    tax_pct: float = Field(default=0, ge=0)
+    discount_pct: float = Field(default=0, ge=0, le=100)
+    lines: list[InvoiceLineIn] = Field(default_factory=list)
+
+    _blank = field_validator("title", "contact_id", "issue_date", "due_date", "ticket_url", "notes", mode="before")(_blank_to_none)
+
+
+class InvoiceStatusIn(BaseModel):
+    status: Literal["draft", "sent", "paid", "void"]

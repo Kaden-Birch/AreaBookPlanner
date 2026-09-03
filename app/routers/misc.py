@@ -484,6 +484,10 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "device_links": rows_to_list(conn.execute("SELECT * FROM device_links")),
         "quotes": rows_to_list(conn.execute("SELECT * FROM quotes")),
         "price_book": rows_to_list(conn.execute("SELECT * FROM price_book")),
+        "inventory_items": rows_to_list(conn.execute("SELECT * FROM inventory_items")),
+        "orders": rows_to_list(conn.execute("SELECT * FROM orders")),
+        "invoices": rows_to_list(conn.execute("SELECT * FROM invoices")),
+        "invoice_lines": rows_to_list(conn.execute("SELECT * FROM invoice_lines")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -502,7 +506,8 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
-              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_links", "device_tickets", "quotes"]
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_links", "device_tickets", "quotes",
+              "inventory_items", "invoices", "invoice_lines", "orders"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -633,6 +638,42 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         conn.execute(f"INSERT INTO device_links ({cols}) VALUES ({marks})", list(row.values()))
+    item_map: dict[int, int] = {}
+    for row in data.get("inventory_items", []):
+        old_id = row.pop("id", None)
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        cur = conn.execute(f"INSERT INTO inventory_items ({cols}) VALUES ({marks})", list(row.values()))
+        if old_id is not None:
+            item_map[old_id] = cur.lastrowid
+    invoice_map: dict[int, int] = {}
+    for row in data.get("invoices", []):
+        old_id = row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["contact_id"] = contact_map.get(row.get("contact_id"))
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        cur = conn.execute(f"INSERT INTO invoices ({cols}) VALUES ({marks})", list(row.values()))
+        if old_id is not None:
+            invoice_map[old_id] = cur.lastrowid
+    for row in data.get("invoice_lines", []):
+        row.pop("id", None)
+        if row.get("invoice_id") not in invoice_map:
+            continue
+        row["invoice_id"] = invoice_map[row["invoice_id"]]
+        row["item_id"] = item_map.get(row.get("item_id"))
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO invoice_lines ({cols}) VALUES ({marks})", list(row.values()))
+    for row in data.get("orders", []):
+        row.pop("id", None)
+        row["item_id"] = item_map.get(row.get("item_id"))
+        row["clinic_id"] = clinic_map.get(row.get("clinic_id"))
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO orders ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

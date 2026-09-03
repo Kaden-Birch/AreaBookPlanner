@@ -300,6 +300,68 @@ def test_competitor_displacement(client):
     assert comp["lost_to_competitor"] >= 1
 
 
+def test_inventory_orders_invoices(client):
+    cid = client.post("/api/clinics", json={"name": "Billing Clinic"}).json()["id"]
+
+    # Inventory item with margin + low-stock threshold
+    item = client.post("/api/inventory", json={
+        "name": "HP 26A Toner", "sku": "CF226A", "category": "Toner / ink", "location": "Van shelf B",
+        "unit_price": 100, "cost": 60, "quantity": 5, "reorder_level": 2, "supplier": "Acme Supply",
+    }).json()
+    iid = item["id"]
+    assert item["margin"] == 40 and item["low_stock"] is False and item["stock_value"] == 300
+
+    # Drop below the reorder level -> low stock
+    item = client.post(f"/api/inventory/{iid}/adjust", json={"delta": -4}).json()
+    assert item["quantity"] == 1 and item["low_stock"] is True
+
+    # Order more of it, then receive into inventory
+    o1 = client.post("/api/orders", json={"name": "HP 26A Toner", "item_id": iid, "quantity": 10, "unit_cost": 55}).json()
+    assert o1["status"] == "ordered" and o1["unit_price"] == 100  # inherited from the item
+    recv = client.post(f"/api/orders/{o1['id']}/receive", json={"disposition": "inventory"}).json()
+    assert recv["order"]["status"] == "received" and recv["order"]["disposition"] == "inventory"
+    assert client.get(f"/api/inventory/{iid}").json()["quantity"] == 11
+
+    # Order a custom (not-in-inventory) item and bill it straight to the clinic
+    o2 = client.post("/api/orders", json={"name": "Label printer ribbon", "quantity": 2, "unit_price": 45, "clinic_id": cid}).json()
+    assert o2["item_id"] is None
+    recv2 = client.post(f"/api/orders/{o2['id']}/receive", json={"disposition": "invoice", "clinic_id": cid}).json()
+    billed_invoice = recv2["invoice_id"]
+    inv = client.get(f"/api/invoices/{billed_invoice}").json()
+    assert inv["status"] == "draft" and len(inv["lines"]) == 1 and inv["total"] == 90  # 2 x 45, no tax
+
+    # Create a full invoice: one inventory line + one custom line, with discount + tax
+    made = client.post(f"/api/clinics/{cid}/invoices", json={
+        "title": "Supplies", "tax_pct": 5, "discount_pct": 10, "ticket_url": "https://tickets.example.com/99",
+        "lines": [
+            {"item_id": iid, "description": "HP 26A Toner", "quantity": 3, "unit_price": 100},
+            {"description": "On-site swap", "quantity": 1, "unit_price": 50},
+        ],
+    }).json()
+    invid = made["id"]
+    assert made["number"].startswith("INV-") and made["ticket_url"].endswith("/99")
+    assert made["subtotal"] == 350 and made["tax"] == 15.75 and made["total"] == 330.75
+
+    # Draft doesn't touch stock; marking sent deducts the inventory line; void restores it.
+    assert client.get(f"/api/inventory/{iid}").json()["quantity"] == 11
+    client.patch(f"/api/invoices/{invid}/status", json={"status": "sent"})
+    assert client.get(f"/api/inventory/{iid}").json()["quantity"] == 8
+    paid = client.patch(f"/api/invoices/{invid}/status", json={"status": "paid"}).json()
+    assert paid["paid_at"] and client.get(f"/api/inventory/{iid}").json()["quantity"] == 8  # still deducted
+    client.patch(f"/api/invoices/{invid}/status", json={"status": "void"})
+    assert client.get(f"/api/inventory/{iid}").json()["quantity"] == 11  # restored
+
+    # Listing + CSV + it shows on the clinic profile
+    assert any(x["id"] == invid for x in client.get("/api/invoices", params={"clinic_id": cid}).json())
+    assert client.get(f"/api/invoices/{invid}/export.csv").status_code == 200
+    detail = client.get(f"/api/clinics/{cid}").json()
+    assert len(detail["invoices"]) >= 2
+
+    # Backup round-trips the new tables
+    backup = client.get("/api/export/backup.json").json()
+    assert backup["inventory_items"] and backup["invoices"] and backup["invoice_lines"] and backup["orders"]
+
+
 def test_clients_contacts_locations_links_groups(client):
     # client-specific fields + archive
     r = client.post("/api/clinics", json={"name": "Cardiology One Calgary", "relationship": "current_client", "shorthand": "coc", "phone": "403-555-0900", "address": "1 Heart Way SW"})

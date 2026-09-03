@@ -79,6 +79,16 @@ QUICK_LOGS = {
 
 REMINDER_OPTIONS = [15, 30, 45, 60]
 
+# ---- Inventory / orders / invoices ------------------------------------------
+INVENTORY_CATEGORIES = [
+    "Toner / ink", "Cabling", "Networking", "Workstation / laptop", "Server",
+    "Peripheral", "Phone / VoIP", "Camera / security", "Licensing", "Consumable", "Other",
+]
+ORDER_STATUS_LABELS = {"ordered": "Ordered", "received": "Received", "cancelled": "Cancelled"}
+INVOICE_STATUS_LABELS = {"draft": "Draft", "sent": "Sent", "paid": "Paid", "void": "Void"}
+# Invoice statuses that mean the items have actually left our shelves.
+INVOICE_BILLED_STATUSES = ("sent", "paid")
+
 # Default renewal reminder lead time (days before a client's contract ends).
 DEFAULT_RENEWAL_REMINDER_DAYS = 60
 # How far before a prospect's competitor contract ends we auto-set a follow-up.

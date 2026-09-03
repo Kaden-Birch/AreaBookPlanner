@@ -271,6 +271,76 @@ CREATE TABLE IF NOT EXISTS saved_views (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS inventory_items (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    sku           TEXT,
+    category      TEXT,
+    description   TEXT,
+    location      TEXT,
+    unit_price    REAL,                              -- what we charge the client
+    cost          REAL,                              -- what it costs us
+    quantity      INTEGER NOT NULL DEFAULT 0,        -- on hand
+    reorder_level INTEGER,                           -- low-stock threshold
+    supplier      TEXT,
+    notes         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id       INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+    clinic_id     INTEGER REFERENCES clinics(id) ON DELETE SET NULL,
+    name          TEXT NOT NULL,
+    sku           TEXT,
+    supplier      TEXT,
+    quantity      INTEGER NOT NULL DEFAULT 1,
+    unit_cost     REAL,
+    unit_price    REAL,
+    status        TEXT NOT NULL DEFAULT 'ordered' CHECK (status IN ('ordered','received','cancelled')),
+    disposition   TEXT,                              -- how a received order was handled: inventory | invoiced
+    ordered_date  TEXT,
+    expected_date TEXT,
+    received_date TEXT,
+    ticket_url    TEXT,
+    notes         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id     INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    contact_id    INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    title         TEXT,
+    status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','paid','void')),
+    issue_date    TEXT,
+    due_date      TEXT,
+    ticket_url    TEXT,
+    notes         TEXT,
+    tax_pct       REAL NOT NULL DEFAULT 0,
+    discount_pct  REAL NOT NULL DEFAULT 0,
+    subtotal      REAL NOT NULL DEFAULT 0,
+    tax           REAL NOT NULL DEFAULT 0,
+    total         REAL NOT NULL DEFAULT 0,
+    stock_applied INTEGER NOT NULL DEFAULT 0,        -- has inventory been deducted for this invoice?
+    sent_at       TEXT,
+    paid_at       TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS invoice_lines (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id  INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    item_id     INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+    description TEXT NOT NULL,
+    quantity    REAL NOT NULL DEFAULT 1,
+    unit_price  REAL NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_locations_clinic ON clinic_locations(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_clinic ON clinic_links(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_other ON clinic_links(other_clinic_id);
@@ -282,6 +352,10 @@ CREATE INDEX IF NOT EXISTS idx_contacts_clinic ON contacts(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_clinic ON appointments(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_start ON appointments(start_time);
 CREATE INDEX IF NOT EXISTS idx_notes_clinic ON clinic_notes(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_clinic2 ON invoices(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item_id);
+CREATE INDEX IF NOT EXISTS idx_orders_clinic ON orders(clinic_id);
 """
 
 

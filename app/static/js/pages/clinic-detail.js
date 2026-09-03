@@ -13,6 +13,7 @@ import {
 import { taskRow, wireTaskRows } from './tasks.js';
 import { openDeviceForm, plural } from '../equipment.js';
 import { devices as devicesApi } from '../api.js';
+import { openInvoiceForm } from '../billing-forms.js';
 
 let miniMap = null;
 let tlFilter = 'all';
@@ -163,6 +164,14 @@ export async function render(container, params, routeParams) {
         </div>
 
         <div class="card">
+          <div class="card-header"><h3>Invoices (${(clinic.invoices || []).length})</h3><div class="actions"><button class="btn btn-sm" id="btn-invoice">+ New invoice</button></div></div>
+          ${(clinic.invoices || []).length ? clinic.invoices.map(iv => `
+            <div class="loc-row"><div class="body"><div class="name"><a href="#/invoices/${iv.id}">${esc(iv.number)}</a>${iv.title ? ` · ${esc(iv.title)}` : ''} <span class="badge badge-stage-${iv.status === 'paid' ? 'won' : (iv.status === 'void' ? 'lost' : (iv.status === 'sent' ? 'proposal' : 'lead'))}">${esc(iv.status)}</span>${iv.ticket_url ? ` <a href="${attr(iv.ticket_url)}" target="_blank" rel="noopener" title="Ticket">🎫</a>` : ''}</div>
+              <div class="sub money">${fmtMoney(iv.total)}${iv.issue_date ? ` · ${esc(fmtDateOnly(iv.issue_date))}` : ''}${iv.due_date ? ` · due ${esc(fmtDateOnly(iv.due_date))}` : ''}</div></div>
+              <div class="actions"><a class="btn btn-sm" href="#/invoices/${iv.id}">Open</a></div></div>`).join('') : '<p class="muted">No invoices yet. Bill toner, hardware or on-site work with “+ New invoice”.</p>'}
+        </div>
+
+        <div class="card">
           <div class="card-header"><h3>Locations (${clinic.locations.length + 1})</h3><div class="actions"><button class="btn btn-sm" id="btn-location">+ Location</button></div></div>
           <div class="loc-row">
             <div class="body"><div class="name">${dot(clinic.color)}${esc(clinic.name)} <span class="badge badge-blue">Main</span></div><div class="sub">${esc(fullAddress(clinic)) || 'No address'}${clinic.lat == null ? ' · <em>not on map</em>' : ''}</div></div>
@@ -307,6 +316,7 @@ export async function render(container, params, routeParams) {
   if (visitBtn) visitBtn.onclick = () => openLogVisit({ clinic, onSaved: reload });
   container.querySelector('#btn-location').onclick = () => openLocationForm({ clinic, onSaved: reload });
   container.querySelector('#btn-device').onclick = () => openDeviceForm({ clinic, onSaved: reload });
+  container.querySelector('#btn-invoice').onclick = () => openInvoiceForm({ clinicId: clinic.id, onSaved: (iv) => iv && navigate(`#/invoices/${iv.id}`) });
   container.querySelector('#btn-link').onclick = () => openLinkForm({ clinic, onSaved: reload });
   wireTaskRows(container.querySelector('#task-list'), clinic.tasks, reload);
   container.querySelectorAll('[data-quick]').forEach(b => { b.onclick = () => quickLog(clinic, b.dataset.quick, reload); });

@@ -294,6 +294,10 @@ def get_clinic(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)
         "SELECT id, title, status, monthly_total, onetime_total, valid_until, created_at, pricing_mode FROM quotes WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,)))
     for q in clinic["quotes"]:
         q["number"] = f"Q-{(q['created_at'] or '')[:4]}-{q['id']:04d}"
+    clinic["invoices"] = rows_to_list(conn.execute(
+        "SELECT id, title, status, total, issue_date, due_date, ticket_url, created_at FROM invoices WHERE clinic_id = ? ORDER BY created_at DESC, id DESC", (clinic_id,)))
+    for inv in clinic["invoices"]:
+        inv["number"] = f"INV-{(inv['created_at'] or '')[:4]}-{inv['id']:04d}"
     clinic["group"] = None
     clinic["group_members"] = []
     if clinic.get("group_id"):

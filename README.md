@@ -158,6 +158,23 @@ and is stored in a single SQLite file.
   PDF, exports CSV, tracks status (sending it moves the clinic to Proposal; accepting
   offers to mark it Won), and can set the clinic's deal value. All quotes are listed
   under Quotes.
+- **Billing hub** (Inventory · Orders · Invoices) – the **Billing** page ties parts and
+  billing together:
+  - **Inventory** – track items you stock or resell (toner, cabling, hardware, licences):
+    name, SKU, category, storage location, our cost, sell price, on-hand quantity,
+    supplier and a reorder level. Margin is shown per item and anything at or below its
+    reorder level is flagged **Low** (with a low-stock-only filter).
+  - **Orders** – when something isn't in stock, raise an order against an existing item or
+    a brand-new custom one, with supplier, quantity, cost, expected date and a ticket link.
+    When it arrives, **Receive** it and choose what happens: *add to inventory* (stock it,
+    creating the item if it's new) or *bill it to a client* (drop a line onto a new or
+    existing draft invoice).
+  - **Invoices** – bill a clinic for items and work: lines pulled from inventory or typed
+    as ad-hoc custom items, discount and tax, a **ticket link**, and a printable /
+    PDF-able document plus CSV export. Status runs draft → sent → paid → void; marking an
+    invoice sent or paid **deducts its inventory lines from stock**, and voiding restores
+    them (drafts never touch stock). Invoices are created from the Billing tab or straight
+    from a clinic's profile, where they're also listed.
 - **Dark mode** – toggle in the top bar; remembers your choice and respects the OS
   setting by default.
 - **Dashboard** – totals, forecast, pipeline summary, colour breakdown, tasks due,
@@ -235,6 +252,9 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
+| `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |
+| `GET/POST/PUT/DELETE /api/orders`, `POST …/orders/{id}/receive` | Purchase orders and receiving |
+| `GET/POST …/clinics/{id}/invoices`, `GET/PUT/DELETE /api/invoices/{id}`, `…/status`, `…/export.csv` | Client invoices |
 | `POST /api/route` | Optimised driving order for a set of clinics |
 | `GET /api/drivetime?lat=&lng=` | Drive time / distance from a point to every clinic |
 | `GET/POST /api/clinics/{id}/notes` | Dated note log |

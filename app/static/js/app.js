@@ -7,6 +7,8 @@ import * as contactsPage from './pages/contacts.js';
 import * as calendarPage from './pages/calendar.js';
 import * as pipelinePage from './pages/pipeline.js';
 import * as clientsPage from './pages/clients.js';
+import * as billingPage from './pages/billing.js';
+import * as invoiceView from './pages/invoice-view.js';
 import * as tasksPage from './pages/tasks.js';
 import * as analyticsPage from './pages/analytics.js';
 import * as settingsPage from './pages/settings.js';
@@ -34,6 +36,8 @@ const routes = [
   { pattern: /^\/calendar$/, page: calendarPage, nav: 'calendar' },
   { pattern: /^\/pipeline$/, page: pipelinePage, nav: 'pipeline' },
   { pattern: /^\/clients$/, page: clientsPage, nav: 'clients' },
+  { pattern: /^\/billing$/, page: billingPage, nav: 'billing' },
+  { pattern: /^\/invoices\/(?<id>\d+)$/, page: invoiceView, nav: 'billing' },
   { pattern: /^\/tasks$/, page: tasksPage, nav: 'tasks' },
   { pattern: /^\/analytics$/, page: analyticsPage, nav: 'analytics' },
   { pattern: /^\/settings$/, page: settingsPage, nav: 'settings' },

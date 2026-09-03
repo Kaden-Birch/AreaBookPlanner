@@ -753,6 +753,18 @@ details summary { cursor: pointer; font-weight: 600; }
 .stamp-draft { color: var(--muted); border-color: var(--muted); }
 .stamp-sent { color: var(--blue-fg); border-color: var(--blue-fg); }
 .stamp-accepted { color: var(--green-fg); border-color: var(--green-fg); }
+.stamp-paid { color: var(--green-fg); border-color: var(--green-fg); }
+.stamp-void { color: var(--red-fg); border-color: var(--red-fg); }
+.status-stamp { display: inline-block; border: 2px solid; border-radius: 6px; padding: 2px 10px; font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: .08em; }
+/* Billing: tabs, receive radios, invoice totals */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.tabs button { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.tabs button:hover { color: var(--text); }
+.tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
+label.radio { display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+.inv-totals { font-size: 13px; }
+.inv-totals .grand { font-size: 16px; font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+tr.row-warn td { background: var(--red-bg); }
 .stamp-declined, .stamp-expired { color: var(--red-fg); border-color: var(--red-fg); }
 @media print {
   .quote-doc { border: none; padding: 0; max-width: none; color: #000; background: #fff; }

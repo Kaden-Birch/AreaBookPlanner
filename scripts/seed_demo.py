@@ -141,6 +141,52 @@ def _seed_equipment(post, clinic_id: int) -> None:
         post(f"/api/devices/{ids[key]}/tickets", t)
 
 
+# (key, payload) — key is used to reference the item when seeding orders / invoices.
+INVENTORY = [
+    ("toner", {"name": "HP 26A Toner (CF226A)", "sku": "CF226A", "category": "Toner / ink", "location": "Van shelf B",
+               "unit_price": 129, "cost": 78, "quantity": 6, "reorder_level": 2, "supplier": "Acme Supply"}),
+    ("cat6", {"name": "Cat6 patch cable — 3 ft", "sku": "C6-3", "category": "Cabling", "location": "Storeroom bin 4",
+              "unit_price": 12, "cost": 4, "quantity": 40, "reorder_level": 10, "supplier": "Cables Plus"}),
+    ("ap", {"name": "Ubiquiti U6-Lite AP", "sku": "U6-LITE", "category": "Networking", "location": "Storeroom",
+            "unit_price": 199, "cost": 129, "quantity": 1, "reorder_level": 2, "supplier": "Netgear Dist"}),
+    ("switch", {"name": "24-port PoE switch", "sku": "USW-24-POE", "category": "Networking", "location": "Storeroom",
+                "unit_price": 650, "cost": 480, "quantity": 0, "reorder_level": 1, "supplier": "Netgear Dist"}),
+]
+# (payload, item_key_or_None, clinic_name_or_None)
+ORDERS = [
+    ({"name": "Ubiquiti U6-Lite AP", "quantity": 3, "unit_cost": 129, "unit_price": 199, "supplier": "Netgear Dist",
+      "expected_date_offset": 7, "ticket_url": "https://tickets.example.com/5120"}, "ap", "Beltline Family Practice"),
+    ({"name": "Samsung 1TB SSD", "quantity": 5, "unit_cost": 95, "unit_price": 149, "supplier": "Memory World",
+      "expected_date_offset": 3}, None, None),
+]
+
+
+def _seed_billing(post, clinic_ids: dict) -> None:
+    item_ids = {}
+    for key, payload in INVENTORY:
+        item_ids[key] = post("/api/inventory", payload)["id"]
+    for payload, item_key, clinic_name in ORDERS:
+        body = dict(payload)
+        off = body.pop("expected_date_offset", None)
+        if off is not None:
+            body["expected_date"] = (datetime.now() + timedelta(days=off)).date().isoformat()
+        if item_key:
+            body["item_id"] = item_ids[item_key]
+        if clinic_name:
+            body["clinic_id"] = clinic_ids[clinic_name]
+        post("/api/orders", body)
+    # A sent invoice for the current client: toner from stock + on-site work.
+    post(f"/api/clinics/{clinic_ids['Crowfoot Medical Clinic']}/invoices", {
+        "title": "Toner + printer service", "tax_pct": 5, "ticket_url": "https://tickets.example.com/5088",
+        "issue_date": datetime.now().date().isoformat(),
+        "due_date": (datetime.now() + timedelta(days=30)).date().isoformat(),
+        "lines": [
+            {"item_id": item_ids["toner"], "description": "HP 26A Toner (CF226A)", "quantity": 2, "unit_price": 129},
+            {"description": "On-site printer service (1 hr)", "quantity": 1, "unit_price": 120},
+        ],
+    })
+
+
 def seed_via_api(base: str) -> None:
     def post(path, body):
         req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
@@ -162,7 +208,9 @@ def seed_via_api(base: str) -> None:
         post(f"/api/clinics/{ids[name]}/locations", loc)
     post(f"/api/clinics/{ids['Beltline Family Practice']}/links", {"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
     _seed_equipment(post, ids["Crowfoot Medical Clinic"])
-    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks via {base}")
+    _seed_billing(post, ids)
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks, "
+          f"{len(INVENTORY)} inventory items via {base}")
 
 
 def seed_direct() -> None:
@@ -184,8 +232,11 @@ def seed_direct() -> None:
         for name, loc in LOCATIONS:
             client.post(f"/api/clinics/{ids[name]}/locations", json=loc)
         client.post(f"/api/clinics/{ids['Beltline Family Practice']}/links", json={"other_clinic_id": ids["Westbrook Physiotherapy"], "link_type": "same_owner", "notes": "Both owned by Dr. Chen"})
-        _seed_equipment(lambda path, body: client.post(path, json=body).json(), ids["Crowfoot Medical Clinic"])
-    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks")
+        post = lambda path, body: client.post(path, json=body).json()
+        _seed_equipment(post, ids["Crowfoot Medical Clinic"])
+        _seed_billing(post, ids)
+    print(f"Seeded {len(CLINICS)} clinics, {len(CONTACTS)} contacts, {len(APPOINTMENTS)} appointments, {len(TASKS)} tasks, "
+          f"{len(INVENTORY)} inventory items")
 
 
 if __name__ == "__main__":

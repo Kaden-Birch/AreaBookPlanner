@@ -1,5 +1,5 @@
 // Map page: the hub. Coloured pins, clustering, heat map, near-me and route planning.
-import { clinics, getMeta, planRoute, driveTime, locations as locationsApi, views as viewsApi } from '../api.js';
+import { clinics, getMeta, planRoute, driveTime, locations as locationsApi, views as viewsApi, vpn as vpnApi } from '../api.js';
 import {
   esc, attr, dot, fmtDate, fmtMoney, relativeDays, fullAddress, directionsUrl, pinIcon, secondaryPinIcon, toast,
   COLOR_ORDER, COLOR_HEX, colorKey, debounce, navigate, setTitle, haversineKm, getCurrentPosition, fmtKm, fmtMinutes,
@@ -17,13 +17,15 @@ let nearLayer = null;           // circle + centre marker
 let allClinics = [];
 let allLocations = [];
 let locationLayer = null;
+let vpnLayer = null;
+let allVpn = [];
 let savedViews = [];
 let meta = null;
 let driveCache = { key: null, data: null };
 
 const state = {
   q: '', colors: new Set(COLOR_ORDER), stages: new Set(), overdueOnly: false, showLocations: true, placing: false, focusId: null,
-  cluster: true, heat: false,
+  cluster: true, heat: false, vpn: false,
   // Near-me filter
   near: { on: false, centre: null, mode: 'km', km: 5, min: 15, staleOnly: false, picking: false },
   // Route planner
@@ -64,6 +66,7 @@ export async function render(container, params) {
             <button class="btn btn-sm" id="fit-btn" title="Zoom to fit all visible pins">Fit</button>
             <button class="btn btn-sm ${state.cluster ? 'active' : ''}" id="cluster-btn" title="Group nearby pins when zoomed out">Cluster</button>
             <button class="btn btn-sm ${state.heat ? 'active' : ''}" id="heat-btn" title="Density heat map of visible clinics">Heat</button>
+            <button class="btn btn-sm ${state.vpn ? 'active' : ''}" id="vpn-btn" title="Show VPN links between clinic sites (dashed indigo lines)">🔒 VPN</button>
             <button class="btn btn-sm ${state.near.on ? 'active' : ''}" id="near-btn" title="Filter by distance or drive time from a point">Near me</button>
             <button class="btn btn-sm ${state.route.on ? 'active' : ''}" id="route-btn" title="Pick clinics and plan a driving route">Route</button>
             <button class="btn btn-sm btn-primary" id="place-btn" title="Click on the map to add a clinic at that spot">+ Place pin</button>
@@ -91,6 +94,7 @@ export async function render(container, params) {
   routeLayer = L.layerGroup().addTo(map);
   nearLayer = L.layerGroup().addTo(map);
   locationLayer = L.layerGroup().addTo(map);
+  vpnLayer = L.layerGroup().addTo(map);
   (state.cluster ? clusterLayer : plainLayer).addTo(map);
   markers = new Map();
 
@@ -128,6 +132,12 @@ export async function render(container, params) {
   };
   container.querySelector('#cluster-btn').onclick = () => { state.cluster = !state.cluster; setActive('cluster-btn', state.cluster); swapPinLayer(); };
   container.querySelector('#heat-btn').onclick = () => { state.heat = !state.heat; setActive('heat-btn', state.heat); applyFilters(); };
+  container.querySelector('#vpn-btn').onclick = async () => {
+    state.vpn = !state.vpn;
+    setActive('vpn-btn', state.vpn);
+    if (state.vpn && !allVpn.length) { try { allVpn = (await vpnApi.map()).links; } catch { allVpn = []; } }
+    applyFilters();
+  };
   container.querySelector('#near-btn').onclick = () => { state.near.on = !state.near.on; setActive('near-btn', state.near.on); document.getElementById('near-panel').classList.toggle('hidden', !state.near.on); if (state.near.on) renderNearPanel(); else { nearLayer.clearLayers(); } applyFilters(); };
   container.querySelector('#route-btn').onclick = () => { state.route.on = !state.route.on; setActive('route-btn', state.route.on); document.getElementById('route-panel').classList.toggle('hidden', !state.route.on); if (state.route.on) renderRoutePanel(); else clearRoute(); applyFilters(); };
   container.querySelector('#place-btn').onclick = () => setPlacing(!state.placing);
@@ -142,6 +152,7 @@ export async function render(container, params) {
 export function destroy(container) {
   if (map) { map.remove(); map = null; }
   markers = new Map();
+  allVpn = [];
   container.classList.remove('full');
   state.placing = false;
   state.near.picking = false;
@@ -339,8 +350,60 @@ function applyFilters() {
       m.addTo(locationLayer);
     }
   }
+  drawVpn(visibleIds);
   drawNear();
   renderList(visible);
+}
+
+// VPN overlay: one dashed indigo line per pair of sites (deduped), respecting map filters.
+function endKey(s) { return s.kind === 'endpoint' ? `e${s.endpoint_id}` : `c${s.clinic_id}:${s.site_id}`; }
+
+function drawVpn(visibleIds) {
+  if (!vpnLayer) return;
+  vpnLayer.clearLayers();
+  if (!state.vpn) return;
+  const groups = new Map();  // pairKey -> { a, b, links[] }
+  for (const l of allVpn) {
+    const k = [endKey(l.a), endKey(l.b)].sort().join('~');
+    if (!groups.has(k)) groups.set(k, { a: l.a, b: l.b, links: [] });
+    groups.get(k).links.push(l);
+  }
+  for (const g of groups.values()) {
+    // A filtered-out clinic endpoint fades the line and disables its popup (so filtered
+    // clinics aren't exposed). Endpoint (non-clinic) ends never filter.
+    const endVisible = (s) => s.kind === 'endpoint' || visibleIds.has(s.clinic_id);
+    const shown = endVisible(g.a) && endVisible(g.b);
+    const latlngs = [[g.a.lat, g.a.lng], [g.b.lat, g.b.lng]];
+    const status = g.links.length === 1 ? g.links[0].status : 'unknown';
+    const color = shown ? (status === 'down' ? '#d9342b' : status === 'disabled' ? '#8a8f98' : '#6366f1') : '#6366f1';
+    const line = L.polyline(latlngs, { color, weight: 2.5, opacity: shown ? 0.75 : 0.12, dashArray: '7 5', interactive: shown });
+    line.addTo(vpnLayer);
+    const mid = [(g.a.lat + g.b.lat) / 2, (g.a.lng + g.b.lng) / 2];
+    if (shown) {
+      const badge = g.links.length > 1 ? `<span class="vpn-map-count">${g.links.length}</span>` : '';
+      L.marker(mid, { icon: L.divIcon({ className: 'vpn-map-mid', html: `🔒${badge}`, iconSize: [22, 22] }), interactive: true })
+        .bindPopup(() => vpnLinePopup(g), { maxWidth: 320 }).addTo(vpnLayer);
+      line.bindPopup(() => vpnLinePopup(g), { maxWidth: 320 });
+    }
+  }
+}
+
+function vpnSideText(s) {
+  if (s.kind === 'endpoint') return `🌐 ${esc(s.name)}`;
+  return `${esc(s.clinic_name)} · ${esc(s.site_name)}`;
+}
+function vpnSideTopoLink(s) {
+  if (s.kind === 'endpoint') return '';
+  const q = s.site_id && s.site_id !== 'main' ? `&site=${s.site_id}` : '';
+  return ` <a href="#/clinics/${s.clinic_id}/equipment?view=topology${q}">topology ↗</a>`;
+}
+function vpnLinePopup(g) {
+  return `<div class="popup-title">🔒 VPN ${g.links.length > 1 ? `(${g.links.length} tunnels)` : ''}</div>
+    ${g.links.map(l => `<div class="vpn-pop">
+      <div><strong>${esc(l.name || 'VPN link')}</strong> · <span class="badge ${l.status === 'up' ? 'badge-green' : l.status === 'down' ? 'badge-red' : l.status === 'disabled' ? 'badge-yellow' : 'badge-grey'}">${esc(l.status_label)}</span>${l.vpn_type ? ` · ${esc(l.vpn_type)}` : ''}</div>
+      <div class="small">${vpnSideText(l.a)}${l.a.device ? ` <span class="muted">(${esc(l.a.device.name)})</span>` : ''}${vpnSideTopoLink(l.a)}</div>
+      <div class="small">↔ ${vpnSideText(l.b)}${l.b.device ? ` <span class="muted">(${esc(l.b.device.name)})</span>` : ''}${vpnSideTopoLink(l.b)}</div>
+    </div>`).join('')}`;
 }
 
 function renderList(list) {

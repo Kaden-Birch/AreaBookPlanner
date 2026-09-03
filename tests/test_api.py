@@ -1156,3 +1156,23 @@ def test_vpn_links_and_endpoints(client):
     backup = client.get("/api/export/backup.json").json()
     assert "vpn_endpoints" in backup and "vpn_links" in backup
     assert any(e["id"] == priv["id"] for e in backup["vpn_endpoints"])
+
+
+def test_vpn_map_overlay(client):
+    a = client.post("/api/clinics", json={"name": "Map A", "lat": 51.0, "lng": -114.0}).json()["id"]
+    b = client.post("/api/clinics", json={"name": "Map B", "lat": 51.1, "lng": -114.2}).json()["id"]
+    nocoord = client.post("/api/clinics", json={"name": "Map C no coords"}).json()["id"]
+    # Link A<->B (both have coords) shows on the map; A<->C (C has no coords) does not.
+    client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "site", "b_clinic_id": b, "name": "AB", "status": "up"})
+    client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "site", "b_clinic_id": nocoord, "name": "AC"})
+    # Endpoint with no position -> excluded; endpoint with a position -> included.
+    ep_nopos = client.post(f"/api/clinics/{a}/vpn/endpoints", json={"name": "AHS nopos"}).json()
+    ep_pos = client.post(f"/api/clinics/{a}/vpn/endpoints", json={"name": "AHS geo", "lat": 51.05, "lng": -114.1}).json()
+    client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "endpoint", "b_endpoint_id": ep_nopos["id"], "name": "A-nopos"})
+    client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "endpoint", "b_endpoint_id": ep_pos["id"], "name": "A-geo"})
+
+    names = {l["name"] for l in client.get("/api/vpn/map").json()["links"]}
+    assert "AB" in names and "A-geo" in names
+    assert "AC" not in names and "A-nopos" not in names
+    ab = next(l for l in client.get("/api/vpn/map").json()["links"] if l["name"] == "AB")
+    assert ab["a"]["lat"] == 51.0 and ab["b"]["lat"] == 51.1 and ab["status_label"] == "Up"

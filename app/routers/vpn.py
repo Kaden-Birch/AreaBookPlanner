@@ -221,6 +221,20 @@ def topology_links(conn: sqlite3.Connection, clinic_id: int, site: str | None = 
     return out
 
 
+@router.get("/vpn/map")
+def vpn_map(conn: sqlite3.Connection = Depends(db_dependency)):
+    """All canonical VPN links whose BOTH ends have map coordinates, for the map overlay.
+    An external endpoint only appears if it was given a map position."""
+    out = []
+    for l in rows_to_list(conn.execute("SELECT * FROM vpn_links ORDER BY id")):
+        a, b = _side(conn, l, "a"), _side(conn, l, "b")
+        if a.get("lat") is None or a.get("lng") is None or b.get("lat") is None or b.get("lng") is None:
+            continue
+        out.append({"id": l["id"], "name": l["name"], "vpn_type": l["vpn_type"], "status": l["status"],
+                    "status_label": VPN_STATUSES.get(l["status"], l["status"]), "a": a, "b": b})
+    return {"links": out}
+
+
 @router.get("/vpn/links/{link_id}")
 def get_link(link_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     link = _link_or_404(conn, link_id)

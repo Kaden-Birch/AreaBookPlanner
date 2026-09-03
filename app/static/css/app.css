@@ -754,6 +754,12 @@ details summary { cursor: pointer; font-weight: 600; }
 .vpn-graph-node .vg-toggle text { fill: var(--text); font-size: 15px; font-weight: 700; }
 .vpn-graph-node .vg-toggle:hover text { fill: #fff; }
 
+/* VPN overlay on the map */
+.vpn-map-mid { font-size: 15px; text-align: center; line-height: 22px; position: relative; }
+.vpn-map-mid .vpn-map-count { position: absolute; top: -6px; right: -8px; background: #6366f1; color: #fff; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 0 5px; line-height: 15px; }
+.vpn-pop { padding: 4px 0; border-top: 1px solid var(--border); margin-top: 4px; }
+.vpn-pop:first-of-type { border-top: none; }
+
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .svc-card { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: block; width: 100%; }

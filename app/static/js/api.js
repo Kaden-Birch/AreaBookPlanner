@@ -155,6 +155,7 @@ export const vpn = {
   createEndpoint: (clinicId, data) => api.post(`/api/clinics/${clinicId}/vpn/endpoints`, data),
   updateEndpoint: (id, data) => api.put(`/api/vpn/endpoints/${id}`, data),
   removeEndpoint: (id) => api.del(`/api/vpn/endpoints/${id}`),
+  map: () => api.get('/api/vpn/map'),
   links: (clinicId, site) => api.get(`/api/clinics/${clinicId}/vpn/links`, site && site !== 'all' ? { site } : undefined),
   createLink: (clinicId, data) => api.post(`/api/clinics/${clinicId}/vpn/links`, data),
   getLink: (id) => api.get(`/api/vpn/links/${id}`),

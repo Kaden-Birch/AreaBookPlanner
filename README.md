@@ -192,6 +192,14 @@ and is stored in a single SQLite file.
   deliberately build out a connected spiderweb (and collapse it again); clicking a remote site
   jumps to that site's topology, and clicking a link opens it. The full company-wide graph is
   never shown unprompted.
+- **Map VPN overlay** – a **🔒 VPN** toggle on the map (off by default) draws a dashed indigo
+  line for each VPN link between sites with known coordinates, connecting the actual **site**
+  pins (not just the primary clinic pin). Multiple tunnels between the same two sites collapse
+  to one line with a count badge; a 🔒 midpoint marker opens a summary of each tunnel — name,
+  status, both sites, terminating devices, and a link to each site's topology. External
+  endpoints appear only if they were given a map position. The overlay respects the map's
+  filters: a line whose clinic endpoint is filtered out fades and goes non-interactive, so
+  hidden clinics are never exposed.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
@@ -315,7 +323,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory (`?site=main\|<id>\|all` scopes devices/topology/racks) |
 | `GET …/clinics/{id}/sites`, `…/clinics/{id}/locations` | Sites (Main Site + secondary locations) |
-| `…/clinics/{id}/vpn/links`, `/api/vpn/links/{id}`, `…/clinics/{id}/vpn/endpoints`, `/api/vpn/endpoints/{id}` | Canonical VPN links + reusable endpoint directory |
+| `…/clinics/{id}/vpn/links`, `/api/vpn/links/{id}`, `/api/vpn/map`, `…/clinics/{id}/vpn/endpoints`, `/api/vpn/endpoints/{id}` | Canonical VPN links, map overlay + reusable endpoint directory |
 | `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |

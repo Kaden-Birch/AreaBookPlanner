@@ -99,6 +99,7 @@ def list_attachments(clinic_id: int, conn: sqlite3.Connection = Depends(db_depen
 async def upload_attachment(
     clinic_id: int, file: UploadFile = File(...), caption: str | None = Form(default=None),
     kind: str | None = Form(default=None), note_id: int | None = Form(default=None),
+    service_id: int | None = Form(default=None),
     conn: sqlite3.Connection = Depends(db_dependency),
 ):
     if conn.execute("SELECT 1 FROM clinics WHERE id = ?", (clinic_id,)).fetchone() is None:
@@ -115,10 +116,15 @@ async def upload_attachment(
     if note_id is not None and conn.execute(
             "SELECT 1 FROM clinic_notes WHERE id = ? AND clinic_id = ?", (note_id, clinic_id)).fetchone() is None:
         note_id = None
+    # Only link to a service on one of this clinic's devices.
+    if service_id is not None and conn.execute(
+            """SELECT 1 FROM device_services s JOIN devices d ON d.id = s.device_id
+               WHERE s.id = ? AND d.clinic_id = ?""", (service_id, clinic_id)).fetchone() is None:
+        service_id = None
     filename = _safe_name(file.filename or "file")
     cur = conn.execute(
-        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption, note_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (clinic_id, filename, "", content_type, len(data), kind, caption, note_id),
+        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption, note_id, service_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, filename, "", content_type, len(data), kind, caption, note_id, service_id),
     )
     stored = f"{cur.lastrowid}_{filename}"
     Path(ATTACHMENTS_DIR).mkdir(parents=True, exist_ok=True)
@@ -159,7 +165,7 @@ def delete_attachment(att_id: int, conn: sqlite3.Connection = Depends(db_depende
 def search(q: str, limit: int = 8, conn: sqlite3.Connection = Depends(db_dependency)):
     q = (q or "").strip()
     if len(q) < 2:
-        return {"clinics": [], "contacts": [], "notes": [], "tasks": [], "locations": []}
+        return {"clinics": [], "contacts": [], "notes": [], "tasks": [], "locations": [], "devices": [], "services": []}
     like = f"%{q}%"
     clinics = [
         enrich_clinic(conn, c) for c in rows_to_list(conn.execute(
@@ -189,10 +195,15 @@ def search(q: str, limit: int = 8, conn: sqlite3.Connection = Depends(db_depende
     from ..logic import DEVICE_TYPES
     for d in devices:
         d["icon"] = DEVICE_TYPES.get(d["device_type"], DEVICE_TYPES["other"])["icon"]
+    services = rows_to_list(conn.execute(
+        """SELECT s.id, s.name, s.ip_addresses, s.ports, s.internal_url, s.public_url,
+                  d.id AS device_id, d.name AS device_name, cl.id AS clinic_id, cl.name AS clinic_name
+           FROM device_services s JOIN devices d ON d.id = s.device_id JOIN clinics cl ON cl.id = d.clinic_id
+           WHERE s.name LIKE ? OR s.description LIKE ? OR s.ip_addresses LIKE ? OR s.ports LIKE ?
+           ORDER BY s.name COLLATE NOCASE LIMIT ?""", (like, like, like, like, limit)))
     return {
-        "devices": devices,
         "clinics": [{"id": c["id"], "name": c["name"], "shorthand": c["shorthand"], "address": c["address"], "color": c["color"], "color_label": c["color_label"]} for c in clinics],
-        "contacts": contacts, "notes": notes, "tasks": tasks, "locations": locations, "devices": devices,
+        "contacts": contacts, "notes": notes, "tasks": tasks, "locations": locations, "devices": devices, "services": services,
     }
 
 

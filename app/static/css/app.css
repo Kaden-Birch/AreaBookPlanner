@@ -700,6 +700,16 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-legend .line.extra { border-top-style: dashed; border-color: var(--overdue-ring); }
 .topo-hint { position: sticky; top: 44px; left: 8px; z-index: 5; display: inline-block; margin: 0 8px 4px; background: var(--primary-soft); color: var(--primary-soft-text); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
 .topo-svg .topo-node { cursor: pointer; }
+.topo-node text.topo-svc { fill: var(--muted); font-size: 10px; cursor: pointer; }
+.topo-node text.topo-svc:hover { fill: var(--primary); text-decoration: underline; }
+.topo-node text.topo-svc-more { fill: var(--faint); font-size: 10px; }
+
+/* Running-service cards on a server/VM detail */
+.svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.svc-card { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: block; width: 100%; }
+.svc-card:hover { border-color: var(--primary); }
+.svc-card .svc-name { font-weight: 600; font-size: 13px; }
+.svc-card .svc-meta { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-word; }
 
 /* Device detail modal */
 .device-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }

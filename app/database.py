@@ -341,6 +341,22 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS device_services (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id     INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    description   TEXT,
+    ip_addresses  TEXT,
+    ports         TEXT,
+    internal_url  TEXT,
+    public_url    TEXT,
+    support_url   TEXT,
+    support_email TEXT,
+    notes         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS clinic_tickets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     clinic_id   INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
@@ -368,6 +384,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id
 CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item_id);
 CREATE INDEX IF NOT EXISTS idx_orders_clinic ON orders(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_clinic_tickets_clinic ON clinic_tickets(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_device_services_device ON device_services(device_id);
 """
 
 
@@ -436,10 +453,12 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("appointment_id", "INTEGER REFERENCES appointments(id) ON DELETE SET NULL"),
         ("task_id", "INTEGER REFERENCES tasks(id) ON DELETE SET NULL"),
         ("attachment_id", "INTEGER REFERENCES attachments(id) ON DELETE CASCADE"),
+        ("service_id", "INTEGER REFERENCES device_services(id) ON DELETE CASCADE"),
     ],
     "attachments": [
         # The note a photo was uploaded with (so it links back to that note's context).
         ("note_id", "INTEGER REFERENCES clinic_notes(id) ON DELETE SET NULL"),
+        ("service_id", "INTEGER REFERENCES device_services(id) ON DELETE CASCADE"),
     ],
     "clinic_events": [
         ("from_value", "TEXT"),
@@ -482,6 +501,19 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE clinics SET stage = 'won' WHERE relationship = 'current_client' AND stage <> 'won'")
     # The "Contacted" stage was removed; fold any existing rows up into "Interested".
     conn.execute("UPDATE clinics SET stage = 'prospect' WHERE stage = 'contacted'")
+    # Migrate legacy free-text device services (a JSON array of names) into structured
+    # device_services rows, then clear the text column so it isn't migrated twice.
+    import json as _json
+    for row in conn.execute("SELECT id, services FROM devices WHERE services IS NOT NULL AND services <> ''").fetchall():
+        try:
+            names = _json.loads(row[1])
+        except (ValueError, TypeError):
+            names = []
+        for name in names:
+            name = str(name).strip()
+            if name:
+                conn.execute("INSERT INTO device_services (device_id, name) VALUES (?, ?)", (row[0], name))
+        conn.execute("UPDATE devices SET services = NULL WHERE id = ?", (row[0],))
     if conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0] == 0:
         conn.executemany(
             "INSERT INTO email_templates (name, subject, body) VALUES (?, ?, ?)", DEFAULT_EMAIL_TEMPLATES

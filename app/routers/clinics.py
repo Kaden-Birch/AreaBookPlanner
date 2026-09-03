@@ -71,6 +71,9 @@ def _note_context(conn: sqlite3.Connection, note: dict) -> dict | None:
         return {"type": "task", "id": note["task_id"], "label": r["title"] if r else "task"}
     if note.get("attachment_id"):
         return {"type": "photo", "id": note["attachment_id"], "label": "photo"}
+    if note.get("service_id"):
+        r = conn.execute("SELECT name FROM device_services WHERE id = ?", (note["service_id"],)).fetchone()
+        return {"type": "service", "id": note["service_id"], "label": r["name"] if r else "service"}
     return None
 
 
@@ -654,11 +657,15 @@ def add_note(clinic_id: int, payload: NoteIn, conn: sqlite3.Connection = Depends
     if payload.attachment_id and conn.execute(
             "SELECT 1 FROM attachments WHERE id = ? AND clinic_id = ?", (payload.attachment_id, clinic_id)).fetchone() is None:
         raise HTTPException(status_code=422, detail="Photo does not belong to this clinic")
+    if payload.service_id and conn.execute(
+            """SELECT 1 FROM device_services s JOIN devices d ON d.id = s.device_id
+               WHERE s.id = ? AND d.clinic_id = ?""", (payload.service_id, clinic_id)).fetchone() is None:
+        raise HTTPException(status_code=422, detail="Service does not belong to this clinic")
     body = _sanitize_mentions(conn, clinic_id, payload.body.strip())
     cur = conn.execute(
-        "INSERT INTO clinic_notes (clinic_id, body, author, kind, appointment_id, task_id, attachment_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO clinic_notes (clinic_id, body, author, kind, appointment_id, task_id, attachment_id, service_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (clinic_id, body, payload.author, payload.kind if payload.kind in ("note", "quick", "email", "call") else "note",
-         payload.appointment_id, payload.task_id, payload.attachment_id),
+         payload.appointment_id, payload.task_id, payload.attachment_id, payload.service_id),
     )
     conn.execute("UPDATE clinics SET updated_at = ? WHERE id = ?", (now_iso(), clinic_id))
     return _enrich_note(conn, row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (cur.lastrowid,)).fetchone()))

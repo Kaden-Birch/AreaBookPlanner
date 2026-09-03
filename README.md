@@ -147,9 +147,21 @@ and is stored in a single SQLite file.
   Names follow `{SHORTHAND}-{PREFIX}{NNN}` (COC-W005, COC-S001, COC-FW001…) with the
   next number suggested automatically, or type your own. Each device has an uplink
   (wired or wireless), IP/MAC, model and serial, OS, assigned user, status, warranty,
-  notes, services (for servers) and linked tickets (title + link). A list view groups
+  notes and linked tickets (title + link). A list view groups
   by type; a topology view draws the network from the WAN down, dashed for wireless.
   Active counts per type are summarised for billing later.
+- **Running services** – servers and VMs document the individual services they run as
+  structured records rather than a free-text list. Each service has a name, description,
+  IP address(es), ports/protocols, an internal service URL, a public/service website,
+  a support portal/docs link, a support email, notes, and can carry attached photos,
+  files and dated notes (with @mentions) exactly like a clinic. Services are searchable
+  and there is no limit per device. On a server/VM detail they appear as clickable cards
+  showing the primary address/URL and ports; in the topology, a leaf server/VM lists its
+  service names inline (with a `+N more` indicator) and clicking a name opens that
+  service record directly. Legacy free-text service entries are migrated automatically.
+  Every service form and detail states prominently that **passwords, credentials, API
+  keys, private keys, recovery codes and other secrets must never be stored here** — keep
+  those in the approved password manager.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
@@ -272,6 +284,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `/api/views`, `/api/templates` | Saved map views, email templates |
 | `POST /api/import/clinics`, `POST /api/geocode/bulk` | CSV import, bulk geocoding job |
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory |
+| `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |
 | `GET/POST/PUT/DELETE /api/orders`, `POST …/orders/{id}/receive` | Purchase orders and receiving |

@@ -153,8 +153,9 @@ class NoteIn(BaseModel):
     appointment_id: Optional[int] = None
     task_id: Optional[int] = None
     attachment_id: Optional[int] = None
+    service_id: Optional[int] = None
 
-    _blank = field_validator("author", "appointment_id", "task_id", "attachment_id", mode="before")(_blank_to_none)
+    _blank = field_validator("author", "appointment_id", "task_id", "attachment_id", "service_id", mode="before")(_blank_to_none)
 
 
 class QuickLogIn(BaseModel):
@@ -350,6 +351,29 @@ class TicketIn(BaseModel):
     notes: Optional[str] = None
 
     _blank = field_validator("url", "ticket_date", "notes", mode="before")(_blank_to_none)
+
+
+class ServiceIn(BaseModel):
+    """A structured service running on a server or VM."""
+    name: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = None
+    ip_addresses: Optional[str] = None
+    ports: Optional[str] = None
+    internal_url: Optional[str] = None
+    public_url: Optional[str] = None
+    support_url: Optional[str] = None
+    support_email: Optional[str] = None
+    notes: Optional[str] = None
+
+    _blank = field_validator("description", "ip_addresses", "ports", "internal_url", "public_url",
+                             "support_url", "support_email", "notes", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
 
 
 class PriceItemIn(BaseModel):

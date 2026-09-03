@@ -480,6 +480,7 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "email_templates": rows_to_list(conn.execute("SELECT * FROM email_templates")),
         "saved_views": rows_to_list(conn.execute("SELECT * FROM saved_views")),
         "devices": rows_to_list(conn.execute("SELECT * FROM devices")),
+        "device_services": rows_to_list(conn.execute("SELECT * FROM device_services")),
         "device_tickets": rows_to_list(conn.execute("SELECT * FROM device_tickets")),
         "device_links": rows_to_list(conn.execute("SELECT * FROM device_links")),
         "quotes": rows_to_list(conn.execute("SELECT * FROM quotes")),
@@ -507,7 +508,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     if data.get("version") != 1:
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
-              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_links", "device_tickets", "quotes",
+              "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_services", "device_links", "device_tickets", "quotes",
               "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets"]
     if replace:
         for t in reversed(tables):
@@ -578,7 +579,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
                 row["contact_id"] = contact_map.get(row.get("contact_id"))
             # Cross-references (appointments/tasks/notes/photos) aren't remapped on merge — clear
             # them so a merged note/photo never points at an unrelated record.
-            for ref in ("appointment_id", "task_id", "attachment_id", "note_id"):
+            for ref in ("appointment_id", "task_id", "attachment_id", "note_id", "service_id"):
                 if ref in row:
                     row[ref] = None
             cols = ", ".join(row.keys())
@@ -618,6 +619,14 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
     for new_id, old_up in pending_uplinks:
         if old_up in device_map:
             conn.execute("UPDATE devices SET uplink_id = ? WHERE id = ?", (device_map[old_up], new_id))
+    for row in data.get("device_services", []):
+        row.pop("id", None)
+        if row.get("device_id") not in device_map:
+            continue
+        row["device_id"] = device_map[row["device_id"]]
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO device_services ({cols}) VALUES ({marks})", list(row.values()))
     for row in data.get("quotes", []):
         row.pop("id", None)
         if row.get("clinic_id") not in clinic_map:

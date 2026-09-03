@@ -88,12 +88,13 @@ export const groups = {
 };
 
 export const attachments = {
-  upload: async (clinicId, file, caption, kind, noteId) => {
+  upload: async (clinicId, file, caption, kind, noteId, serviceId) => {
     const fd = new FormData();
     fd.append('file', file);
     if (caption) fd.append('caption', caption);
     if (kind) fd.append('kind', kind);
     if (noteId != null) fd.append('note_id', noteId);
+    if (serviceId != null) fd.append('service_id', serviceId);
     const res = await fetch(`/api/clinics/${clinicId}/attachments`, { method: 'POST', body: fd });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(extractError(data) || `${res.status} ${res.statusText}`);
@@ -141,6 +142,12 @@ export const devices = {
   removeConnection: (id, linkId) => api.del(`/api/devices/${id}/connections/${linkId}`),
   connect: (clinicId, data) => api.post(`/api/clinics/${clinicId}/connect`, data),
   disconnect: (clinicId, data) => api.post(`/api/clinics/${clinicId}/disconnect`, data),
+};
+export const services = {
+  get: (id) => api.get(`/api/services/${id}`),
+  create: (deviceId, data) => api.post(`/api/devices/${deviceId}/services`, data),
+  update: (id, data) => api.put(`/api/services/${id}`, data),
+  remove: (id) => api.del(`/api/services/${id}`),
 };
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {

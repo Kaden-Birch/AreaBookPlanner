@@ -15,7 +15,7 @@ from ..logic import (
     DEFAULT_RACK_UNITS, DEVICE_DESIGNATIONS, DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES_NET, NON_RACKABLE_TYPES,
     NON_TOPOLOGY_TYPES, OS_DEVICE_TYPES, USER_DEVICE_TYPES, clinic_shorthand, log_event, now_iso,
 )
-from ..schemas import ConnectionIn, DeviceIn, EdgeOp, TicketIn
+from ..schemas import ConnectionIn, DeviceIn, EdgeOp, ServiceIn, TicketIn
 
 router = APIRouter(prefix="/api", tags=["devices"])
 
@@ -23,6 +23,10 @@ DEVICE_COLUMNS = [
     "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
     "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "rack", "rack_room",
     "rack_position", "rack_units", "shelf_id", "services", "purchase_date", "warranty_until", "notes",
+]
+
+DEVICE_SERVICE_COLUMNS = [
+    "name", "description", "ip_addresses", "ports", "internal_url", "public_url", "support_url", "support_email", "notes",
 ]
 
 SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
@@ -66,6 +70,24 @@ def _get_or_404(conn: sqlite3.Connection, device_id: int) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="Device not found")
     return _decorate(row)
+
+
+def _load_services(conn: sqlite3.Connection, device_id: int) -> list[dict]:
+    return rows_to_list(conn.execute(
+        "SELECT * FROM device_services WHERE device_id = ? ORDER BY name COLLATE NOCASE", (device_id,)))
+
+
+def _services_by_device(conn: sqlite3.Connection, device_ids: list[int]) -> dict[int, list[dict]]:
+    """Compact {device_id: [{id, name}]} for list/topology rendering."""
+    out: dict[int, list[dict]] = {}
+    if not device_ids:
+        return out
+    marks = ",".join("?" * len(device_ids))
+    for r in conn.execute(
+            f"SELECT id, device_id, name FROM device_services WHERE device_id IN ({marks}) ORDER BY name COLLATE NOCASE",
+            list(device_ids)):
+        out.setdefault(r["device_id"], []).append({"id": r["id"], "name": r["name"]})
+    return out
 
 
 def next_number(conn: sqlite3.Connection, clinic_id: int, device_type: str) -> int:
@@ -174,6 +196,9 @@ def list_devices(clinic_id: int, q: str | None = None, device_type: str | None =
         params.append(status)
     sql += " ORDER BY d.device_type, d.number, d.name COLLATE NOCASE"
     devices = [_decorate(r) for r in rows_to_list(conn.execute(sql, params))]
+    svc = _services_by_device(conn, [d["id"] for d in devices])
+    for d in devices:
+        d["services"] = svc.get(d["id"], [])
     return {"devices": devices, "summary": _summary(conn, clinic_id), "shorthand": clinic_shorthand(clinic),
             "locations": rows_to_list(conn.execute("SELECT id, name FROM clinic_locations WHERE clinic_id = ? ORDER BY name", (clinic_id,)))}
 
@@ -193,6 +218,7 @@ def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     clinic = _clinic_or_404(conn, clinic_id)
     data = payload.model_dump()
     qty = data.pop("quantity", 1)
+    svc_names = [str(s).strip() for s in (data.get("services") or []) if str(s).strip()]
     _validate(conn, clinic_id, data)
     _check_uplink(conn, clinic_id, None, data.get("uplink_id"))
     created = []
@@ -205,11 +231,15 @@ def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
         else:
             d["name"] = template_name(clinic, d["device_type"], n)
             d["number"] = n
-        d["services"] = json.dumps(d["services"]) if d.get("services") else None
+        d["services"] = None  # services are structured now (device_services), not text
         cols = ", ".join(["clinic_id", *DEVICE_COLUMNS])
         marks = ", ".join("?" * (len(DEVICE_COLUMNS) + 1))
         cur = conn.execute(f"INSERT INTO devices ({cols}) VALUES ({marks})", [clinic_id] + [d.get(c) for c in DEVICE_COLUMNS])
-        created.append(_get_or_404(conn, cur.lastrowid))
+        for name in svc_names:
+            conn.execute("INSERT INTO device_services (device_id, name) VALUES (?, ?)", (cur.lastrowid, name))
+        dev = _get_or_404(conn, cur.lastrowid)
+        dev["services"] = _load_services(conn, cur.lastrowid)
+        created.append(dev)
     label = DEVICE_TYPES[data["device_type"]]["label"]
     log_event(conn, clinic_id, "equipment", f"Added {len(created)} {label.lower()}{'s' if len(created) > 1 else ''}: " + ", ".join(c["name"] for c in created[:5]) + ("…" if len(created) > 5 else ""))
     return created if qty > 1 else created[0]
@@ -266,8 +296,9 @@ def topology(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
             children[d["uplink_id"]].append(d["id"])
     node_keys = ("id", "name", "device_type", "type_label", "icon", "is_network", "is_vm", "off_site", "designation",
                  "ip_address", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model")
-    nodes = [{k: d.get(k) for k in node_keys} | {"children": children[d["id"]]} for d in onsite]
-    offsite_nodes = [{k: d.get(k) for k in node_keys} | {"children": []} for d in devices if d["off_site"]]
+    svc = _services_by_device(conn, [d["id"] for d in devices if d["device_type"] in ("server", "vm")])
+    nodes = [{k: d.get(k) for k in node_keys} | {"children": children[d["id"]], "services": svc.get(d["id"], [])} for d in onsite]
+    offsite_nodes = [{k: d.get(k) for k in node_keys} | {"children": [], "services": svc.get(d["id"], [])} for d in devices if d["off_site"]]
     roots = [d["id"] for d in onsite if d["uplink_id"] not in by_id or by_id[d["uplink_id"]]["off_site"]]
     edges = [{"from": d["uplink_id"], "to": d["id"], "link_type": _edge_link_type(d), "primary": True}
              for d in onsite if d["uplink_id"] in by_id and not by_id[d["uplink_id"]]["off_site"]]
@@ -496,6 +527,7 @@ def racks(clinic_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
 @router.get("/devices/{device_id}")
 def get_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     d = _get_or_404(conn, device_id)
+    d["services"] = _load_services(conn, device_id)
     d["tickets"] = rows_to_list(conn.execute("SELECT * FROM device_tickets WHERE device_id = ? ORDER BY ticket_date DESC, id DESC", (device_id,)))
     d["downlinks"] = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.uplink_id = ? ORDER BY d.device_type, d.number", (device_id,)))]
     chain = []
@@ -535,7 +567,7 @@ def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
         data["name"] = template_name(clinic, data["device_type"], before["number"] or next_number(conn, before["clinic_id"], data["device_type"]))
     parsed = _parse_number(clinic, data["device_type"], data["name"])
     data["number"] = parsed if parsed is not None else (before["number"] if before["device_type"] == data["device_type"] else next_number(conn, before["clinic_id"], data["device_type"]))
-    data["services"] = json.dumps(data["services"]) if data.get("services") else None
+    data["services"] = None  # structured services live in device_services, not the text column
     sets = ", ".join(f"{c} = ?" for c in DEVICE_COLUMNS)
     conn.execute(f"UPDATE devices SET {sets}, updated_at = ? WHERE id = ?", [data.get(c) for c in DEVICE_COLUMNS] + [now_iso(), device_id])
     return get_device(device_id, conn)
@@ -562,4 +594,63 @@ def delete_ticket(device_id: int, ticket_id: int, conn: sqlite3.Connection = Dep
     cur = conn.execute("DELETE FROM device_tickets WHERE id = ? AND device_id = ?", (ticket_id, device_id))
     if cur.rowcount == 0:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    return None
+
+
+# ---- Structured running services (on servers and VMs) -----------------------
+
+def _service_row(conn: sqlite3.Connection, service_id: int) -> dict:
+    row = row_to_dict(conn.execute(
+        """SELECT s.*, d.clinic_id AS clinic_id, d.name AS device_name, d.device_type AS device_type
+           FROM device_services s JOIN devices d ON d.id = s.device_id WHERE s.id = ?""", (service_id,)).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return row
+
+
+def _service_detail(conn: sqlite3.Connection, service_id: int) -> dict:
+    s = _service_row(conn, service_id)
+    from .clinics import _enrich_note
+
+    s["note_log"] = [_enrich_note(conn, n) for n in rows_to_list(conn.execute(
+        "SELECT * FROM clinic_notes WHERE service_id = ? ORDER BY created_at DESC, id DESC", (service_id,)))]
+    atts = rows_to_list(conn.execute(
+        "SELECT * FROM attachments WHERE service_id = ? ORDER BY created_at DESC, id DESC", (service_id,)))
+    s["photos"] = [a for a in atts if a["kind"] == "photo"]
+    s["files"] = [a for a in atts if a["kind"] != "photo"]
+    return s
+
+
+@router.post("/devices/{device_id}/services", status_code=201)
+def add_service(device_id: int, payload: ServiceIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    d = _get_or_404(conn, device_id)
+    if d["device_type"] not in ("server", "vm"):
+        raise HTTPException(status_code=422, detail="Services can only run on a server or VM")
+    data = payload.model_dump()
+    cols = ", ".join(["device_id", *DEVICE_SERVICE_COLUMNS])
+    marks = ", ".join("?" * (len(DEVICE_SERVICE_COLUMNS) + 1))
+    cur = conn.execute(f"INSERT INTO device_services ({cols}) VALUES ({marks})",
+                       [device_id] + [data[c] for c in DEVICE_SERVICE_COLUMNS])
+    return _service_detail(conn, cur.lastrowid)
+
+
+@router.get("/services/{service_id}")
+def get_service(service_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    return _service_detail(conn, service_id)
+
+
+@router.put("/services/{service_id}")
+def update_service(service_id: int, payload: ServiceIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    _service_row(conn, service_id)
+    data = payload.model_dump()
+    sets = ", ".join(f"{c} = ?" for c in DEVICE_SERVICE_COLUMNS)
+    conn.execute(f"UPDATE device_services SET {sets}, updated_at = ? WHERE id = ?",
+                 [data[c] for c in DEVICE_SERVICE_COLUMNS] + [now_iso(), service_id])
+    return _service_detail(conn, service_id)
+
+
+@router.delete("/services/{service_id}", status_code=204)
+def delete_service(service_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    if conn.execute("DELETE FROM device_services WHERE id = ?", (service_id,)).rowcount == 0:
+        raise HTTPException(status_code=404, detail="Service not found")
     return None

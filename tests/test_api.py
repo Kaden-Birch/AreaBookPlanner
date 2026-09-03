@@ -406,6 +406,45 @@ def test_notes_mentions_photos(client):
     assert any(n["id"] == note["id"] for n in client.get(f"/api/clinics/{a}/notes").json())
 
 
+def test_device_services(client):
+    cid = client.post("/api/clinics", json={"name": "Services Clinic", "shorthand": "SVC"}).json()["id"]
+    srv = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Hypervisor / host"}).json()
+    vm = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "vm", "uplink_id": srv["id"]}).json()
+    ws = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "workstation"}).json()
+
+    # Structured service on a VM.
+    s = client.post(f"/api/devices/{vm['id']}/services", json={
+        "name": "PrimeEMR SQL", "ip_addresses": "10.0.0.5", "ports": "1433/tcp",
+        "internal_url": "http://emr.local", "support_email": "support@primeemr.example"}).json()
+    assert s["name"] == "PrimeEMR SQL" and s["ports"] == "1433/tcp"
+
+    # It shows on the device (structured) and in the topology node.
+    d = client.get(f"/api/devices/{vm['id']}").json()
+    assert [x["name"] for x in d["services"]] == ["PrimeEMR SQL"]
+    topo = client.get(f"/api/clinics/{cid}/topology").json()
+    vm_node = next(n for n in topo["nodes"] if n["id"] == vm["id"])
+    assert [x["name"] for x in vm_node["services"]] == ["PrimeEMR SQL"]
+
+    # Services can't run on a workstation.
+    assert client.post(f"/api/devices/{ws['id']}/services", json={"name": "nope"}).status_code == 422
+
+    # A dated note attached to the service, with the service as its context.
+    note = client.post(f"/api/clinics/{cid}/notes", json={"body": "Restarted the SQL service", "service_id": s["id"]}).json()
+    assert note["context"] == {"type": "service", "id": s["id"], "label": "PrimeEMR SQL"}
+    detail = client.get(f"/api/services/{s['id']}").json()
+    assert len(detail["note_log"]) == 1 and detail["device_name"] == vm["name"]
+
+    # Searchable.
+    res = client.get("/api/search", params={"q": "PrimeEMR"}).json()
+    assert any(x["id"] == s["id"] for x in res["services"])
+
+    # Update + delete.
+    up = client.put(f"/api/services/{s['id']}", json={"name": "PrimeEMR Database", "ports": "1433/tcp"}).json()
+    assert up["name"] == "PrimeEMR Database"
+    assert client.delete(f"/api/services/{s['id']}").status_code == 204
+    assert client.get(f"/api/devices/{vm['id']}").json()["services"] == []
+
+
 def test_tickets_and_activity_filter(client):
     cid = client.post("/api/clinics", json={"name": "Ticket Clinic"}).json()["id"]
 
@@ -672,7 +711,7 @@ def test_equipment(client):
     assert custom["name"] == "Front desk MFP"
     # server with services + voip chain (workstation -> voip -> switch)
     srv = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "server", "designation": "Windows Server", "services": "AD DS\nDNS\nFile shares", "uplink_id": sw["id"]}).json()
-    assert srv["services"] == ["AD DS", "DNS", "File shares"] and srv["name"] == "COC-S001"
+    assert [s["name"] for s in srv["services"]] == ["AD DS", "DNS", "File shares"] and srv["name"] == "COC-S001"
     phone = client.post(f"/api/clinics/{cid}/devices", json={"device_type": "voip", "uplink_id": sw["id"], "user_name": "Reception"}).json()
     r = client.put(f"/api/devices/{ws[0]['id']}", json={**{k: ws[0][k] for k in ("device_type", "name", "designation", "status")}, "uplink_id": phone["id"], "link_type": "ethernet", "user_name": "Front desk"})
     assert r.status_code == 200, r.text

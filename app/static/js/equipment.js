@@ -1,6 +1,9 @@
 // Device form, device detail (with tickets, services, downlinks, uplink chain) and helpers.
-import { devices } from './api.js';
-import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, navigate, toDateInput } from './ui.js';
+import { devices, services as servicesApi, clinics as clinicsApi, attachments } from './api.js';
+import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, fmtDateTime, navigate, toDateInput, getRepName, renderNoteBody } from './ui.js';
+import { attachMentionAutocomplete } from './notes.js';
+
+const SECRETS_NOTICE = 'Do not store passwords, credentials, API keys, private keys, recovery codes, or other secrets here. Keep those in the approved password manager.';
 
 export function linkGlyph(t) { return t === 'wireless' ? '📶' : t === 'virtual' ? '🧊' : '🔌'; }
 
@@ -90,8 +93,9 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
           <div class="field mount-field"><label id="rack-units-label">Height (U)</label><input name="rack_units" type="number" min="1" max="48" value="${attr(d.rack_units ?? '')}" id="rack-units" placeholder="1"><div class="help" id="rack-units-help"></div></div>
         </div>
       </div>
-      <div class="form-section services-field"><h3>Services running on this server</h3>
-        <textarea name="services" rows="3" placeholder="One per line, e.g.&#10;Active Directory&#10;File shares (\\\\COC-S001\\shared)&#10;Backup agent">${esc((d.services || []).join('\\n'))}</textarea></div>
+      <div class="form-section services-field"><h3>Running services</h3>
+        <textarea name="services" rows="3" placeholder="One per line, e.g.&#10;Active Directory&#10;File shares&#10;Backup agent">${esc((d.services || []).map(s => (s && s.name) || s).join('\\n'))}</textarea>
+        <div class="help">Just the names to start — open the saved device to add IPs, ports, links, files and notes per service.</div></div>
       <div class="field mt"><label>Notes</label><textarea name="notes" rows="3" placeholder="Where it sits, quirks, passwords go in the password manager not here…">${esc(d.notes)}</textarea></div>
     </form>`,
     footer: `${isEdit ? '<button class="btn btn-danger left" data-act="delete">Delete</button>' : ''}<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">${isEdit ? 'Save changes' : 'Add'}</button>`,
@@ -104,7 +108,7 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     form.querySelector('#desig-list').innerHTML = (meta.designations[t] || []).map(x => `<option value="${attr(x)}">`).join('');
     form.querySelector('#desig-label').textContent = t === 'server' ? 'Server role / designation' : 'Designation';
     form.querySelector('.user-field').classList.toggle('hidden', !meta.user_types.includes(t));
-    form.querySelector('.services-field').classList.toggle('hidden', t !== 'server');
+    form.querySelector('.services-field').classList.toggle('hidden', isEdit || !(t === 'server' || t === 'vm'));
     form.querySelector('.os-field').classList.toggle('hidden', !(meta.os_types || ['workstation', 'laptop', 'server', 'vm', 'wireless', 'other']).includes(t));
     if (t === 'wireless' && !isEdit) form.querySelector('[name=link_type][value=wireless]').checked = true;
     const isShelf = t === 'shelf';
@@ -232,7 +236,9 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
             ${d.warranty_until ? `<dt>Warranty</dt><dd>${esc(fmtDateOnly(d.warranty_until))}${warrantyOver ? ' <span class="badge badge-overdue">expired</span>' : ''}</dd>` : ''}
             <dt>Added</dt><dd>${esc(fmtDate(d.created_at))}</dd>
           </dl>
-          ${d.device_type === 'server' ? `<h3 class="mt">Services</h3>${d.services.length ? `<div class="svc-list">${d.services.map(s => `<span>${esc(s)}</span>`).join('')}</div>` : '<p class="muted small">None recorded. Edit the device to add services.</p>'}` : ''}
+          ${(d.device_type === 'server' || d.is_vm) ? `
+          <div class="card-header mt" style="padding:0"><h3>Running services (${d.services.length})</h3><div class="actions"><button class="btn btn-sm" id="add-service">+ Add service</button></div></div>
+          ${d.services.length ? `<div class="svc-cards">${d.services.map(s => serviceCard(s)).join('')}</div>` : '<p class="muted small">None recorded. Use “+ Add service” to document what runs here.</p>'}` : ''}
           <h3 class="mt">Notes</h3>
           ${d.notes ? `<pre class="wrap">${esc(d.notes)}</pre>` : '<p class="muted small">No notes.</p>'}
         </div>
@@ -289,6 +295,11 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
   modal.body.querySelectorAll('[data-del-conn]').forEach(b => {
     b.onclick = async () => { await devices.removeConnection(d.id, Number(b.dataset.delConn)); toast('Connection removed'); reopen(d.id); };
   });
+  const addService = modal.body.querySelector('#add-service');
+  if (addService) addService.onclick = () => openServiceForm({ clinic, device: d, onSaved: () => reopen(d.id) });
+  modal.body.querySelectorAll('[data-service]').forEach(el => {
+    el.onclick = () => openServiceDetail({ clinic, serviceId: Number(el.dataset.service), onChanged: () => reopen(d.id) });
+  });
   const addConn = modal.body.querySelector('#add-conn');
   if (addConn) addConn.onclick = async () => {
     const { devices: all } = await devices.list(clinic.id);
@@ -315,6 +326,14 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
   return modal;
 }
 
+function serviceCard(s) {
+  const primary = s.internal_url || s.public_url || (s.ip_addresses || '').split(/[\n,]/)[0].trim();
+  return `<button type="button" class="svc-card" data-service="${s.id}">
+    <div class="svc-name">🧩 ${esc(s.name)}</div>
+    <div class="svc-meta">${[primary, s.ports].filter(Boolean).map(esc).join(' · ') || '<span class="muted">no address</span>'}</div>
+  </button>`;
+}
+
 function ticketRow(t) {
   return `<div class="ticket-row">
     <span>🎫</span>
@@ -322,4 +341,123 @@ function ticketRow(t) {
       <div class="muted small">${t.ticket_date ? esc(fmtDateOnly(t.ticket_date)) : esc(fmtDate(t.created_at))}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
     <button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>
   </div>`;
+}
+
+// ---- Running services -----------------------------------------------------
+
+export async function openServiceForm({ clinic, device = null, service = null, onSaved }) {
+  const s = service || {};
+  const isEdit = !!service;
+  const modal = openModal({
+    title: isEdit ? `Edit service · ${s.name}` : `Add a running service${device ? ` · ${device.name}` : ''}`,
+    size: 'modal-lg',
+    body: `<form id="svc-form" autocomplete="off">
+      <div class="form-warn mb">🔒 ${esc(SECRETS_NOTICE)}</div>
+      <div class="field"><label>Service name *</label><input name="name" required value="${attr(s.name)}" placeholder="e.g. PrimeEMR SQL, Domain Controller, Backup agent"></div>
+      <div class="field"><label>Description</label><textarea name="description" rows="2">${esc(s.description)}</textarea></div>
+      <div class="field-row">
+        <div class="field"><label>IP address(es)</label><input name="ip_addresses" value="${attr(s.ip_addresses)}" placeholder="10.0.0.5, 10.0.0.6"></div>
+        <div class="field"><label>Port(s) / protocol(s)</label><input name="ports" value="${attr(s.ports)}" placeholder="443/tcp, 1433/tcp"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Internal URL</label><input name="internal_url" value="${attr(s.internal_url)}" placeholder="http://server.local:8080"></div>
+        <div class="field"><label>Public / service website</label><input name="public_url" value="${attr(s.public_url)}" placeholder="https://vendor.example"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Support portal / docs</label><input name="support_url" value="${attr(s.support_url)}" placeholder="https://support.vendor.example"></div>
+        <div class="field"><label>Support email</label><input name="support_email" value="${attr(s.support_email)}"></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="2">${esc(s.notes)}</textarea></div>
+    </form>`,
+    footer: `<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">${isEdit ? 'Save' : 'Add service'}</button>`,
+  });
+  const form = modal.body.querySelector('#svc-form');
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const save = async () => {
+    const data = formData(form);
+    if (!data.name.trim()) { showFormError(form, 'A service name is required.'); return; }
+    try {
+      const saved = isEdit ? await servicesApi.update(service.id, data) : await servicesApi.create(device.id, data);
+      toast('Service saved', 'success');
+      modal.close();
+      onSaved && onSaved(saved);
+    } catch (e) { showFormError(form, e.message); }
+  };
+  modal.root.querySelector('[data-act=save]').onclick = save;
+  form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+}
+
+export async function openServiceDetail({ clinic, serviceId, onChanged }) {
+  let s;
+  try { s = await servicesApi.get(serviceId); } catch (e) { toast(e.message, 'error'); return; }
+  // Contacts power @mentions in service notes; fetch the clinic if we weren't handed one with them.
+  let contacts = (clinic && clinic.contacts) || [];
+  const clinicId = (clinic && clinic.id) || s.clinic_id;
+  if (!contacts.length) { try { contacts = (await clinicsApi.get(clinicId)).contacts || []; } catch { /* ignore */ } }
+  const link = (label, url) => url ? `<dt>${label}</dt><dd><a href="${attr(url)}" target="_blank" rel="noopener">${esc(url)}</a></dd>` : '';
+  const modal = openModal({
+    title: `🧩 ${s.name}`,
+    size: 'modal-lg',
+    body: `
+      <div class="muted small mb">On ${esc(s.device_name)}</div>
+      <div class="form-warn mb">🔒 ${esc(SECRETS_NOTICE)}</div>
+      <dl class="kv">
+        ${s.description ? `<dt>Description</dt><dd>${esc(s.description)}</dd>` : ''}
+        ${s.ip_addresses ? `<dt>IP address(es)</dt><dd class="mono">${esc(s.ip_addresses)}</dd>` : ''}
+        ${s.ports ? `<dt>Ports</dt><dd class="mono">${esc(s.ports)}</dd>` : ''}
+        ${link('Internal URL', s.internal_url)}
+        ${link('Website', s.public_url)}
+        ${link('Support / docs', s.support_url)}
+        ${s.support_email ? `<dt>Support email</dt><dd><a href="mailto:${attr(s.support_email)}">${esc(s.support_email)}</a></dd>` : ''}
+        ${s.notes ? `<dt>Notes</dt><dd><pre class="wrap">${esc(s.notes)}</pre></dd>` : ''}
+      </dl>
+      <div class="card-header mt" style="padding:0"><h3>Photos &amp; files</h3>
+        <div class="actions"><label class="btn btn-sm" style="margin:0">📎 Upload <input type="file" id="svc-file" class="hidden" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"></label></div></div>
+      <div id="svc-attach">${serviceAttachments(s)}</div>
+      <h3 class="mt">Notes &amp; activity</h3>
+      <form id="svc-note-form" class="note-compose">
+        <textarea name="body" rows="2" placeholder="Add a dated note… type @ to mention a contact"></textarea>
+        <div class="right mt"><button class="btn btn-primary btn-sm" type="submit">Add note</button></div>
+      </form>
+      <div id="svc-notes" class="mt">${serviceNotes(s)}</div>`,
+    footer: `<button class="btn btn-danger left" data-act="delete">Delete</button><button class="btn" data-act="close">Close</button><button class="btn btn-primary" data-act="edit">Edit</button>`,
+    onClose: () => onChanged && onChanged(),
+  });
+  const reload = async () => { try { s = await servicesApi.get(serviceId); } catch { return; }
+    modal.body.querySelector('#svc-attach').innerHTML = serviceAttachments(s);
+    modal.body.querySelector('#svc-notes').innerHTML = serviceNotes(s);
+  };
+  modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
+  modal.root.querySelector('[data-act=edit]').onclick = () => { modal.close(); openServiceForm({ clinic, service: s, onSaved: () => openServiceDetail({ clinic, serviceId, onChanged }) }); };
+  modal.root.querySelector('[data-act=delete]').onclick = async () => {
+    if (!(await confirmDialog(`Delete the service “${s.name}”?`))) return;
+    await servicesApi.remove(serviceId); toast('Service deleted'); modal.close(); onChanged && onChanged();
+  };
+  const noteForm = modal.body.querySelector('#svc-note-form');
+  attachMentionAutocomplete(noteForm.elements.body, contacts);
+  noteForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = noteForm.elements.body.value.trim();
+    if (!body) return;
+    try { await clinicsApi.addNote(clinicId, body, 'note', getRepName() || null, { service_id: serviceId }); noteForm.elements.body.value = ''; reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+  modal.body.querySelector('#svc-file').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { await attachments.upload(clinicId, f, null, null, null, serviceId); toast('Uploaded', 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+}
+
+function serviceAttachments(s) {
+  const photos = s.photos || [], files = s.files || [];
+  if (!photos.length && !files.length) return '<p class="muted small">No photos or files yet.</p>';
+  return `${photos.length ? `<div class="photo-grid mb">${photos.map(p => `<a href="${attachments.fileUrl(p.id)}" target="_blank" rel="noopener"><img src="${attachments.fileUrl(p.id)}" loading="lazy" alt="${attr(p.caption || p.filename)}"></a>`).join('')}</div>` : ''}
+    ${files.map(f => `<div class="doc-row"><span>📄</span><div class="body"><a href="${attachments.fileUrl(f.id)}" target="_blank" rel="noopener">${esc(f.filename)}</a></div><a class="btn btn-sm" href="${attachments.fileUrl(f.id, true)}">Download</a></div>`).join('')}`;
+}
+
+function serviceNotes(s) {
+  const notes = s.note_log || [];
+  if (!notes.length) return '<p class="muted small">No notes yet.</p>';
+  return notes.map(n => `<div class="photo-note"><div class="body">${renderNoteBody(n.body)}</div><div class="muted small">${esc(fmtDateTime(n.created_at))}${n.author ? ` · ${esc(n.author)}` : ''}</div></div>`).join('');
 }

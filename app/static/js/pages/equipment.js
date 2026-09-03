@@ -1,7 +1,7 @@
 // Equipment page for one clinic: list view and network topology view.
 import { clinics, devices } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
-import { openDeviceForm, openDeviceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
+import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null };
 let rackDragEndAt = 0;  // suppress the click that browsers fire right after a drag
@@ -90,7 +90,7 @@ function renderList(body, list, data) {
       ${groups[t].map(d => `
         <tr class="clickable ${d.status}" data-id="${d.id}">
           <td class="name">${d.is_vm ? '🧊 ' : ''}${esc(d.name)}${d.off_site ? ' <span class="badge badge-purple">off-site</span>' : ''}${d.location_name ? ` <span class="muted small">· ${esc(d.location_name)}</span>` : ''}</td>
-          <td>${esc([d.designation, [d.manufacturer, d.model].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}${d.device_type === 'server' && d.services.length ? `<div class="muted small">${esc(d.services.slice(0, 4).join(', '))}${d.services.length > 4 ? '…' : ''}</div>` : ''}${d.os ? `<div class="muted small">${esc(d.os)}</div>` : ''}</td>
+          <td>${esc([d.designation, [d.manufacturer, d.model].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}${(d.device_type === 'server' || d.is_vm) && d.services.length ? `<div class="muted small">🧩 ${esc(d.services.slice(0, 4).map(s => s.name).join(', '))}${d.services.length > 4 ? '…' : ''}</div>` : ''}${d.os ? `<div class="muted small">${esc(d.os)}</div>` : ''}</td>
           <td>${esc(d.user_name || '')}</td>
           <td class="mono">${esc(d.ip_address || '')}</td>
           <td>${d.uplink_name ? `<span class="link-icon" title="${d.link_label || ''}">${d.is_vm ? '🧊' : (d.link_type === 'wireless' ? '📶' : '🔌')}</span> ${esc(d.uplink_icon || '')} ${esc(d.uplink_name)}` : '<span class="muted">—</span>'}${d.downlink_count ? ` <span class="badge" title="Devices plugged into this">${d.downlink_count} ↓</span>` : ''}</td>
@@ -108,6 +108,26 @@ function renderList(body, list, data) {
 const NODE_W = 172, NODE_H = 56, GAP_X = 18, GAP_Y = 46;
 
 function nodeDim(n) { return n.is_vm ? { w: 132, h: 42 } : { w: NODE_W, h: NODE_H }; }
+
+// Whether a node shows its running services inline (leaf server/VM nodes only, to avoid
+// colliding with children drawn directly below a node).
+function hasInlineServices(n) {
+  return (n.device_type === 'server' || n.is_vm) && n.services && n.services.length && !n.children.length;
+}
+function svcLineCount(n) {
+  if (!hasInlineServices(n)) return 0;
+  return Math.min(2, n.services.length) + (n.services.length > 2 ? 1 : 0);
+}
+// Compact, clickable service names rendered just below a leaf server/VM node.
+function svcLines(n, h, trunc) {
+  if (!hasInlineServices(n)) return '';
+  const shown = n.services.slice(0, 2);
+  let out = shown.map((s, i) =>
+    `<text class="topo-svc" data-svc="${s.id}" x="6" y="${h + 13 + i * 13}">🧩 ${esc(trunc(s.name, 22))}</text>`
+  ).join('');
+  if (n.services.length > 2) out += `<text class="topo-svc-more" x="6" y="${h + 13 + 2 * 13}">+${n.services.length - 2} more</text>`;
+  return out;
+}
 
 async function renderTopology(body) {
   const topo = await devices.topology(clinic.id);
@@ -153,7 +173,8 @@ async function renderTopology(body) {
   offsite.forEach((n, i) => { pos[n.id] = { x: (i % perRow) * (NODE_W + GAP_X), y: offY + 26 + Math.floor(i / perRow) * (NODE_H + GAP_Y) }; });
 
   const W = Math.max(mainWidth, x2, offsite.length ? perRow * (NODE_W + GAP_X) : 0) + 40;
-  const H = Math.max(...Object.values(pos).map(p => p.y), 0) + NODE_H + 30;
+  const nodeBottom = (n) => { const p = pos[n.id]; if (!p) return 0; const lines = svcLineCount(n); return p.y + NODE_H + (lines ? lines * 13 + 8 : 0); };
+  const H = Math.max(0, ...[...topo.nodes, ...offsite].map(nodeBottom)) + 30;
   const ox = 20, oy = 20;
   const cx = (id) => ox + pos[id].x + NODE_W / 2;
   const boxTop = (id) => oy + pos[id].y + (NODE_H - nodeDim(byId[id]).h) / 2;
@@ -189,7 +210,8 @@ async function renderTopology(body) {
       <text x="${isVm ? 34 : 44}" y="${isVm ? 18 : 22}" font-weight="600" style="font-size:${isVm ? 11 : 12}px">${esc(trunc(n.name, isVm ? 14 : 17))}</text>
       <text class="sub" x="${isVm ? 34 : 44}" y="${isVm ? 33 : 40}" style="font-size:${isVm ? 10 : 11}px">${esc(trunc(sub, isVm ? 16 : 21))}</text>
       ${n.ticket_count ? `<text class="badge" x="${w - 8}" y="14" text-anchor="end">🎫${n.ticket_count}</text>` : ''}
-      ${n.uplink_id && n.link_type === 'wireless' ? `<text class="badge" x="${w - 8}" y="${h - 8}" text-anchor="end">📶</text>` : ''}
+      ${(n.services && n.services.length) ? `<text class="badge" x="${w - 8}" y="${h - 8}" text-anchor="end">🧩${n.services.length}</text>` : (n.uplink_id && n.link_type === 'wireless' ? `<text class="badge" x="${w - 8}" y="${h - 8}" text-anchor="end">📶</text>` : '')}
+      ${svcLines(n, h, trunc)}
     </g>`;
   }
   body.innerHTML = `
@@ -215,6 +237,13 @@ async function renderTopology(body) {
       try { const r = await devices.connect(clinic.id, { child_id: state.source, parent_id: id }); toast(r.mode === 'primary' ? 'Primary uplink set' : 'Extra connection added', 'success'); }
       catch (e) { toast(e.message, 'error'); }
       state.source = null; renderTopology(body);
+    };
+  });
+  body.querySelectorAll('.topo-svc').forEach(t => {
+    t.onclick = (e) => {
+      e.stopPropagation();
+      if (state.edit) return;
+      openServiceDetail({ clinic, serviceId: Number(t.dataset.svc), onChanged: () => renderTopology(body) });
     };
   });
   body.querySelectorAll('.topo-edge-hit').forEach(h => {

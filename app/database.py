@@ -381,6 +381,10 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("archived", "INTEGER NOT NULL DEFAULT 0"),
         ("archived_at", "TEXT"),
         ("group_id", "INTEGER REFERENCES clinic_groups(id) ON DELETE SET NULL"),
+        # Address shown on the clinic page (may differ from the geocoding address, e.g. a unit #).
+        ("display_address", "TEXT"),
+        # Opening hours, stored as a JSON object keyed by weekday.
+        ("hours", "TEXT"),
         # Client lifecycle & recurring revenue
         ("mrr", "REAL"),
         ("contract_start", "TEXT"),

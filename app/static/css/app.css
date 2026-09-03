@@ -762,6 +762,18 @@ details summary { cursor: pointer; font-weight: 600; }
 .tabs button:hover { color: var(--text); }
 .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
 label.radio { display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+/* Clinic hours editor + display */
+.hours-editor { display: flex; flex-direction: column; gap: 6px; }
+.hours-row { display: grid; grid-template-columns: 90px 90px 1fr auto 1fr; gap: 10px; align-items: center; }
+.hours-row .hours-day { font-weight: 600; font-size: 13px; }
+.hours-row .hours-closed { font-weight: 500; margin: 0; }
+.hours-row .hours-sep { color: var(--muted); text-align: center; }
+.hours-row input[type=time] { padding: 4px 6px; }
+.hours-view { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.hours-view > div { display: flex; gap: 10px; }
+.hours-view .hd { width: 38px; color: var(--muted); font-weight: 600; }
+.hours-view .today { font-weight: 700; }
+.hours-view .today .hd { color: var(--primary); }
 .inv-totals { font-size: 13px; }
 .inv-totals .grand { font-size: 16px; font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
 tr.row-warn td { background: var(--red-bg); }

@@ -8,6 +8,66 @@ import { openGroupForm } from './pages/settings.js';
 
 // ---- Clinic --------------------------------------------------------------
 
+const HOURS_DAYS = [
+  ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
+  ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
+];
+
+function hoursEditorHtml(hours) {
+  hours = hours || {};
+  return `<div class="hours-editor">${HOURS_DAYS.map(([k, label]) => {
+    const h = hours[k] || {};
+    return `<div class="hours-row" data-day="${k}">
+      <span class="hours-day">${label}</span>
+      <label class="checkbox hours-closed"><input type="checkbox" data-h="closed" ${h.closed ? 'checked' : ''}> Closed</label>
+      <input type="time" data-h="open" value="${attr(h.open || '')}" ${h.closed ? 'disabled' : ''}>
+      <span class="hours-sep">to</span>
+      <input type="time" data-h="close" value="${attr(h.close || '')}" ${h.closed ? 'disabled' : ''}>
+    </div>`;
+  }).join('')}</div>
+  <div class="flex mt"><button type="button" class="btn btn-sm" id="hours-copy">Copy Monday to all days</button>
+    <button type="button" class="btn btn-sm" id="hours-clear">Clear hours</button></div>`;
+}
+
+function wireHours(form) {
+  const rows = [...form.querySelectorAll('.hours-row')];
+  const sync = (row) => {
+    const closed = row.querySelector('[data-h=closed]').checked;
+    row.querySelectorAll('input[type=time]').forEach(t => { t.disabled = closed; if (closed) t.value = ''; });
+  };
+  rows.forEach(row => { row.querySelector('[data-h=closed]').addEventListener('change', () => sync(row)); });
+  const copy = form.querySelector('#hours-copy');
+  if (copy) copy.onclick = () => {
+    const first = rows[0];
+    const src = { closed: first.querySelector('[data-h=closed]').checked, open: first.querySelector('[data-h=open]').value, close: first.querySelector('[data-h=close]').value };
+    rows.slice(1).forEach(row => {
+      row.querySelector('[data-h=closed]').checked = src.closed;
+      row.querySelector('[data-h=open]').value = src.open;
+      row.querySelector('[data-h=close]').value = src.close;
+      sync(row);
+    });
+  };
+  const clear = form.querySelector('#hours-clear');
+  if (clear) clear.onclick = () => rows.forEach(row => {
+    row.querySelector('[data-h=closed]').checked = false;
+    row.querySelector('[data-h=open]').value = '';
+    row.querySelector('[data-h=close]').value = '';
+    sync(row);
+  });
+}
+
+function collectHours(form) {
+  const hours = {};
+  form.querySelectorAll('.hours-row').forEach(row => {
+    const day = row.dataset.day;
+    const closed = row.querySelector('[data-h=closed]').checked;
+    const open = row.querySelector('[data-h=open]').value;
+    const close = row.querySelector('[data-h=close]').value;
+    if (closed || open || close) hours[day] = { closed, open, close };
+  });
+  return Object.keys(hours).length ? hours : null;
+}
+
 export async function openClinicForm({ clinic = null, initial = {}, onSaved } = {}) {
   const meta = await getMeta();
   const groupList = await groups.list();
@@ -56,6 +116,11 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
           </div>
           <div class="geocode-results hidden" id="geocode-results"></div>
         </div>
+        <div class="field">
+          <label>Displayed address</label>
+          <input name="display_address" value="${attr(c.display_address)}" placeholder="Leave blank to use the address above">
+          <div class="help">Shown on the clinic page. Use this when the real address needs a unit # or suite that would otherwise break the map lookup above.</div>
+        </div>
         <div class="field-row">
           <div class="field"><label>City</label><input name="city" value="${attr(c.city)}"></div>
           <div class="field"><label>Province</label><input name="province" value="${attr(c.province)}"></div>
@@ -78,6 +143,12 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
           <div class="field"><label>Email</label><input name="email" type="email" value="${attr(c.email)}"></div>
           <div class="field"><label>Website</label><input name="website" value="${attr(c.website)}" placeholder="https://"></div>
         </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Hours</h3>
+        <div class="help mb">Set the days and times this clinic is open. Leave a day blank if you don't know it yet.</div>
+        ${hoursEditorHtml(c.hours)}
       </div>
 
       <div class="form-section">
@@ -181,6 +252,7 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
   });
 
   const form = modal.body.querySelector('#clinic-form');
+  wireHours(form);
   const latEl = form.elements.lat;
   const lngEl = form.elements.lng;
 
@@ -311,6 +383,7 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
     if (data.lng === '' || data.lng === null) data.lng = null;
     if (!['won', 'lost'].includes(data.stage)) { data.outcome_reason = null; data.outcome_notes = null; data.outcome_date = null; }
     data.group_id = data.group_id ? Number(data.group_id) : null;
+    data.hours = collectHours(form);
     try {
       const saved = isEdit ? await clinics.update(clinic.id, data) : await clinics.create(data);
       toast(isEdit ? 'Clinic updated' : 'Clinic created', 'success');

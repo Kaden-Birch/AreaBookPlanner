@@ -11,14 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import (
     LEGACY_COLOR_KEYS, LINK_TYPES, LOST_REASONS, QUICK_LOGS, RELATIONSHIP_LABELS, STAGE_LABELS, WON_REASONS,
-    enrich_clinic, log_event, normalize_address, normalize_name, now_iso,
+    enrich_clinic, hours_to_json, log_event, normalize_address, normalize_name, now_iso,
 )
 from ..schemas import ArchiveIn, ClinicIn, LinkIn, LocationIn, NoteIn, QuickLogIn, StageChange
 
 router = APIRouter(prefix="/api/clinics", tags=["clinics"])
 
 CLINIC_COLUMNS = [
-    "name", "address", "city", "province", "postal_code", "phone", "fax", "email", "website",
+    "name", "address", "display_address", "city", "province", "postal_code", "hours",
+    "phone", "fax", "email", "website",
     "lat", "lng", "relationship", "clinic_type", "emr_system", "it_provider", "provider_count",
     "priority", "tags", "notes", "next_follow_up",
     "stage", "deal_value", "expected_close", "win_probability",
@@ -235,6 +236,7 @@ def list_clinics(
 @router.post("", status_code=201)
 def create_clinic(payload: ClinicIn, conn: sqlite3.Connection = Depends(db_dependency)):
     data = payload.model_dump()
+    data["hours"] = hours_to_json(data.get("hours"))
     _sync_stage_and_relationship(data, None)
     _apply_competitor_followup(data, None)
     data["churned_at"] = _churn_value(None, data)
@@ -518,6 +520,7 @@ def delete_link(clinic_id: int, link_id: int, conn: sqlite3.Connection = Depends
 def update_clinic(clinic_id: int, payload: ClinicIn, conn: sqlite3.Connection = Depends(db_dependency)):
     before = _get_clinic_or_404(conn, clinic_id)
     data = payload.model_dump()
+    data["hours"] = hours_to_json(data.get("hours"))
     _sync_stage_and_relationship(data, before)
     _apply_competitor_followup(data, before)
     data["churned_at"] = _churn_value(before, data)

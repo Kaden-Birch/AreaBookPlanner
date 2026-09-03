@@ -1,6 +1,7 @@
 """Derived clinic attributes: last visit, next appointment, map colour."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, datetime, timedelta
 
@@ -78,6 +79,49 @@ QUICK_LOGS = {
 }
 
 REMINDER_OPTIONS = [15, 30, 45, 60]
+
+# Opening hours: ordered weekday keys and labels for the clinic hours editor/display.
+HOURS_DAYS = [
+    ("mon", "Monday"), ("tue", "Tuesday"), ("wed", "Wednesday"), ("thu", "Thursday"),
+    ("fri", "Friday"), ("sat", "Saturday"), ("sun", "Sunday"),
+]
+_HOURS_KEYS = {k for k, _ in HOURS_DAYS}
+# Python's date.weekday(): Monday=0 … Sunday=6, matching HOURS_DAYS order.
+_WEEKDAY_KEYS = [k for k, _ in HOURS_DAYS]
+
+
+def clean_hours(hours) -> dict | None:
+    """Normalise an incoming hours object to {day: {closed, open, close}} with known days only."""
+    if not isinstance(hours, dict):
+        return None
+    out: dict = {}
+    for key in _HOURS_KEYS:
+        raw = hours.get(key)
+        if not isinstance(raw, dict):
+            continue
+        closed = bool(raw.get("closed"))
+        opn = (raw.get("open") or "").strip() if isinstance(raw.get("open"), str) else ""
+        cls = (raw.get("close") or "").strip() if isinstance(raw.get("close"), str) else ""
+        if not closed and not opn and not cls:
+            continue  # blank / unknown — don't store
+        out[key] = {"closed": closed, "open": opn, "close": cls}
+    return out or None
+
+
+def hours_to_json(hours) -> str | None:
+    cleaned = clean_hours(hours)
+    return json.dumps(cleaned) if cleaned else None
+
+
+def parse_hours(value) -> dict | None:
+    if not value:
+        return None
+    if isinstance(value, dict):
+        return value
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        return None
 
 # ---- Inventory / orders / invoices ------------------------------------------
 INVENTORY_CATEGORIES = [
@@ -246,6 +290,8 @@ def enrich_clinic(conn: sqlite3.Connection, clinic: dict) -> dict:
     clinic["follow_up_overdue"] = bool(clinic.get("next_follow_up")) and clinic["next_follow_up"] < today and clinic["relationship"] != "do_not_contact"
     clinic["relationship_label"] = RELATIONSHIP_LABELS.get(clinic["relationship"], clinic["relationship"])
     clinic["tag_list"] = [t.strip() for t in (clinic.get("tags") or "").split(",") if t.strip()]
+    clinic["hours"] = parse_hours(clinic.get("hours"))
+    clinic["display_address"] = clinic.get("display_address") or None
     clinic["archived"] = bool(clinic.get("archived"))
     clinic["is_client"] = clinic["relationship"] == "current_client"
     stage = clinic.get("stage") or "lead"

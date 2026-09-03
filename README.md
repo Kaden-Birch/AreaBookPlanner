@@ -26,7 +26,12 @@ and is stored in a single SQLite file.
   out automatically from logged visits (in‑person appointments that were not cancelled).
 - **Clinic profiles** – address, phone, fax, email, website, clinic type, EMR system,
   current IT provider, number of providers, priority, tags, next follow-up date,
-  general notes, and a dated **note log** for calls and conversations.
+  general notes, and a dated **note log** for calls and conversations. A separate
+  **displayed address** can be shown on the profile when the real address needs a unit /
+  suite that would otherwise break the map lookup (the map keeps using the plain address).
+- **Opening hours** – set each weekday's hours with an interactive per-day editor (with a
+  "copy Monday to all" shortcut); the profile shows the week at a glance with today
+  highlighted.
 - **Contacts** – clinic managers, doctors, nurses, reception and other staff, with a
   primary-contact flag. Global contacts page plus per-clinic lists.
 - **Calendar & appointments** – month and agenda views. Create appointments from the

@@ -362,6 +362,35 @@ def test_inventory_orders_invoices(client):
     assert backup["inventory_items"] and backup["invoices"] and backup["invoice_lines"] and backup["orders"]
 
 
+def test_display_address_and_hours(client):
+    r = client.post("/api/clinics", json={
+        "name": "Hours Clinic", "address": "500 5 Ave SW", "display_address": "Suite 300, 500 5 Ave SW",
+        "hours": {
+            "mon": {"open": "09:00", "close": "17:00"},
+            "sat": {"closed": True},
+            "sun": {"open": "", "close": ""},  # blank -> dropped
+        },
+    })
+    assert r.status_code == 201, r.text
+    c = r.json()
+    cid = c["id"]
+    assert c["display_address"] == "Suite 300, 500 5 Ave SW"
+    assert c["address"] == "500 5 Ave SW"  # geocoding address is unchanged
+    assert c["hours"]["mon"] == {"closed": False, "open": "09:00", "close": "17:00"}
+    assert c["hours"]["sat"]["closed"] is True
+    assert "sun" not in c["hours"]  # blank day not stored
+
+    # Re-fetch parses hours back into an object, and it survives a backup.
+    assert client.get(f"/api/clinics/{cid}").json()["hours"]["mon"]["open"] == "09:00"
+    backup = client.get("/api/export/backup.json").json()
+    row = next(x for x in backup["clinics"] if x["id"] == cid)
+    assert '"mon"' in row["hours"] and row["display_address"].startswith("Suite 300")
+
+    # Clearing hours + display address works.
+    upd = client.put(f"/api/clinics/{cid}", json={"name": "Hours Clinic", "address": "500 5 Ave SW"}).json()
+    assert upd["hours"] is None and upd["display_address"] is None
+
+
 def test_clients_contacts_locations_links_groups(client):
     # client-specific fields + archive
     r = client.post("/api/clinics", json={"name": "Cardiology One Calgary", "relationship": "current_client", "shorthand": "coc", "phone": "403-555-0900", "address": "1 Heart Way SW"})

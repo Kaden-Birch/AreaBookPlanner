@@ -22,9 +22,11 @@ def _blank_to_none(v):
 class ClinicIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     address: Optional[str] = None
+    display_address: Optional[str] = None  # shown on the clinic page; falls back to `address`
     city: Optional[str] = "Calgary"
     province: Optional[str] = "AB"
     postal_code: Optional[str] = None
+    hours: Optional[dict] = None  # {mon: {closed, open, close}, ...}
     phone: Optional[str] = None
     fax: Optional[str] = None
     email: Optional[str] = None
@@ -62,7 +64,7 @@ class ClinicIn(BaseModel):
     competitor_contract_end: Optional[str] = None  # YYYY-MM-DD
 
     _blank = field_validator(
-        "address", "city", "province", "postal_code", "phone", "fax", "email", "website",
+        "address", "display_address", "city", "province", "postal_code", "phone", "fax", "email", "website",
         "clinic_type", "emr_system", "it_provider", "tags", "notes", "next_follow_up",
         "lat", "lng", "provider_count", "deal_value", "expected_close", "win_probability",
         "outcome_reason", "outcome_notes", "outcome_date", "shorthand", "group_id",

@@ -32,6 +32,21 @@ function competitorBadge(c) {
   return badge(`${c.competitor_days}d`, 'badge-grey');
 }
 
+const HOURS_VIEW_DAYS = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
+
+function hoursDisplay(clinic) {
+  const h = clinic.hours;
+  if (!h || !Object.keys(h).length) return '<span class="muted">— not recorded</span>';
+  const todayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date().getDay()];
+  return `<div class="hours-view">${HOURS_VIEW_DAYS.map(([k, lbl]) => {
+    const d = h[k];
+    let txt = '<span class="muted">—</span>';
+    if (d && d.closed) txt = '<span class="muted">Closed</span>';
+    else if (d && (d.open || d.close)) txt = esc([d.open, d.close].filter(Boolean).join(' – '));
+    return `<div class="${k === todayKey ? 'today' : ''}"><span class="hd">${lbl}</span><span>${txt}</span></div>`;
+  }).join('')}</div>`;
+}
+
 function contractSummary(c) {
   if (!c.contract_start && !c.contract_end && !c.contract_term_months) return '<span class="muted">— none recorded</span>';
   const range = [c.contract_start ? fmtDateOnly(c.contract_start) : '?', c.contract_end ? fmtDateOnly(c.contract_end) : '?'].join(' → ');
@@ -74,7 +89,7 @@ export async function render(container, params, routeParams) {
             ${clinic.archived ? badge('Off the board', 'badge-grey') : ''}
           </div>
           <div class="meta">
-            <span>${esc(fullAddress(clinic)) || 'No address on file'}</span>
+            <span>${esc(clinic.display_address || fullAddress(clinic)) || 'No address on file'}</span>
             ${clinic.phone ? `<span>☎ <a href="tel:${attr(clinic.phone)}">${esc(clinic.phone)}</a></span>` : ''}
             ${clinic.email ? `<span>✉ <a href="mailto:${attr(clinic.email)}">${esc(clinic.email)}</a></span>` : ''}
             ${clinic.website ? `<span><a href="${attr(clinic.website)}" target="_blank" rel="noopener">Website</a></span>` : ''}
@@ -139,6 +154,7 @@ export async function render(container, params, routeParams) {
             <dt>Providers</dt><dd>${clinic.provider_count ?? '—'}</dd>
             <dt>Fax</dt><dd>${esc(clinic.fax || '—')}</dd>
             <dt>Tags</dt><dd>${clinic.tag_list.length ? tagList(clinic.tag_list) : '—'}</dd>
+            <dt>Hours</dt><dd>${hoursDisplay(clinic)}</dd>
             ${!isClient ? `<dt>Last visit</dt><dd>${clinic.last_visit ? `${esc(fmtDateTime(clinic.last_visit))} <span class="muted">(${esc(relativeDays(clinic.last_visit))})</span>` : 'Never visited'}</dd>` : ''}
             <dt>Next appointment</dt><dd>${clinic.next_appointment ? `${esc(fmtDateTime(clinic.next_appointment.start_time))} · ${esc(clinic.next_appointment.title)}` : '—'}</dd>
             <dt>Next follow-up</dt><dd>${clinic.next_follow_up ? `${esc(fmtDateOnly(clinic.next_follow_up))} ${clinic.next_follow_up < today ? badge('Overdue', 'badge-red') : ''}` : '—'}</dd>

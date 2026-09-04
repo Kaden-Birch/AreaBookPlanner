@@ -142,9 +142,10 @@ and is stored in a single SQLite file.
   your API key under Settings → AI. The card image is attached to the clinic.
 - **AI clinic import** – the Add-clinic form has an opt-in **✨ Use AI to add automatically**
   shortcut. Paste a clinic's website URL and it prepares a draft: the backend (never the
-  browser) reads the page with the OpenAI key already stored under Settings → AI and returns
-  a structured draft — name, address, phone/email, type, hours, extra sites and named
-  contacts — each AI-filled field tagged with its source and confidence. Nothing is saved
+  browser) reads that page **plus a few key pages it links to** — Contact, Locations, Hours,
+  Team — with the OpenAI key already stored under Settings → AI, and returns a structured
+  draft — name, address, phone/email, type, hours, extra sites and named contacts — each
+  AI-filled field tagged with its source and confidence. Nothing is saved
   until you review and confirm: manual entries you'd already typed are preserved as the
   preferred values, you can edit any field (which drops its AI tag), un-tick proposed
   sites/contacts, then **Create clinic** — or go **Back to manual entry** / **Discard draft**.

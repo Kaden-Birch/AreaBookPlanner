@@ -1312,3 +1312,44 @@ def test_ai_clinic_draft(client, monkeypatch):
     client.put("/api/settings", json={"ai_clinic_import_enabled": False})
     assert client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"}).status_code == 403
     client.put("/api/settings", json={"ai_clinic_import_enabled": True})
+
+
+def test_ai_draft_follows_internal_pages(monkeypatch):
+    """The website reader pulls in key linked pages (Contact/Locations/Team), not just the URL pasted."""
+    from app.routers import extras
+
+    home = """
+      <html><body>
+        <h1>Demo Family Clinic</h1>
+        <a href="/contact">Contact Us</a>
+        <a href="/our-team">Our Team</a>
+        <a href="/locations/south">South Location</a>
+        <a href="https://other-site.example/contact">Off-site contact</a>
+        <a href="mailto:info@demo.example">Email us</a>
+        <a href="/blog/post-1">A blog post</a>
+      </body></html>"""
+    pages = {
+        "https://demo.example": home,
+        "https://demo.example/contact": "<html><body>Call us at 403-555-0100. info@demo.example</body></html>",
+        "https://demo.example/our-team": "<html><body>Dr. Pat Lee, Family Physician. Dr. Sam Ng.</body></html>",
+        "https://demo.example/locations/south": "<html><body>Our Demo South branch is at 9 South Rd SW, Calgary AB. Open weekdays.</body></html>",
+    }
+
+    # Link discovery: same-site hint pages only, ranked; off-site and blog links excluded.
+    links = extras._links_to_follow("https://demo.example", home, limit=4)
+    assert "https://demo.example/contact" in links
+    assert "https://demo.example/our-team" in links
+    assert "https://demo.example/locations/south" in links
+    assert not any("other-site.example" in u for u in links)
+    assert not any("/blog/" in u for u in links)
+
+    def fake_fetch(url, timeout=20):
+        if url not in pages:
+            raise RuntimeError("404")
+        return url, pages[url]
+
+    monkeypatch.setattr(extras, "_fetch_html", fake_fetch)
+    combined = extras._fetch_url_text("demo.example")
+    # The combined text is labelled per page and includes content only present on sub-pages.
+    assert combined.count("# Page:") >= 3
+    assert "403-555-0100" in combined and "Dr. Pat Lee" in combined and "9 South Rd SW" in combined

@@ -729,6 +729,8 @@ async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connect
 
 CLINIC_DRAFT_PROMPT = (
     "You build clinic records for a medical-IT sales CRM in Calgary, Canada, from a clinic's public website. "
+    "The text below may combine several pages from the same site (each starts with a '# Page: <url>' heading, "
+    "e.g. the home page plus Contact, Locations or Team pages). Read all of it. "
     "Use ONLY information present in the provided page text; never invent details. Reply with ONLY a JSON object with these keys:\n"
     "clinic: {name, address, city, province, postal_code, phone, fax, email, website, clinic_type, provider_count, notes}\n"
     "hours: an object keyed by mon,tue,wed,thu,fri,sat,sun; each value is either null (unknown), the string \"closed\", "
@@ -744,35 +746,97 @@ CLINIC_DRAFT_PROMPT = (
 _TAG_RE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>", re.I | re.S)
 _ANGLE_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
+_HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
+# Pages worth following to fill in details that aren't on the landing page.
+_PAGE_HINTS = ("contact", "about", "location", "hour", "team", "provider", "physician", "doctor",
+               "staff", "find-us", "find us", "our-clinic", "our-office", "our clinic", "reach",
+               "book", "appointment", "clinic")
+
+
+def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
+    """Fetch one page; return (final_url, html). Raises HTTPException on failure."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        ctype = resp.headers.get("Content-Type", "")
+        if "html" not in ctype.lower() and ctype:
+            raise HTTPException(status_code=422, detail="That link is not a web page.")
+        raw = resp.read(2_000_000)
+        final_url = resp.geturl() or url
+    charset = "utf-8"
+    if "charset=" in ctype:
+        charset = ctype.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
+    return final_url, raw.decode(charset, "ignore")
+
+
+def _extract_text(html: str) -> str:
+    text = _ANGLE_RE.sub(" ", _TAG_RE.sub(" ", html))
+    text = _WS_RE.sub(" ", text.replace("\xa0", " "))
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def _links_to_follow(base_url: str, html: str, limit: int = 4) -> list[str]:
+    """Same-site links likely to hold contact / location / hours / team details."""
+    base = urllib.parse.urlparse(base_url)
+    base_norm = base_url.split("#")[0].rstrip("/")
+    seen, scored = set(), []
+    for m in _HREF_RE.finditer(html):
+        href = m.group(1).strip()
+        if href.lower().startswith(("mailto:", "tel:", "javascript:", "data:")):
+            continue
+        full = urllib.parse.urljoin(base_url, href)
+        p = urllib.parse.urlparse(full)
+        if p.scheme not in ("http", "https") or p.netloc != base.netloc:
+            continue
+        norm = full.split("#")[0].rstrip("/")
+        if not norm or norm == base_norm or norm in seen:
+            continue
+        text = _ANGLE_RE.sub(" ", m.group(2)).strip().lower()
+        hay = (p.path + " " + text).lower()
+        score = sum(1 for h in _PAGE_HINTS if h in hay)
+        if score:
+            seen.add(norm)
+            scored.append((score, norm))
+    scored.sort(key=lambda x: -x[0])
+    return [u for _, u in scored[:limit]]
 
 
 def _fetch_url_text(url: str) -> str:
-    """Fetch a public web page server-side and reduce it to visible text."""
+    """Read the pasted page plus a few key internal pages it links to (Contact, Locations,
+    Hours, Team), and combine them into one labelled text block for the model."""
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         url = "https://" + url
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise HTTPException(status_code=422, detail="Enter a valid website URL, e.g. https://clinic-example.ca")
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            ctype = resp.headers.get("Content-Type", "")
-            raw = resp.read(2_000_000)
+        final_url, html = _fetch_html(url, timeout=20)
+    except HTTPException:
+        raise
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Could not open that website ({exc.code}).") from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Could not open that website: {exc}") from exc
-    charset = "utf-8"
-    if "charset=" in ctype:
-        charset = ctype.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
-    html = raw.decode(charset, "ignore")
-    text = _ANGLE_RE.sub(" ", _TAG_RE.sub(" ", html))
-    text = _WS_RE.sub(" ", text.replace("\xa0", " "))
-    text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
-    if len(text) < 40:
+
+    main_text = _extract_text(html)
+    if len(main_text) < 40:
         raise HTTPException(status_code=422, detail="That page had no readable text to work from.")
-    return text[:12000]
+    parts = [f"# Page: {final_url}\n{main_text[:8000]}"]
+    total = len(parts[0])
+    for link in _links_to_follow(final_url, html, limit=4):
+        if total > 13000:
+            break
+        try:
+            _, sub_html = _fetch_html(link, timeout=12)
+            sub_text = _extract_text(sub_html)
+        except Exception:  # noqa: BLE001 - a broken sub-page just gets skipped
+            continue
+        if len(sub_text) < 40:
+            continue
+        chunk = f"\n\n# Page: {link}\n{sub_text[:4000]}"
+        parts.append(chunk)
+        total += len(chunk)
+    return "".join(parts)[:16000]
 
 
 def _draft_clean(v):

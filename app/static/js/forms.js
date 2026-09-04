@@ -85,7 +85,7 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
       <div class="ai-panel hidden" id="ai-input-panel">
         <h3>Create clinic from website</h3>
         <div class="field"><label>Website URL</label><input id="ai-url" placeholder="https://clinic-example.ca" inputmode="url"></div>
-        <div class="help">AI will use public information from this website to prepare a clinic draft. Nothing is added until you review and confirm it.</div>
+        <div class="help">AI will use public information from this website — the page you paste plus a few key pages it links to, such as Contact, Locations and Team — to prepare a clinic draft. Nothing is added until you review and confirm it.</div>
         <div class="form-warn hidden" id="ai-input-error"></div>
       </div>
       <div id="clinic-fields">

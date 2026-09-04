@@ -7,13 +7,14 @@ appear on the other clinic too, and editing or deleting it updates both views at
 """
 from __future__ import annotations
 
+import ipaddress
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import DEVICE_TYPES, log_event, now_iso
-from ..schemas import TransitSetIn, VpnEndpointIn, VpnLinkIn
+from ..schemas import NetworkRangeIn, TransitSetIn, VpnEndpointIn, VpnLinkIn
 
 router = APIRouter(prefix="/api", tags=["vpn"])
 
@@ -361,10 +362,10 @@ def transit_options(link_id: int, origin: str = Query("a", alias="from"), conn: 
     src_c, src_l = _link_site(link, origin)
     via_c, via_l = _link_site(link, "b" if origin == "a" else "a")
     sc, sp = _loc_clause("source_location_id", src_l)
-    selected = {(r["dest_clinic_id"], r["dest_location_id"] or None, r["exit_vpn_link_id"])
-                for r in rows_to_list(conn.execute(
-                    f"SELECT * FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc} AND entry_vpn_link_id = ?",
-                    [src_c, *sp, link_id]))}
+    existing = rows_to_list(conn.execute(
+        f"SELECT * FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc} AND entry_vpn_link_id = ?", [src_c, *sp, link_id]))
+    selected = {(r["dest_clinic_id"], r["dest_location_id"] or None, r["exit_vpn_link_id"]) for r in existing}
+    rationale_of = {(r["dest_clinic_id"], r["dest_location_id"] or None, r["exit_vpn_link_id"]): r["rationale"] for r in existing}
     options = []
     for l in rows_to_list(conn.execute("SELECT * FROM vpn_links WHERE b_kind = 'site' AND id <> ?", (link_id,))):
         if _same_site(l["a_clinic_id"], l["a_location_id"], via_c, via_l):
@@ -379,7 +380,9 @@ def transit_options(link_id: int, origin: str = Query("a", alias="from"), conn: 
         d["exit_vpn_link_id"] = l["id"]
         d["exit_vpn_name"] = l["name"]
         d["exit_status"] = l["status"]
-        d["selected"] = (dest[0], dest[1] or None, l["id"]) in selected
+        rkey = (dest[0], dest[1] or None, l["id"])
+        d["selected"] = rkey in selected
+        d["rationale"] = rationale_of.get(rkey)
         options.append(d)
     return {"source": _site_dict(conn, src_c, src_l), "via": _site_dict(conn, via_c, via_l), "options": options}
 
@@ -435,6 +438,7 @@ def connectivity(clinic_id: int, site: str | None = None, conn: sqlite3.Connecti
     _clinic_or_404(conn, clinic_id)
     src_l = _resolve_site_loc(conn, clinic_id, site)
     source = _site_dict(conn, clinic_id, src_l)
+    source["ranges"] = _ranges_for_site(conn, clinic_id, src_l)
     all_links = rows_to_list(conn.execute("SELECT * FROM vpn_links"))
     active = [l for l in all_links if l["status"] != "disabled"]
     active_ids = {l["id"] for l in active}
@@ -453,6 +457,8 @@ def connectivity(clinic_id: int, site: str | None = None, conn: sqlite3.Connecti
         seen.add(key)
         entry = {"relationship": "direct", "vpn_link_id": l["id"], "vpn_name": l["name"],
                  "status": l["status"], "status_label": VPN_STATUSES.get(l["status"], l["status"]), **opp}
+        if opp["kind"] == "site":
+            entry["ranges"] = _ranges_for_site(conn, opp["clinic_id"], None if opp["site_id"] == "main" else int(opp["site_id"]))
         direct.append(entry)
 
     remote = []
@@ -468,6 +474,99 @@ def connectivity(clinic_id: int, site: str | None = None, conn: sqlite3.Connecti
         via = _site_dict(conn, r["via_clinic_id"], r["via_location_id"])
         remote.append({**dest, "kind": "site", "relationship": "via", "via": via, "transit_id": r["id"],
                        "rationale": r["rationale"],
+                       "ranges": _ranges_for_site(conn, r["dest_clinic_id"], r["dest_location_id"]),
                        "path": [{"vpn_link_id": r["entry_vpn_link_id"], "from": source, "to": via},
                                 {"vpn_link_id": r["exit_vpn_link_id"], "from": via, "to": dest}]})
     return {"source_site": source, "direct": direct, "remote": remote}
+
+
+# ---- Optional IP network ranges (advanced) --------------------------------------
+
+RANGE_COLUMNS = ["name", "cidr", "network_type", "notes"]
+NETWORK_TYPES = {"lan": "LAN", "server": "Server", "voip": "VoIP", "guest": "Guest", "management": "Management", "other": "Other"}
+
+
+def _ranges_for_site(conn: sqlite3.Connection, clinic_id: int, loc: int | None) -> list[dict]:
+    lc, lp = _loc_clause("location_id", loc)
+    return rows_to_list(conn.execute(
+        f"SELECT * FROM site_network_ranges WHERE clinic_id = ? AND {lc} ORDER BY name COLLATE NOCASE", [clinic_id, *lp]))
+
+
+def _directly_linked_sites(conn: sqlite3.Connection, clinic_id: int, loc: int | None) -> list[tuple[int, int | None]]:
+    out = []
+    for l in rows_to_list(conn.execute("SELECT * FROM vpn_links WHERE b_kind = 'site'")):
+        if _same_site(l["a_clinic_id"], l["a_location_id"], clinic_id, loc):
+            out.append((l["b_clinic_id"], l["b_location_id"]))
+        elif _same_site(l["b_clinic_id"], l["b_location_id"], clinic_id, loc):
+            out.append((l["a_clinic_id"], l["a_location_id"]))
+    return out
+
+
+def _overlaps_for(conn: sqlite3.Connection, ranges: list[dict], clinic_id: int, loc: int | None) -> dict[int, list]:
+    """For each range at this site, any overlapping range at a directly VPN-linked site."""
+    peers = _directly_linked_sites(conn, clinic_id, loc)
+    peer_ranges = []
+    for pc, pl in peers:
+        for r in _ranges_for_site(conn, pc, pl):
+            info = _site_info(conn, pc, pl)
+            peer_ranges.append((r, info))
+    result: dict[int, list] = {}
+    for r in ranges:
+        try:
+            net = ipaddress.ip_network(r["cidr"], strict=False)
+        except ValueError:
+            continue
+        hits = []
+        for pr, info in peer_ranges:
+            try:
+                if net.overlaps(ipaddress.ip_network(pr["cidr"], strict=False)):
+                    hits.append({"range_id": pr["id"], "cidr": pr["cidr"], "name": pr["name"],
+                                 "clinic_name": info["clinic_name"], "site_name": info["site_name"]})
+            except ValueError:
+                continue
+        if hits:
+            result[r["id"]] = hits
+    return result
+
+
+@router.get("/clinics/{clinic_id}/network-ranges")
+def list_ranges(clinic_id: int, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    _clinic_or_404(conn, clinic_id)
+    loc = _resolve_site_loc(conn, clinic_id, site)
+    ranges = _ranges_for_site(conn, clinic_id, loc)
+    overlaps = _overlaps_for(conn, ranges, clinic_id, loc)
+    for r in ranges:
+        r["type_label"] = NETWORK_TYPES.get(r["network_type"], r["network_type"])
+        r["overlaps"] = overlaps.get(r["id"], [])
+    return {"ranges": ranges, "network_types": NETWORK_TYPES, "site": _site_dict(conn, clinic_id, loc)}
+
+
+@router.post("/clinics/{clinic_id}/network-ranges", status_code=201)
+def create_range(clinic_id: int, payload: NetworkRangeIn, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    _clinic_or_404(conn, clinic_id)
+    loc = _resolve_site_loc(conn, clinic_id, site)
+    data = payload.model_dump()
+    cols = ", ".join(["clinic_id", "location_id", *RANGE_COLUMNS])
+    marks = ", ".join("?" * (len(RANGE_COLUMNS) + 2))
+    cur = conn.execute(f"INSERT INTO site_network_ranges ({cols}) VALUES ({marks})",
+                       [clinic_id, loc] + [data[c] for c in RANGE_COLUMNS])
+    return row_to_dict(conn.execute("SELECT * FROM site_network_ranges WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.put("/network-ranges/{range_id}")
+def update_range(range_id: int, payload: NetworkRangeIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    if not conn.execute("SELECT 1 FROM site_network_ranges WHERE id = ?", (range_id,)).fetchone():
+        raise HTTPException(status_code=404, detail="Network range not found")
+    data = payload.model_dump()
+    sets = ", ".join(f"{c} = ?" for c in RANGE_COLUMNS)
+    conn.execute(f"UPDATE site_network_ranges SET {sets}, updated_at = ? WHERE id = ?",
+                 [data[c] for c in RANGE_COLUMNS] + [now_iso(), range_id])
+    return row_to_dict(conn.execute("SELECT * FROM site_network_ranges WHERE id = ?", (range_id,)).fetchone())
+
+
+@router.delete("/network-ranges/{range_id}", status_code=204)
+def delete_range(range_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
+    cur = conn.execute("DELETE FROM site_network_ranges WHERE id = ?", (range_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Network range not found")
+    return None

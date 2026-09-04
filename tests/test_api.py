@@ -1226,3 +1226,40 @@ def test_vpn_transit_and_connectivity(client):
     ep = client.post(f"/api/clinics/{sdi}/vpn/endpoints", json={"name": "AHS"}).json()
     epl = client.post(f"/api/clinics/{sdi}/vpn/links", json={"remote_kind": "endpoint", "b_endpoint_id": ep["id"]}).json()
     assert client.get(f"/api/vpn/links/{epl['id']}/transit").status_code == 422
+
+
+def test_site_network_ranges(client):
+    a = client.post("/api/clinics", json={"name": "Net A"}).json()["id"]
+    b = client.post("/api/clinics", json={"name": "Net B"}).json()["id"]
+    client.post(f"/api/clinics/{a}/vpn/links", json={"remote_kind": "site", "b_clinic_id": b, "name": "AB"})
+
+    r = client.post(f"/api/clinics/{a}/network-ranges", json={"name": "Main LAN", "cidr": "10.20.0.0/24", "network_type": "lan"})
+    assert r.status_code == 201 and r.json()["cidr"] == "10.20.0.0/24"
+    # Invalid CIDR is rejected.
+    assert client.post(f"/api/clinics/{a}/network-ranges", json={"name": "bad", "cidr": "nope"}).status_code == 422
+    # Optional and not required elsewhere: creating a VPN link needed no ranges (already done above).
+
+    # Overlap with a range at a VPN-connected site is surfaced (warning), not blocked.
+    client.post(f"/api/clinics/{b}/network-ranges", json={"name": "B LAN", "cidr": "10.20.0.0/25"})
+    lst = client.get(f"/api/clinics/{a}/network-ranges").json()["ranges"]
+    main = next(x for x in lst if x["name"] == "Main LAN")
+    assert main["type_label"] == "LAN"
+    assert any(o["cidr"] == "10.20.0.0/25" and o["clinic_name"] == "Net B" for o in main["overlaps"])
+
+    # A non-overlapping range at B produces no overlap for a different A range.
+    client.post(f"/api/clinics/{a}/network-ranges", json={"name": "Guest", "cidr": "192.168.9.0/24", "network_type": "guest"})
+    guest = next(x for x in client.get(f"/api/clinics/{a}/network-ranges").json()["ranges"] if x["name"] == "Guest")
+    assert guest["overlaps"] == []
+
+    # Connectivity carries ranges for source and reachable sites (for the advanced check).
+    conn = client.get(f"/api/clinics/{a}/connectivity").json()
+    assert {x["cidr"] for x in conn["source_site"]["ranges"]} == {"10.20.0.0/24", "192.168.9.0/24"}
+    assert conn["direct"][0]["ranges"][0]["cidr"] == "10.20.0.0/25"
+
+    # Update + delete.
+    rid = main["id"]
+    assert client.put(f"/api/network-ranges/{rid}", json={"name": "Main LAN", "cidr": "10.20.0.0/23"}).json()["cidr"] == "10.20.0.0/23"
+    assert client.delete(f"/api/network-ranges/{rid}").status_code == 204
+
+    # Backup includes network ranges.
+    assert "site_network_ranges" in client.get("/api/export/backup.json").json()

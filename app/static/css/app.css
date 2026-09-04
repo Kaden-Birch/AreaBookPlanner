@@ -772,6 +772,10 @@ label.checkbox.block { display: flex; align-items: center; gap: 6px; }
 .leaflet-tooltip.conn-tip::before { display: none; }
 .cc-path { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; font-size: 13px; }
 .cc-path .cc-hop { color: var(--muted); font-size: 12px; padding-left: 10px; }
+.cc-ranges { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
+.route-dest { display: flex; align-items: center; gap: 8px; }
+.route-dest .route-rationale { flex: 1; font-size: 12px; padding: 3px 7px; }
+.vpn-meta.warn, .small.warn { color: var(--yellow-fg, #8a6d00); }
 
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }

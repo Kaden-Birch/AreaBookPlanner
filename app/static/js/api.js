@@ -164,6 +164,10 @@ export const vpn = {
   transitOptions: (linkId, from) => api.get(`/api/vpn/links/${linkId}/transit`, { from }),
   setTransit: (linkId, data) => api.put(`/api/vpn/links/${linkId}/transit`, data),
   connectivity: (clinicId, site) => api.get(`/api/clinics/${clinicId}/connectivity`, site && site !== 'all' ? { site } : undefined),
+  ranges: (clinicId, site) => api.get(`/api/clinics/${clinicId}/network-ranges`, site && site !== 'all' ? { site } : undefined),
+  createRange: (clinicId, data, site) => api.post(`/api/clinics/${clinicId}/network-ranges${site && site !== 'all' ? `?site=${encodeURIComponent(site)}` : ''}`, data),
+  updateRange: (id, data) => api.put(`/api/network-ranges/${id}`, data),
+  removeRange: (id) => api.del(`/api/network-ranges/${id}`),
 };
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {

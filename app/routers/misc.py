@@ -493,6 +493,7 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "vpn_endpoints": rows_to_list(conn.execute("SELECT * FROM vpn_endpoints")),
         "vpn_links": rows_to_list(conn.execute("SELECT * FROM vpn_links")),
         "vpn_transit_routes": rows_to_list(conn.execute("SELECT * FROM vpn_transit_routes")),
+        "site_network_ranges": rows_to_list(conn.execute("SELECT * FROM site_network_ranges")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -512,7 +513,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
               "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_services", "device_links", "device_tickets", "quotes",
-              "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets", "vpn_endpoints", "vpn_links", "vpn_transit_routes"]
+              "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets", "vpn_endpoints", "vpn_links", "vpn_transit_routes", "site_network_ranges"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -748,6 +749,15 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
         conn.execute(f"INSERT INTO vpn_transit_routes ({cols}) VALUES ({marks})", list(row.values()))
+    for row in data.get("site_network_ranges", []):
+        row.pop("id", None)
+        if row.get("clinic_id") not in clinic_map:
+            continue
+        row["clinic_id"] = clinic_map[row["clinic_id"]]
+        row["location_id"] = None  # locations aren't id-remapped on merge
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO site_network_ranges ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

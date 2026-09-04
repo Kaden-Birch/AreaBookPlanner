@@ -219,6 +219,14 @@ and is stored in a single SQLite file.
   banner and on the VPN map view) answers "can this site reach that one?" in plain language,
   showing the documented path or explaining that no route is documented — always making clear
   this is documented intent, not a live reachability test.
+- **Optional network ranges (advanced)** – each site can document its IP network ranges
+  (name, CIDR, type: LAN/Server/VoIP/Guest/Management/Other) under a **Network ranges** manager
+  in the VPN panel. These are entirely optional — never required to create a VPN link or route.
+  CIDRs are validated, and a range that overlaps one at a VPN-connected site is flagged (a
+  warning, never a block — NAT or special routing may apply). When both ends of a checked route
+  have ranges, the Connectivity Check shows each side's ranges and warns of any overlapping-subnet
+  conflict. Transit routes also carry an optional rationale (e.g. "backup replication") shown
+  wherever the route appears.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a
@@ -344,6 +352,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET …/clinics/{id}/sites`, `…/clinics/{id}/locations` | Sites (Main Site + secondary locations) |
 | `…/clinics/{id}/vpn/links`, `/api/vpn/links/{id}`, `/api/vpn/map`, `…/clinics/{id}/vpn/endpoints`, `/api/vpn/endpoints/{id}` | Canonical VPN links, map overlay + reusable endpoint directory |
 | `GET/PUT /api/vpn/links/{id}/transit`, `GET …/clinics/{id}/connectivity` | Onward-access routes + connectivity resolver |
+| `GET/POST …/clinics/{id}/network-ranges`, `PUT/DELETE /api/network-ranges/{id}` | Optional per-site IP network ranges |
 | `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |

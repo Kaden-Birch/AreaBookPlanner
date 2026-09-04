@@ -615,3 +615,34 @@ class TransitSetIn(BaseModel):
     """Replace the set of onward-access destinations for one direction of a VPN link."""
     origin: Literal["a", "b"]               # which side of the link is the source
     destinations: list[TransitDestIn] = []
+
+
+NetworkType = Literal["lan", "server", "voip", "guest", "management", "other"]
+
+
+class NetworkRangeIn(BaseModel):
+    """An optional IP network range documented at a site."""
+    name: str = Field(min_length=1, max_length=120)
+    cidr: str
+    network_type: NetworkType = "lan"
+    notes: Optional[str] = None
+
+    _blank = field_validator("notes", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
+
+    @field_validator("cidr")
+    @classmethod
+    def _cidr(cls, v: str) -> str:
+        import ipaddress
+        v = (v or "").strip()
+        try:
+            ipaddress.ip_network(v, strict=False)
+        except ValueError:
+            raise ValueError("Enter a valid network range, e.g. 10.20.0.0/24")
+        return v

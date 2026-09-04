@@ -425,6 +425,20 @@ CREATE TABLE IF NOT EXISTS vpn_transit_routes (
     updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+-- Optional IP network ranges per site (advanced). Site-level VPN routing never requires these;
+-- they document exactly which IP networks live at a site for advanced route detail.
+CREATE TABLE IF NOT EXISTS site_network_ranges (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_id    INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    location_id  INTEGER REFERENCES clinic_locations(id) ON DELETE CASCADE,   -- NULL = Main Site
+    name         TEXT NOT NULL,
+    cidr         TEXT NOT NULL,
+    network_type TEXT NOT NULL DEFAULT 'lan',
+    notes        TEXT,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_vpn_links_a ON vpn_links(a_clinic_id);
 CREATE INDEX IF NOT EXISTS idx_vpn_links_b ON vpn_links(b_clinic_id);
 CREATE INDEX IF NOT EXISTS idx_vpn_endpoints_private ON vpn_endpoints(private_clinic_id);

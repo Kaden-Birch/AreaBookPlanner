@@ -26,7 +26,7 @@ export async function openVpnPanel({ clinic, site = null, onChanged }) {
     title: `VPN links · ${clinic.shorthand || clinic.name}`,
     size: 'modal-lg',
     body: `<div id="vpn-body" class="mt">Loading…</div>`,
-    footer: `<button class="btn" data-act="endpoints">Manage endpoints</button><button class="btn btn-primary" data-act="add">+ Add VPN link</button><button class="btn" data-act="close">Close</button>`,
+    footer: `<button class="btn" data-act="ranges">Network ranges</button><button class="btn" data-act="endpoints">Manage endpoints</button><button class="btn btn-primary" data-act="add">+ Add VPN link</button><button class="btn" data-act="close">Close</button>`,
   });
   const bodyEl = modal.body.querySelector('#vpn-body');
   let links = [];
@@ -44,7 +44,75 @@ export async function openVpnPanel({ clinic, site = null, onChanged }) {
   modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
   modal.root.querySelector('[data-act=add]').onclick = () => openLinkForm({ clinic, site, onSaved: changed });
   modal.root.querySelector('[data-act=endpoints]').onclick = () => openEndpointList({ clinic, onChanged: refresh });
+  modal.root.querySelector('[data-act=ranges]').onclick = () => openRangesManager({ clinic, site });
   await refresh();
+  return modal;
+}
+
+// ---- Network ranges (advanced) --------------------------------------------------
+
+export async function openRangesManager({ clinic, site = null }) {
+  const modal = openModal({
+    title: 'Network ranges',
+    size: 'modal-lg',
+    body: `<p class="small muted">Network ranges are optional. Add them when you need to document exactly which IP networks are available through a VPN. They are never required to create a VPN link or route.</p><div id="nr-body">Loading…</div>`,
+    footer: `<button class="btn btn-primary" data-act="add">+ Add range</button><button class="btn" data-act="close">Close</button>`,
+  });
+  const bodyEl = modal.body.querySelector('#nr-body');
+  let types = {}, siteInfo = null;
+  const refresh = async () => {
+    const data = await vpnApi.ranges(clinic.id, site);
+    types = data.network_types; siteInfo = data.site;
+    modal.root.querySelector('.modal-header h2').textContent = `Network ranges · ${siteInfo.clinic_name} · ${siteInfo.site_name}`;
+    bodyEl.innerHTML = data.ranges.length
+      ? `<div class="vpn-list">${data.ranges.map(r => `<button type="button" class="vpn-row" data-id="${r.id}">
+          <div class="vpn-ends"><span class="mono">${esc(r.cidr)}</span> · <strong>${esc(r.name)}</strong> <span class="badge">${esc(r.type_label)}</span></div>
+          ${r.overlaps.length ? `<div class="vpn-meta warn">⚠ Overlaps ${r.overlaps.map(o => `${esc(o.cidr)} at ${esc(o.clinic_name)} · ${esc(o.site_name)}`).join(', ')} — NAT or special routing may apply.</div>` : ''}
+          ${r.notes ? `<div class="vpn-meta">${esc(r.notes)}</div>` : ''}</button>`).join('')}</div>`
+      : '<div class="card empty">No network ranges recorded for this site.</div>';
+    bodyEl.querySelectorAll('.vpn-row').forEach(el => el.onclick = async () => {
+      const r = (await vpnApi.ranges(clinic.id, site)).ranges.find(x => x.id === Number(el.dataset.id));
+      openRangeForm({ clinic, site, range: r, types, onSaved: refresh });
+    });
+  };
+  modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
+  modal.root.querySelector('[data-act=add]').onclick = () => openRangeForm({ clinic, site, types, onSaved: refresh });
+  await refresh();
+  return modal;
+}
+
+export function openRangeForm({ clinic, site = null, range = null, types = {}, onSaved }) {
+  const isEdit = !!range;
+  const r = range || {};
+  const typeOpts = Object.entries(types).map(([k, v]) => `<option value="${k}" ${k === (r.network_type || 'lan') ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  const modal = openModal({
+    title: isEdit ? `Edit ${r.name}` : 'Add network range',
+    body: `<form id="nr-form" autocomplete="off">
+      <div class="field"><label>Name *</label><input name="name" required value="${attr(r.name)}" placeholder="e.g. Main LAN"></div>
+      <div class="field-row">
+        <div class="field"><label>Network range (CIDR) *</label><input name="cidr" required value="${attr(r.cidr)}" placeholder="10.20.0.0/24" class="mono"></div>
+        <div class="field"><label>Type</label><select name="network_type">${typeOpts}</select></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="2">${esc(r.notes)}</textarea></div>
+    </form>`,
+    footer: `${isEdit ? '<button class="btn btn-danger left" data-act="delete">Delete</button>' : ''}<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">${isEdit ? 'Save' : 'Add'}</button>`,
+  });
+  const form = modal.body.querySelector('#nr-form');
+  modal.root.querySelector('[data-act=cancel]').onclick = () => modal.close();
+  const del = modal.root.querySelector('[data-act=delete]');
+  if (del) del.onclick = async () => {
+    if (!(await confirmDialog(`Delete network range “${r.name}”?`, { okLabel: 'Delete', danger: true }))) return;
+    await vpnApi.removeRange(r.id); toast('Range deleted'); modal.close(); onSaved && onSaved();
+  };
+  modal.root.querySelector('[data-act=save]').onclick = async () => {
+    const d = formData(form);
+    if (!d.name || !d.name.trim()) { showFormError(form, 'Name is required.'); return; }
+    if (!d.cidr || !d.cidr.trim()) { showFormError(form, 'A network range (CIDR) is required.'); return; }
+    try {
+      if (isEdit) await vpnApi.updateRange(r.id, d); else await vpnApi.createRange(clinic.id, d, site);
+      toast(isEdit ? 'Range saved' : 'Range added', 'success'); modal.close(); onSaved && onSaved();
+    } catch (e) { showFormError(form, e.message); }
+  };
   return modal;
 }
 
@@ -64,6 +132,28 @@ async function terminatorOptions(clinicId, selected) {
 
 // ---- Connectivity check tool ----------------------------------------------------
 // "Can this site reach another site?" — resolved from the source site's connectivity.
+
+function cidrRange(cidr) {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)\s*$/.exec(cidr || '');
+  if (!m) return null;
+  const ip = ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | (+m[4])) >>> 0;
+  const bits = +m[5];
+  const mask = bits === 0 ? 0 : (~((1 << (32 - bits)) - 1)) >>> 0;
+  const net = (ip & mask) >>> 0;
+  return [net, net + 2 ** (32 - bits) - 1];
+}
+function cidrsOverlap(a, b) { const ra = cidrRange(a), rb = cidrRange(b); return ra && rb && ra[0] <= rb[1] && rb[0] <= ra[1]; }
+
+function rangesSection(srcRanges, destRanges) {
+  if (!srcRanges || !destRanges || !srcRanges.length || !destRanges.length) return '';
+  const conflicts = [];
+  srcRanges.forEach(s => destRanges.forEach(d => { if (cidrsOverlap(s.cidr, d.cidr)) conflicts.push(`${s.cidr} ↔ ${d.cidr}`); }));
+  return `<div class="cc-ranges">
+    <div class="small"><strong>Source ranges:</strong> ${srcRanges.map(r => `<span class="mono">${esc(r.cidr)}</span>`).join(', ')}</div>
+    <div class="small"><strong>Destination ranges:</strong> ${destRanges.map(r => `<span class="mono">${esc(r.cidr)}</span>`).join(', ')}</div>
+    ${conflicts.length ? `<div class="small warn">⚠ Potential overlapping-subnet conflict: ${conflicts.map(esc).join(', ')} — NAT or special routing may be required.</div>` : ''}
+  </div>`;
+}
 
 export async function openConnectivityCheck({ clinicId, site = null, label = '' }) {
   const modal = openModal({
@@ -112,6 +202,7 @@ export async function openConnectivityCheck({ clinicId, site = null, label = '' 
         <div class="cc-path"><div>${esc(conn.source_site.clinic_name)} · ${esc(conn.source_site.site_name)}</div>
           <div class="cc-hop">→ ${esc(d.vpn_name || 'VPN link')} <span class="muted">(${esc(d.status_label)})</span></div>
           <div>${esc(d.clinic_name)} · ${esc(d.site_name)}</div></div>
+        ${rangesSection(conn.source_site.ranges, d.ranges)}
         <p class="small muted mt">Documented connectivity — not a live reachability test.</p></div>`;
     } else {
       resEl.innerHTML = `<div class="card"><p><span class="badge badge-yellow">✓ Reachable via ${esc(d.via.clinic_name)}</span></p>
@@ -121,6 +212,7 @@ export async function openConnectivityCheck({ clinicId, site = null, label = '' 
           <div class="cc-hop">→ VPN link</div>
           <div>${esc(d.clinic_name)} · ${esc(d.site_name)}</div></div>
         ${d.rationale ? `<p class="small">${esc(d.rationale)}</p>` : ''}
+        ${rangesSection(conn.source_site.ranges, d.ranges)}
         <p class="small muted mt">Documented connectivity — not a live reachability test.</p></div>`;
     }
   };
@@ -137,7 +229,10 @@ function routingHtml(dir, t) {
       <label class="checkbox"><input type="radio" name="route-${dir}" value="yes" ${anySel ? 'checked' : ''}> Yes — allow onward access to selected sites</label>
     </div>
     <div class="route-dests ${anySel ? '' : 'hidden'}" data-dests="${dir}">
-      ${t.options.length ? t.options.map(o => `<label class="checkbox block"><input type="checkbox" data-exit="${o.exit_vpn_link_id}" data-clinic="${o.clinic_id}" data-loc="${o.location_id ?? ''}" ${o.selected ? 'checked' : ''}> ${esc(o.clinic_name)} · ${esc(o.site_name)}${o.exit_status === 'disabled' ? ' <span class="muted">(tunnel disabled)</span>' : ''}</label>`).join('')
+      ${t.options.length ? t.options.map(o => `<div class="route-dest">
+        <label class="checkbox block"><input type="checkbox" data-exit="${o.exit_vpn_link_id}" data-clinic="${o.clinic_id}" data-loc="${o.location_id ?? ''}" ${o.selected ? 'checked' : ''}> ${esc(o.clinic_name)} · ${esc(o.site_name)}${o.exit_status === 'disabled' ? ' <span class="muted">(tunnel disabled)</span>' : ''}</label>
+        <input class="route-rationale" data-exit="${o.exit_vpn_link_id}" value="${attr(o.rationale || '')}" placeholder="why this route? (optional)">
+      </div>`).join('')
         : '<p class="small muted">No other sites are directly connected to this intermediate site yet.</p>'}
     </div>
     <div class="help">These are documented routing intentions, not a live reachability test.</div>
@@ -147,11 +242,15 @@ function routingHtml(dir, t) {
 function collectTransit(form, dir) {
   const yes = form.querySelector(`[name=route-${dir}]:checked`)?.value === 'yes';
   if (!yes) return [];
-  return [...form.querySelectorAll(`[data-dests="${dir}"] input[type=checkbox]:checked`)].map(cb => ({
-    clinic_id: Number(cb.dataset.clinic),
-    location_id: cb.dataset.loc === '' ? null : Number(cb.dataset.loc),
-    exit_vpn_link_id: Number(cb.dataset.exit),
-  }));
+  return [...form.querySelectorAll(`[data-dests="${dir}"] input[type=checkbox]:checked`)].map(cb => {
+    const rat = form.querySelector(`[data-dests="${dir}"] .route-rationale[data-exit="${cb.dataset.exit}"]`);
+    return {
+      clinic_id: Number(cb.dataset.clinic),
+      location_id: cb.dataset.loc === '' ? null : Number(cb.dataset.loc),
+      exit_vpn_link_id: Number(cb.dataset.exit),
+      rationale: rat && rat.value.trim() ? rat.value.trim() : null,
+    };
+  });
 }
 
 export async function openLinkForm({ clinic, site = null, link = null, onSaved }) {

@@ -140,6 +140,17 @@ and is stored in a single SQLite file.
 - **Business card scanner** – snap a card and a contact form is prefilled (name, title,
   phone/extension, mobile, email) and matched to a clinic. Uses OpenAI vision; enter
   your API key under Settings → AI. The card image is attached to the clinic.
+- **AI clinic import** – the Add-clinic form has an opt-in **✨ Use AI to add automatically**
+  shortcut. Paste a clinic's website URL and it prepares a draft: the backend (never the
+  browser) reads the page with the OpenAI key already stored under Settings → AI and returns
+  a structured draft — name, address, phone/email, type, hours, extra sites and named
+  contacts — each AI-filled field tagged with its source and confidence. Nothing is saved
+  until you review and confirm: manual entries you'd already typed are preserved as the
+  preferred values, you can edit any field (which drops its AI tag), un-tick proposed
+  sites/contacts, then **Create clinic** — or go **Back to manual entry** / **Discard draft**.
+  Duplicate clinics are flagged during review. If no key is set the form points you to
+  Settings → AI rather than asking for a second key. Settings add an enable/disable toggle,
+  an optional separate model for imports, and a monthly-import warning threshold.
 - **Equipment inventory** – per clinic: firewalls, routers, switches, access points,
   servers, workstations, laptops, wireless devices, VoIP phones, printers, patch
   panels, shelves, network video recorders, security cameras and other security
@@ -343,6 +354,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `GET /api/search?q=` | Global search |
 | `GET /api/call-sheet?ids=` / `?date=` | Printable day plan data |
 | `POST /api/contacts/scan-card` | Business card → contact fields (OpenAI) |
+| `POST /api/clinics/ai-draft` | Website URL → structured clinic draft (OpenAI, server-side) |
 | `GET/PUT /api/settings` | OpenAI key (masked on read) and model |
 | `GET /api/reminders` | Upcoming appointments/tasks for browser notifications |
 | `GET /api/analytics` | Analytics figures |

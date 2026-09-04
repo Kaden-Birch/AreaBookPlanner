@@ -777,6 +777,18 @@ label.checkbox.block { display: flex; align-items: center; gap: 6px; }
 .route-dest .route-rationale { flex: 1; font-size: 12px; padding: 3px 7px; }
 .vpn-meta.warn, .small.warn { color: var(--yellow-fg, #8a6d00); }
 
+/* AI clinic import */
+.ai-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.btn-ai { background: linear-gradient(90deg, #6d5cf0, #9333ea); color: #fff; border: none; font-weight: 600; }
+.btn-ai:hover { filter: brightness(1.07); }
+.btn-link { background: none; border: none; color: var(--primary); padding: 4px 2px; }
+.ai-review-title { font-weight: 600; color: var(--text); }
+.ai-panel { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 8px; }
+.ai-panel h3 { margin-top: 0; }
+.ai-badge { display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 600; color: #6d5cf0; background: rgba(109,92,240,.12); border-radius: 999px; padding: 1px 7px; vertical-align: middle; }
+input.ai-filled, textarea.ai-filled { background: rgba(109,92,240,.06); border-color: #b4a7f5; }
+.ai-item { display: flex; align-items: center; gap: 7px; padding: 4px 0; }
+
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .svc-card { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: block; width: 100%; }

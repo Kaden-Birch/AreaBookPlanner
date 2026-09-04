@@ -56,6 +56,15 @@ export async function render(container) {
             <div class="flex"><input id="ai-key" type="password" class="grow" placeholder="${ai.ai_configured ? `Saved (${attr(ai.openai_api_key_masked)}) — paste a new key to replace` : 'sk-…'}" autocomplete="off"><button class="btn" id="ai-save">Save</button>${ai.ai_configured ? '<button class="btn btn-danger" id="ai-clear">Remove</button>' : ''}</div>
             <div class="help">Get one at platform.openai.com → API keys. Status: <strong>${ai.ai_configured ? 'configured' : 'not configured'}</strong></div></div>
           <div class="field"><label>Model</label><input id="ai-model" value="${attr(ai.openai_model)}" placeholder="gpt-4o-mini"><div class="help">Any OpenAI model that accepts images, e.g. gpt-4o-mini, gpt-4.1-mini or gpt-5-mini. gpt-4o-mini is cheap and accurate for cards.</div></div>
+          <div class="form-section">
+            <h3>Clinic import from a website</h3>
+            <p class="small">Adds an “✨ Use AI to add automatically” shortcut to the Add-clinic form. It uses the key above — the key stays on this server and is never sent to the browser.</p>
+            <label class="checkbox"><input type="checkbox" id="ai-import-enabled" ${ai.ai_clinic_import_enabled ? 'checked' : ''}> Enable AI clinic import</label>
+            <div class="field-row mt">
+              <div class="field"><label>Model for clinic import</label><input id="ai-import-model" value="${attr(ai.ai_clinic_model)}" placeholder="Defaults to the model above (${attr(ai.openai_model)})"><div class="help">Leave blank to use the model above. Text models like gpt-4o-mini or gpt-5-mini work well here.</div></div>
+              <div class="field"><label>Monthly import warning</label><input id="ai-import-threshold" type="number" min="0" step="1" value="${ai.ai_import_warning_threshold ?? ''}" placeholder="e.g. 50"><div class="help">Warn once this many AI imports happen in a month. ${ai.ai_import_month_count ? `<strong>${ai.ai_import_month_count}</strong> so far this month.` : ''} Blank = no warning.</div></div>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -181,7 +190,13 @@ export async function render(container) {
   container.querySelector('#ai-save').onclick = async () => {
     const key = container.querySelector('#ai-key').value.trim();
     const model = container.querySelector('#ai-model').value.trim();
-    const body = { openai_model: model };
+    const threshRaw = container.querySelector('#ai-import-threshold').value.trim();
+    const body = {
+      openai_model: model,
+      ai_clinic_import_enabled: container.querySelector('#ai-import-enabled').checked,
+      ai_clinic_model: container.querySelector('#ai-import-model').value.trim(),
+      ai_import_warning_threshold: threshRaw === '' ? 0 : Math.max(0, parseInt(threshRaw, 10) || 0),
+    };
     if (key) body.openai_api_key = key;
     try { await settingsApi.update(body); toast('AI settings saved', 'success'); reload(); } catch (e) { toast(e.message, 'error'); }
   };

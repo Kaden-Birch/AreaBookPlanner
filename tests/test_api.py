@@ -1263,3 +1263,52 @@ def test_site_network_ranges(client):
 
     # Backup includes network ranges.
     assert "site_network_ranges" in client.get("/api/export/backup.json").json()
+
+
+def test_ai_clinic_draft(client, monkeypatch):
+    from app.routers import extras
+
+    # No key configured -> a structured no_key error, not a generic failure.
+    r = client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "no_key"
+
+    # Configure a key, then stub the network fetch and the OpenAI call.
+    client.put("/api/settings", json={"openai_api_key": "sk-test", "ai_clinic_model": "gpt-4o-mini", "ai_import_warning_threshold": 2})
+    monkeypatch.setattr(extras, "_fetch_url_text", lambda url: "Demo Family Clinic. 123 4 Ave SW, Calgary AB. Phone 403-555-0100. Open Mon 9-5.")
+
+    draft_json = {
+        "clinic": {"name": "Demo Family Clinic", "address": "123 4 Ave SW", "city": "Calgary", "province": "AB",
+                   "postal_code": None, "phone": "403-555-0100", "fax": None, "email": "info@demo.example",
+                   "website": None, "clinic_type": "Family practice", "provider_count": "3", "notes": "A family clinic."},
+        "hours": {"mon": {"open": "09:00", "close": "17:00"}, "sun": "closed", "tue": None},
+        "sites": [{"name": "Demo South", "address": "9 South Rd"}],
+        "contacts": [{"first_name": "Pat", "last_name": "Lee", "title": "Office Manager", "phone": "403-555-0101", "email": "pat@demo.example"}],
+        "confidence": {"name": 95, "address": 80, "phone": 90},
+    }
+    import json as _json
+    monkeypatch.setattr(extras, "openai_chat", lambda key, body: {"choices": [{"message": {"content": _json.dumps(draft_json)}}]})
+
+    d = client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"}).json()
+    assert d["clinic"]["name"] == "Demo Family Clinic" and d["clinic"]["provider_count"] == 3
+    assert d["clinic"]["website"] == "https://demo-clinic.example"  # falls back to the source URL
+    assert d["hours"]["mon"] == {"closed": False, "open": "09:00", "close": "17:00"}
+    assert d["hours"]["sun"]["closed"] is True and "tue" not in d["hours"]
+    assert d["sites"][0]["name"] == "Demo South"
+    assert d["contacts"][0]["first_name"] == "Pat" and d["contacts"][0]["role"] == "manager"
+    assert d["meta"]["name"]["confidence"] == 95 and d["meta"]["name"]["source"] == "demo-clinic.example"
+    assert d["usage"]["month_count"] == 1 and d["usage"]["threshold"] == 2
+
+    # A second import crosses the monthly threshold warning.
+    d2 = client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"}).json()
+    assert d2["usage"]["month_count"] == 2 and d2["usage"]["over"] is False
+    d3 = client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"}).json()
+    assert d3["usage"]["month_count"] == 3 and d3["usage"]["over"] is True
+
+    # Settings expose the AI-import fields.
+    s = client.get("/api/settings").json()
+    assert s["ai_clinic_import_enabled"] is True and s["ai_clinic_model"] == "gpt-4o-mini" and s["ai_import_warning_threshold"] == 2
+
+    # Disabling it blocks the endpoint.
+    client.put("/api/settings", json={"ai_clinic_import_enabled": False})
+    assert client.post("/api/clinics/ai-draft", json={"url": "https://demo-clinic.example"}).status_code == 403
+    client.put("/api/settings", json={"ai_clinic_import_enabled": True})

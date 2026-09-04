@@ -70,6 +70,7 @@ export const clinics = {
   archive: (id, archived) => api.patch(`/api/clinics/${id}/archive`, { archived }),
   quickLog: (id, preset, author, detail) => api.post(`/api/clinics/${id}/quick-log`, { preset, author, detail }),
   duplicates: (params) => api.get('/api/clinics/duplicates', params),
+  aiDraft: (url) => api.post('/api/clinics/ai-draft', { url }),
   addLink: (id, data) => api.post(`/api/clinics/${id}/links`, data),
   removeLink: (id, linkId) => api.del(`/api/clinics/${id}/links/${linkId}`),
 };

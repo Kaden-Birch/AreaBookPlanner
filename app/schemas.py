@@ -280,6 +280,14 @@ class SettingsIn(BaseModel):
     quote_valid_days: Optional[int] = None
     onboarding_enabled: Optional[bool] = None
     onboarding_template: Optional[list[dict]] = None
+    ai_clinic_import_enabled: Optional[bool] = None
+    ai_clinic_model: Optional[str] = None
+    ai_import_warning_threshold: Optional[int] = None
+
+
+class AiDraftIn(BaseModel):
+    """Request a structured clinic draft from a website URL (uses the stored OpenAI key)."""
+    url: str = Field(min_length=3, max_length=2000)
 
 
 DeviceStatus = Literal["active", "spare", "retired"]

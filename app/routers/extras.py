@@ -23,7 +23,7 @@ from ..logic import (
     IN_PERSON_TYPES, LINK_TYPES, OPEN_STAGES, QUICK_LOGS, REMINDER_OPTIONS, STAGE_LABELS, enrich_clinic,
     log_event, now_iso,
 )
-from ..schemas import BulkGeocodeRequest, ClinicIn, GroupIn, ImportRequest, SavedViewIn, SettingsIn, TemplateIn
+from ..schemas import AiDraftIn, BulkGeocodeRequest, ClinicIn, GroupIn, ImportRequest, SavedViewIn, SettingsIn, TemplateIn
 from .clinics import CLINIC_COLUMNS, _sync_stage_and_relationship, find_duplicates
 from .misc import NOMINATIM_URL, USER_AGENT, CALGARY_VIEWBOX
 
@@ -566,12 +566,17 @@ def read_settings(conn: sqlite3.Connection = Depends(db_dependency)):
             onboarding_template = None
     if not onboarding_template:
         onboarding_template = [{"title": t, "offset_days": d, "priority": p} for t, d, p in DEFAULT_ONBOARDING_TASKS]
+    threshold = get_setting(conn, "ai_import_warning_threshold")
     return {
         "ai_configured": bool(key),
         "openai_api_key_masked": _mask(key),
         "openai_model": get_setting(conn, "openai_model") or DEFAULT_OPENAI_MODEL,
         "onboarding_enabled": get_setting(conn, "onboarding_enabled") != "0",
         "onboarding_template": onboarding_template,
+        "ai_clinic_import_enabled": get_setting(conn, "ai_clinic_import_enabled") != "0",
+        "ai_clinic_model": get_setting(conn, "ai_clinic_model") or None,
+        "ai_import_warning_threshold": int(threshold) if threshold and threshold.isdigit() else None,
+        "ai_import_month_count": int(get_setting(conn, f"ai_import_count_{datetime.utcnow():%Y%m}") or 0),
     }
 
 
@@ -587,6 +592,12 @@ def write_settings(payload: SettingsIn, conn: sqlite3.Connection = Depends(db_de
             set_setting(conn, k, str(v).strip())
     if payload.onboarding_enabled is not None:
         set_setting(conn, "onboarding_enabled", "1" if payload.onboarding_enabled else "0")
+    if payload.ai_clinic_import_enabled is not None:
+        set_setting(conn, "ai_clinic_import_enabled", "1" if payload.ai_clinic_import_enabled else "0")
+    if payload.ai_clinic_model is not None:
+        set_setting(conn, "ai_clinic_model", payload.ai_clinic_model.strip() or None)
+    if payload.ai_import_warning_threshold is not None:
+        set_setting(conn, "ai_import_warning_threshold", str(payload.ai_import_warning_threshold) if payload.ai_import_warning_threshold > 0 else None)
     if payload.onboarding_template is not None:
         cleaned = [
             {"title": str(i.get("title", "")).strip(),
@@ -712,6 +723,145 @@ async def scan_business_card(file: UploadFile = File(...), conn: sqlite3.Connect
         if dups:
             match = {"id": dups[0]["id"], "name": dups[0]["name"]}
     return {"contact": contact, "clinic_match": match, "model": model}
+
+
+# ---- AI clinic import from a website (OpenAI, server-side) --------------------
+
+CLINIC_DRAFT_PROMPT = (
+    "You build clinic records for a medical-IT sales CRM in Calgary, Canada, from a clinic's public website. "
+    "Use ONLY information present in the provided page text; never invent details. Reply with ONLY a JSON object with these keys:\n"
+    "clinic: {name, address, city, province, postal_code, phone, fax, email, website, clinic_type, provider_count, notes}\n"
+    "hours: an object keyed by mon,tue,wed,thu,fri,sat,sun; each value is either null (unknown), the string \"closed\", "
+    "or {\"open\":\"HH:MM\",\"close\":\"HH:MM\"} in 24-hour time.\n"
+    "sites: a list of ADDITIONAL physical locations (branches) as {name, address}; empty list if only one location.\n"
+    "contacts: a list of named people as {first_name, last_name, title, phone, email}; empty list if none are named.\n"
+    "confidence: an object mapping each clinic field you filled to an integer 0-100 for how sure you are.\n"
+    "Use null for anything not on the site. 'clinic_type' is a short descriptor like 'Family practice' or 'Dental'. "
+    "'provider_count' is the number of doctors/practitioners if stated, else null. Keep phone and address exactly as written. "
+    "Put a one or two sentence summary of the clinic in clinic.notes."
+)
+
+_TAG_RE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>", re.I | re.S)
+_ANGLE_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"[ \t\r\f\v]+")
+
+
+def _fetch_url_text(url: str) -> str:
+    """Fetch a public web page server-side and reduce it to visible text."""
+    url = url.strip()
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=422, detail="Enter a valid website URL, e.g. https://clinic-example.ca")
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            raw = resp.read(2_000_000)
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not open that website ({exc.code}).") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not open that website: {exc}") from exc
+    charset = "utf-8"
+    if "charset=" in ctype:
+        charset = ctype.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
+    html = raw.decode(charset, "ignore")
+    text = _ANGLE_RE.sub(" ", _TAG_RE.sub(" ", html))
+    text = _WS_RE.sub(" ", text.replace("\xa0", " "))
+    text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    if len(text) < 40:
+        raise HTTPException(status_code=422, detail="That page had no readable text to work from.")
+    return text[:12000]
+
+
+def _draft_clean(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    return v or None
+
+
+@router.post("/clinics/ai-draft")
+def ai_clinic_draft(payload: AiDraftIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    if get_setting(conn, "ai_clinic_import_enabled") == "0":
+        raise HTTPException(status_code=403, detail={"code": "disabled", "message": "AI clinic import is turned off under Settings → AI."})
+    key = get_setting(conn, "openai_api_key")
+    if not key:
+        raise HTTPException(status_code=400, detail={"code": "no_key", "message": "AI clinic import requires an OpenAI API key."})
+    model = get_setting(conn, "ai_clinic_model") or get_setting(conn, "openai_model") or DEFAULT_OPENAI_MODEL
+    text = _fetch_url_text(payload.url)
+    domain = urllib.parse.urlparse(payload.url if re.match(r"^https?://", payload.url, re.I) else "https://" + payload.url).netloc
+    body = {
+        "model": model,
+        "max_completion_tokens": 1400,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": CLINIC_DRAFT_PROMPT},
+            {"role": "user", "content": f"Website: {payload.url}\n\nPage text:\n{text}"},
+        ],
+    }
+    result = openai_chat(key, body)
+    try:
+        parsed = json.loads(result["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response") from exc
+
+    raw_clinic = parsed.get("clinic") or {}
+    fields = ["name", "address", "city", "province", "postal_code", "phone", "fax", "email", "website", "clinic_type", "provider_count", "notes"]
+    clinic = {k: _draft_clean(raw_clinic.get(k)) for k in fields}
+    clinic["website"] = clinic["website"] or (payload.url if re.match(r"^https?://", payload.url, re.I) else "https://" + payload.url)
+    try:
+        clinic["provider_count"] = int(clinic["provider_count"]) if clinic["provider_count"] else None
+    except (TypeError, ValueError):
+        clinic["provider_count"] = None
+
+    hours = {}
+    for day, val in (parsed.get("hours") or {}).items():
+        d = str(day).lower()[:3]
+        if d not in ("mon", "tue", "wed", "thu", "fri", "sat", "sun") or val is None:
+            continue
+        if isinstance(val, str) and val.strip().lower() == "closed":
+            hours[d] = {"closed": True, "open": "", "close": ""}
+        elif isinstance(val, dict) and (val.get("open") or val.get("close")):
+            hours[d] = {"closed": False, "open": _draft_clean(val.get("open")) or "", "close": _draft_clean(val.get("close")) or ""}
+
+    sites = [{"name": _draft_clean(s.get("name")) or "Additional site", "address": _draft_clean(s.get("address"))}
+             for s in (parsed.get("sites") or []) if isinstance(s, dict) and (s.get("name") or s.get("address"))][:8]
+    contacts = []
+    for ct in (parsed.get("contacts") or [])[:12]:
+        if not isinstance(ct, dict):
+            continue
+        first = _draft_clean(ct.get("first_name"))
+        if not first:
+            continue
+        contacts.append({"first_name": first, "last_name": _draft_clean(ct.get("last_name")),
+                         "title": _draft_clean(ct.get("title")), "phone": _draft_clean(ct.get("phone")),
+                         "email": _draft_clean(ct.get("email")), "role": guess_role(ct.get("title"))})
+
+    raw_conf = parsed.get("confidence") or {}
+    meta = {}
+    for k in fields:
+        if clinic[k] is None:
+            continue
+        try:
+            conf = int(raw_conf.get(k)) if raw_conf.get(k) is not None else None
+        except (TypeError, ValueError):
+            conf = None
+        meta[k] = {"source": domain or "website", "confidence": conf}
+
+    duplicates = find_duplicates(conn, clinic["name"], clinic["address"], clinic["postal_code"])[:5]
+
+    month_key = f"ai_import_count_{datetime.utcnow():%Y%m}"
+    count = int(get_setting(conn, month_key) or 0) + 1
+    set_setting(conn, month_key, str(count))
+    threshold = get_setting(conn, "ai_import_warning_threshold")
+    threshold = int(threshold) if threshold and threshold.isdigit() else None
+
+    return {"clinic": clinic, "hours": hours, "sites": sites, "contacts": contacts, "meta": meta,
+            "duplicates": [{"id": d["id"], "name": d["name"], "reasons": d.get("reasons")} for d in duplicates],
+            "source": domain, "model": model,
+            "usage": {"month_count": count, "threshold": threshold, "over": bool(threshold and count > threshold)}}
 
 
 # ---- Call sheet (printable day plan) ----------------------------------------

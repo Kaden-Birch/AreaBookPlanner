@@ -2,7 +2,7 @@
 import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, devices, settings as settingsApi } from './api.js';
 import {
   esc, attr, openModal, confirmDialog, toast, formData, showFormError, options,
-  toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl,
+  toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl, navigate,
 } from './ui.js';
 import { openGroupForm } from './pages/settings.js';
 
@@ -77,6 +77,18 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
 
   const body = `
     <form id="clinic-form" autocomplete="off">
+      ${!isEdit ? `<div class="ai-bar" id="ai-toggle-bar"><button type="button" class="btn btn-ai" id="ai-toggle">✨ Use AI to add automatically</button></div>` : ''}
+      <div class="ai-bar hidden" id="ai-back-bar">
+        <button type="button" class="btn btn-link" id="ai-back">← Enter details manually</button>
+        <span class="ai-review-title hidden" id="ai-review-title">Review AI clinic draft — check each field, then create.</span>
+      </div>
+      <div class="ai-panel hidden" id="ai-input-panel">
+        <h3>Create clinic from website</h3>
+        <div class="field"><label>Website URL</label><input id="ai-url" placeholder="https://clinic-example.ca" inputmode="url"></div>
+        <div class="help">AI will use public information from this website to prepare a clinic draft. Nothing is added until you review and confirm it.</div>
+        <div class="form-warn hidden" id="ai-input-error"></div>
+      </div>
+      <div id="clinic-fields">
       <div class="field-row">
         <div class="field" style="grid-column: span 2">
           <label>Clinic name *</label>
@@ -241,17 +253,24 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
           <textarea name="notes" rows="4" placeholder="Anything useful about this clinic: hours, parking, decision makers, history...">${esc(c.notes)}</textarea>
         </div>
       </div>
+      <div class="form-section hidden" id="ai-sites-section"><h3>Proposed sites</h3><div class="help mb">Extra locations found on the website. Un-tick any you don't want.</div><div id="ai-sites"></div></div>
+      <div class="form-section hidden" id="ai-contacts-section"><h3>Proposed contacts</h3><div class="help mb">People named on the website. Un-tick any you don't want added.</div><div id="ai-contacts"></div></div>
+      </div>
     </form>`;
 
   const modal = openModal({
     title: isEdit ? `Edit ${c.name}` : 'New clinic',
     size: 'modal-lg',
     body,
-    footer: `<button class="btn" data-act="cancel">Cancel</button>
+    footer: `<button class="btn btn-danger left hidden" data-act="ai-discard">Discard draft</button>
+             <button class="btn hidden" data-act="ai-back2">Back to manual entry</button>
+             <button class="btn" data-act="cancel">Cancel</button>
+             <button class="btn btn-primary hidden" data-act="ai-generate">Generate clinic draft</button>
              <button class="btn btn-primary" data-act="save">${isEdit ? 'Save changes' : 'Create clinic'}</button>`,
   });
 
   const form = modal.body.querySelector('#clinic-form');
+  const ai = { mode: 'manual', draft: null, snapshot: null };
   wireHours(form);
   const latEl = form.elements.lat;
   const lngEl = form.elements.lng;
@@ -386,6 +405,17 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
     data.hours = collectHours(form);
     try {
       const saved = isEdit ? await clinics.update(clinic.id, data) : await clinics.create(data);
+      // AI review: also create the proposed sites and contacts the user kept ticked.
+      if (!isEdit && ai.mode === 'ai-review' && saved && saved.id) {
+        for (const el of form.querySelectorAll('#ai-sites .ai-item input:checked')) {
+          const s = ai.draft.sites[Number(el.dataset.i)];
+          await locations.create(saved.id, { name: s.name, address: s.address }).catch(() => {});
+        }
+        for (const el of form.querySelectorAll('#ai-contacts .ai-item input:checked')) {
+          const ct = ai.draft.contacts[Number(el.dataset.i)];
+          await contacts.create({ clinic_id: saved.id, first_name: ct.first_name, last_name: ct.last_name, title: ct.title, role: ct.role, phone: ct.phone, email: ct.email }).catch(() => {});
+        }
+      }
       toast(isEdit ? 'Clinic updated' : 'Clinic created', 'success');
       modal.close();
       onSaved && onSaved(saved);
@@ -395,6 +425,115 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
   };
   modal.root.querySelector('[data-act=save]').onclick = save;
   form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+
+  // ---- AI clinic import mode -------------------------------------------------
+  if (!isEdit) {
+    const $ = (s) => modal.body.querySelector(s) || modal.root.querySelector(s);
+    const clinicFields = $('#clinic-fields'), aiPanel = $('#ai-input-panel'), aiUrl = $('#ai-url');
+    const aiBackBar = $('#ai-back-bar'), aiReviewTitle = $('#ai-review-title'), aiInputError = $('#ai-input-error');
+    const toggleBar = $('#ai-toggle-bar');
+    const btn = (a) => modal.root.querySelector(`[data-act=${a}]`);
+    const show = (el, on) => el && el.classList.toggle('hidden', !on);
+
+    const setMode = (m) => {
+      ai.mode = m;
+      const input = m === 'ai-input', review = m === 'ai-review';
+      show(clinicFields, !input); show(aiPanel, input);
+      show(toggleBar, m === 'manual'); show(aiBackBar, m !== 'manual'); show(aiReviewTitle, review);
+      show(btn('cancel'), !review); show(btn('save'), !input);
+      show(btn('ai-generate'), input); show(btn('ai-back2'), review); show(btn('ai-discard'), review);
+      if (!input) setTimeout(() => map.invalidateSize(), 40);
+    };
+
+    const snapshotManual = () => {
+      ai.snapshot = { fields: {}, hours: collectHours(form) };
+      ['name', 'address', 'display_address', 'city', 'province', 'postal_code', 'phone', 'fax', 'email', 'website', 'clinic_type', 'provider_count', 'notes']
+        .forEach(k => { ai.snapshot.fields[k] = (form.elements[k] ? form.elements[k].value : '').trim(); });
+    };
+
+    const applyHours = (hours) => form.querySelectorAll('.hours-row').forEach(row => {
+      const h = hours[row.dataset.day]; if (!h) return;
+      const cb = row.querySelector('[data-h=closed]'), o = row.querySelector('[data-h=open]'), c2 = row.querySelector('[data-h=close]');
+      cb.checked = !!h.closed; o.value = h.open || ''; c2.value = h.close || ''; o.disabled = c2.disabled = cb.checked;
+    });
+
+    const addBadge = (el, meta, source) => {
+      const field = el.closest('.field'); if (!field || field.querySelector('.ai-badge')) return;
+      const src = (meta && meta.source) || source || 'web';
+      const conf = meta && meta.confidence != null ? ` · ${meta.confidence}%` : '';
+      const badge = document.createElement('span');
+      badge.className = 'ai-badge'; badge.title = `Suggested by AI from ${src}`; badge.textContent = `✨ ${src}${conf}`;
+      (field.querySelector('label') || field).appendChild(badge);
+      el.classList.add('ai-filled');
+      el.addEventListener('input', () => { badge.remove(); el.classList.remove('ai-filled'); }, { once: true });
+    };
+
+    const renderList = (id, items, render) => {
+      const sec = $(`${id}-section`), box = $(id);
+      if (!items || !items.length) { sec.classList.add('hidden'); return; }
+      sec.classList.remove('hidden');
+      box.innerHTML = items.map((it, i) => `<label class="ai-item"><input type="checkbox" data-i="${i}" checked> ${render(it)}</label>`).join('');
+    };
+
+    const applyDraft = (draft) => {
+      ai.draft = draft;
+      const snap = ai.snapshot.fields;
+      Object.entries(draft.clinic || {}).forEach(([k, v]) => {
+        if (v == null || v === '') return;
+        const el = form.elements[k]; if (!el) return;
+        if ((snap[k] || '') !== '') return;               // preserve a value the user typed manually
+        el.value = v; addBadge(el, (draft.meta || {})[k], draft.source);
+      });
+      if (!ai.snapshot.hours && draft.hours && Object.keys(draft.hours).length) applyHours(draft.hours);
+      if (draft.duplicates && draft.duplicates.length) {
+        dupBox.innerHTML = `⚠ Possible duplicate: ${draft.duplicates.slice(0, 3).map(d => `<a href="#/clinics/${d.id}" target="_blank">${esc(d.name)}</a>${d.reasons ? ` (${esc(d.reasons.join(', '))})` : ''}`).join(' · ')}`;
+        dupBox.classList.remove('hidden');
+      }
+      renderList('#ai-sites', draft.sites, s => `<strong>${esc(s.name)}</strong>${s.address ? ` · <span class="muted">${esc(s.address)}</span>` : ''}`);
+      renderList('#ai-contacts', draft.contacts, ct => `<strong>${esc([ct.first_name, ct.last_name].filter(Boolean).join(' '))}</strong>${ct.title ? ` · <span class="muted">${esc(ct.title)}</span>` : ''}${ct.email ? ` · ${esc(ct.email)}` : ''}`);
+      setMode('ai-review');
+    };
+
+    const restore = () => {
+      Object.entries(ai.snapshot.fields).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
+      form.querySelectorAll('.hours-row').forEach(row => {
+        row.querySelector('[data-h=closed]').checked = false;
+        row.querySelectorAll('input[type=time]').forEach(t => { t.value = ''; t.disabled = false; });
+      });
+      if (ai.snapshot.hours) applyHours(ai.snapshot.hours);
+      form.querySelectorAll('.ai-badge').forEach(b => b.remove());
+      form.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
+      $('#ai-sites-section').classList.add('hidden'); $('#ai-contacts-section').classList.add('hidden');
+      dupBox.classList.add('hidden'); ai.draft = null;
+    };
+
+    $('#ai-toggle').onclick = () => {
+      snapshotManual();
+      if (!aiUrl.value && form.elements.website.value) aiUrl.value = form.elements.website.value;
+      setMode('ai-input');
+    };
+    $('#ai-back').onclick = () => setMode('manual');
+    btn('ai-back2').onclick = () => setMode('manual');
+    btn('ai-discard').onclick = () => { restore(); setMode('manual'); };
+    btn('ai-generate').onclick = async () => {
+      aiInputError.classList.add('hidden');
+      const url = aiUrl.value.trim();
+      if (url.length < 4) { aiInputError.textContent = 'Enter a website URL.'; aiInputError.classList.remove('hidden'); return; }
+      const gb = btn('ai-generate'); gb.disabled = true; gb.textContent = 'Generating…';
+      try {
+        const draft = await clinics.aiDraft(url);
+        applyDraft(draft);
+        if (draft.usage && draft.usage.over) toast(`Heads up: ${draft.usage.month_count} AI imports this month (threshold ${draft.usage.threshold}).`, 'info', 5000);
+      } catch (e) {
+        const code = e.data && e.data.detail && e.data.detail.code;
+        if (code === 'no_key' || code === 'disabled') {
+          aiInputError.innerHTML = `${esc(code === 'no_key' ? 'AI clinic import requires an OpenAI API key.' : 'AI clinic import is turned off under Settings → AI.')} <button type="button" class="btn btn-sm" data-go="settings">Go to Settings → AI</button>`;
+          aiInputError.classList.remove('hidden');
+          aiInputError.querySelector('[data-go]').onclick = () => { modal.close(); navigate('#/settings'); };
+        } else { aiInputError.textContent = e.message; aiInputError.classList.remove('hidden'); }
+      } finally { gb.disabled = false; gb.textContent = 'Generate clinic draft'; }
+    };
+  }
   return modal;
 }
 

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..database import db_dependency, row_to_dict, rows_to_list
 from ..logic import DEVICE_TYPES, log_event, now_iso
-from ..schemas import VpnEndpointIn, VpnLinkIn
+from ..schemas import TransitSetIn, VpnEndpointIn, VpnLinkIn
 
 router = APIRouter(prefix="/api", tags=["vpn"])
 
@@ -314,3 +314,160 @@ def delete_link(link_id: int, conn: sqlite3.Connection = Depends(db_dependency))
     if cur.rowcount == 0:
         raise HTTPException(status_code=404, detail="VPN link not found")
     return None
+
+
+# ---- Onward access (transit routes) + connectivity resolver ---------------------
+
+def _same_site(c1, l1, c2, l2) -> bool:
+    return c1 == c2 and (l1 or None) == (l2 or None)
+
+
+def _link_site(l: dict, side: str) -> tuple:
+    return (l["a_clinic_id"], l["a_location_id"]) if side == "a" else (l["b_clinic_id"], l["b_location_id"])
+
+
+def _site_dict(conn: sqlite3.Connection, clinic_id: int, loc: int | None) -> dict:
+    s = _site_info(conn, clinic_id, loc)
+    return {"clinic_id": clinic_id, "location_id": loc, "site_id": s["site_id"], "site_name": s["site_name"],
+            "clinic_name": s["clinic_name"], "lat": s["lat"], "lng": s["lng"]}
+
+
+def _loc_clause(col: str, loc: int | None) -> tuple[str, list]:
+    return (f"{col} IS NULL", []) if loc is None else (f"{col} = ?", [loc])
+
+
+def _resolve_site_loc(conn: sqlite3.Connection, clinic_id: int, site: str | None) -> int | None:
+    """Map a ?site value ('main'/None/'all' -> Main Site, or a location id) to a location_id."""
+    if not site or site in ("all", "main"):
+        return None
+    try:
+        loc = int(site)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Unknown site")
+    if not conn.execute("SELECT 1 FROM clinic_locations WHERE id = ? AND clinic_id = ?", (loc, clinic_id)).fetchone():
+        raise HTTPException(status_code=422, detail="Site does not belong to that clinic")
+    return loc
+
+
+@router.get("/vpn/links/{link_id}/transit")
+def transit_options(link_id: int, origin: str = Query("a", alias="from"), conn: sqlite3.Connection = Depends(db_dependency)):
+    """The sites reachable *through* the far endpoint of this link — i.e. sites with a direct
+    VPN link to the intermediate site — and which are already selected as onward destinations."""
+    link = _link_or_404(conn, link_id)
+    if link["b_kind"] != "site":
+        raise HTTPException(status_code=422, detail="Onward access applies only to site-to-site VPN links")
+    if origin not in ("a", "b"):
+        raise HTTPException(status_code=422, detail="from must be 'a' or 'b'")
+    src_c, src_l = _link_site(link, origin)
+    via_c, via_l = _link_site(link, "b" if origin == "a" else "a")
+    sc, sp = _loc_clause("source_location_id", src_l)
+    selected = {(r["dest_clinic_id"], r["dest_location_id"] or None, r["exit_vpn_link_id"])
+                for r in rows_to_list(conn.execute(
+                    f"SELECT * FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc} AND entry_vpn_link_id = ?",
+                    [src_c, *sp, link_id]))}
+    options = []
+    for l in rows_to_list(conn.execute("SELECT * FROM vpn_links WHERE b_kind = 'site' AND id <> ?", (link_id,))):
+        if _same_site(l["a_clinic_id"], l["a_location_id"], via_c, via_l):
+            dest = _link_site(l, "b")
+        elif _same_site(l["b_clinic_id"], l["b_location_id"], via_c, via_l):
+            dest = _link_site(l, "a")
+        else:
+            continue
+        if _same_site(dest[0], dest[1], src_c, src_l):
+            continue
+        d = _site_dict(conn, dest[0], dest[1])
+        d["exit_vpn_link_id"] = l["id"]
+        d["exit_vpn_name"] = l["name"]
+        d["exit_status"] = l["status"]
+        d["selected"] = (dest[0], dest[1] or None, l["id"]) in selected
+        options.append(d)
+    return {"source": _site_dict(conn, src_c, src_l), "via": _site_dict(conn, via_c, via_l), "options": options}
+
+
+@router.put("/vpn/links/{link_id}/transit")
+def set_transit(link_id: int, payload: TransitSetIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Replace the onward-access destinations for one direction of this link."""
+    link = _link_or_404(conn, link_id)
+    if link["b_kind"] != "site":
+        raise HTTPException(status_code=422, detail="Onward access applies only to site-to-site VPN links")
+    src_c, src_l = _link_site(link, payload.origin)
+    via_c, via_l = _link_site(link, "b" if payload.origin == "a" else "a")
+    chosen: dict[tuple, str | None] = {}
+    for d in payload.destinations:
+        ex = _link_or_404(conn, d.exit_vpn_link_id)
+        if ex["b_kind"] != "site":
+            raise HTTPException(status_code=422, detail="An onward link must be site-to-site")
+        ends = [(ex["a_clinic_id"], ex["a_location_id"]), (ex["b_clinic_id"], ex["b_location_id"])]
+        if not any(_same_site(c, l, via_c, via_l) for c, l in ends):
+            raise HTTPException(status_code=422, detail="That onward link is not connected to the intermediate site")
+        if not any(_same_site(c, l, d.clinic_id, d.location_id) for c, l in ends):
+            raise HTTPException(status_code=422, detail="That onward link is not connected to the chosen destination")
+        if _same_site(d.clinic_id, d.location_id, src_c, src_l):
+            raise HTTPException(status_code=422, detail="A route cannot loop back to the source site")
+        chosen[(d.clinic_id, d.location_id or None, d.exit_vpn_link_id)] = d.rationale
+    sc, sp = _loc_clause("source_location_id", src_l)
+    existing = rows_to_list(conn.execute(
+        f"SELECT * FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc} AND entry_vpn_link_id = ?", [src_c, *sp, link_id]))
+    for r in existing:  # keep an existing rationale when the caller didn't send a new one
+        key = (r["dest_clinic_id"], r["dest_location_id"] or None, r["exit_vpn_link_id"])
+        if key in chosen and chosen[key] is None:
+            chosen[key] = r["rationale"]
+    conn.execute(f"DELETE FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc} AND entry_vpn_link_id = ?", [src_c, *sp, link_id])
+    for (dc, dl, ex), rationale in chosen.items():
+        conn.execute(
+            """INSERT INTO vpn_transit_routes
+               (source_clinic_id, source_location_id, entry_vpn_link_id, via_clinic_id, via_location_id,
+                exit_vpn_link_id, dest_clinic_id, dest_location_id, rationale)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (src_c, src_l, link_id, via_c, via_l, ex, dc, dl, rationale))
+    return {"count": len(chosen)}
+
+
+def _sid(loc: int | None) -> str:
+    return "main" if loc is None else str(loc)
+
+
+@router.get("/clinics/{clinic_id}/connectivity")
+def connectivity(clinic_id: int, site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Resolve which other sites the selected site can reach: directly-linked sites/endpoints,
+    plus destinations explicitly configured as reachable through one intermediate site. Disabled
+    tunnels are excluded from the calculation; documented status is surfaced, never live state."""
+    _clinic_or_404(conn, clinic_id)
+    src_l = _resolve_site_loc(conn, clinic_id, site)
+    source = _site_dict(conn, clinic_id, src_l)
+    all_links = rows_to_list(conn.execute("SELECT * FROM vpn_links"))
+    active = [l for l in all_links if l["status"] != "disabled"]
+    active_ids = {l["id"] for l in active}
+
+    direct, seen = [], set()
+    for l in active:
+        if _same_site(l["a_clinic_id"], l["a_location_id"], clinic_id, src_l):
+            opp = _side(conn, l, "b")
+        elif l["b_kind"] == "site" and _same_site(l["b_clinic_id"], l["b_location_id"], clinic_id, src_l):
+            opp = _side(conn, l, "a")
+        else:
+            continue
+        key = f"e{opp['endpoint_id']}" if opp["kind"] == "endpoint" else f"c{opp['clinic_id']}:{opp['site_id']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = {"relationship": "direct", "vpn_link_id": l["id"], "vpn_name": l["name"],
+                 "status": l["status"], "status_label": VPN_STATUSES.get(l["status"], l["status"]), **opp}
+        direct.append(entry)
+
+    remote = []
+    sc, sp = _loc_clause("source_location_id", src_l)
+    for r in rows_to_list(conn.execute(
+            f"SELECT * FROM vpn_transit_routes WHERE source_clinic_id = ? AND {sc}", [clinic_id, *sp])):
+        if r["entry_vpn_link_id"] not in active_ids or r["exit_vpn_link_id"] not in active_ids:
+            continue  # a hop is disabled -> not a calculated route
+        dkey = f"c{r['dest_clinic_id']}:{_sid(r['dest_location_id'])}"
+        if dkey in seen:
+            continue  # already directly reachable
+        dest = _site_dict(conn, r["dest_clinic_id"], r["dest_location_id"])
+        via = _site_dict(conn, r["via_clinic_id"], r["via_location_id"])
+        remote.append({**dest, "kind": "site", "relationship": "via", "via": via, "transit_id": r["id"],
+                       "rationale": r["rationale"],
+                       "path": [{"vpn_link_id": r["entry_vpn_link_id"], "from": source, "to": via},
+                                {"vpn_link_id": r["exit_vpn_link_id"], "from": via, "to": dest}]})
+    return {"source_site": source, "direct": direct, "remote": remote}

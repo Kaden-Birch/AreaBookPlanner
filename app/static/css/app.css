@@ -759,6 +759,8 @@ details summary { cursor: pointer; font-weight: 600; }
 .vpn-map-mid .vpn-map-count { position: absolute; top: -6px; right: -8px; background: #6366f1; color: #fff; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 0 5px; line-height: 15px; }
 .vpn-pop { padding: 4px 0; border-top: 1px solid var(--border); margin-top: 4px; }
 .vpn-pop:first-of-type { border-top: none; }
+.route-dests { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+label.checkbox.block { display: flex; align-items: center; gap: 6px; }
 
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }

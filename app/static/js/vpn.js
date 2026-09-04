@@ -62,6 +62,33 @@ async function terminatorOptions(clinicId, selected) {
     `<option value="${d.id}" ${String(d.id) === String(selected ?? '') ? 'selected' : ''}>${esc(d.icon)} ${esc(d.name)}${d.location_name ? ` · ${esc(d.location_name)}` : ''}</option>`).join('');
 }
 
+function routingHtml(dir, t) {
+  const anySel = t.options.some(o => o.selected);
+  return `<div class="form-section routing-section" data-dir="${dir}">
+    <h3>Reachability from ${esc(t.source.clinic_name)} · ${esc(t.source.site_name)} through ${esc(t.via.clinic_name)} · ${esc(t.via.site_name)}</h3>
+    <p class="small muted">Can ${esc(t.source.clinic_name)} reach sites beyond ${esc(t.via.site_name)} through this VPN?</p>
+    <div class="flex mb" style="gap:16px">
+      <label class="checkbox"><input type="radio" name="route-${dir}" value="no" ${anySel ? '' : 'checked'}> No — ${esc(t.via.site_name)} only</label>
+      <label class="checkbox"><input type="radio" name="route-${dir}" value="yes" ${anySel ? 'checked' : ''}> Yes — allow onward access to selected sites</label>
+    </div>
+    <div class="route-dests ${anySel ? '' : 'hidden'}" data-dests="${dir}">
+      ${t.options.length ? t.options.map(o => `<label class="checkbox block"><input type="checkbox" data-exit="${o.exit_vpn_link_id}" data-clinic="${o.clinic_id}" data-loc="${o.location_id ?? ''}" ${o.selected ? 'checked' : ''}> ${esc(o.clinic_name)} · ${esc(o.site_name)}${o.exit_status === 'disabled' ? ' <span class="muted">(tunnel disabled)</span>' : ''}</label>`).join('')
+        : '<p class="small muted">No other sites are directly connected to this intermediate site yet.</p>'}
+    </div>
+    <div class="help">These are documented routing intentions, not a live reachability test.</div>
+  </div>`;
+}
+
+function collectTransit(form, dir) {
+  const yes = form.querySelector(`[name=route-${dir}]:checked`)?.value === 'yes';
+  if (!yes) return [];
+  return [...form.querySelectorAll(`[data-dests="${dir}"] input[type=checkbox]:checked`)].map(cb => ({
+    clinic_id: Number(cb.dataset.clinic),
+    location_id: cb.dataset.loc === '' ? null : Number(cb.dataset.loc),
+    exit_vpn_link_id: Number(cb.dataset.exit),
+  }));
+}
+
 export async function openLinkForm({ clinic, site = null, link = null, onSaved }) {
   const isEdit = !!link;
   const raw = link ? link.raw : {};
@@ -78,6 +105,13 @@ export async function openLinkForm({ clinic, site = null, link = null, onSaved }
     `<option value="${c.id}" ${String(c.id) === String(raw.b_clinic_id ?? '') ? 'selected' : ''}>${esc(c.name)}${c.shorthand ? ` (${esc(c.shorthand)})` : ''}</option>`).join('');
   const endpointOpts = `<option value="">— Choose endpoint —</option>` + endpoints.map(e =>
     `<option value="${e.id}" ${String(e.id) === String(raw.b_endpoint_id ?? '') ? 'selected' : ''}>${esc(e.name)}${e.private ? ' (private)' : ''}</option>`).join('');
+
+  // Onward-access (transit) routing — only for an existing site-to-site link.
+  let transit = null;
+  if (isEdit && raw.b_kind === 'site') {
+    try { transit = { a: await vpnApi.transitOptions(link.id, 'a'), b: await vpnApi.transitOptions(link.id, 'b') }; } catch { transit = null; }
+  }
+  const routingBlocks = transit ? routingHtml('a', transit.a) + routingHtml('b', transit.b) : '';
 
   const modal = openModal({
     title: isEdit ? 'Edit VPN link' : `Add VPN link · ${clinic.shorthand || clinic.name}`,
@@ -116,6 +150,7 @@ export async function openLinkForm({ clinic, site = null, link = null, onSaved }
         <div class="field"><label>Status</label><select name="status">${options(STATUS_LABELS, link ? link.status : 'unknown')}</select></div>
       </div>
       <div class="field"><label>Notes</label><textarea name="notes" rows="2" placeholder="What it's for, subnets at a glance, who manages it…">${esc(link ? link.notes : '')}</textarea></div>
+      ${routingBlocks}
     </form>`,
     footer: `${isEdit ? '<button class="btn btn-danger left" data-act="delete">Delete</button>' : ''}<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">${isEdit ? 'Save changes' : 'Add link'}</button>`,
   });
@@ -139,6 +174,13 @@ export async function openLinkForm({ clinic, site = null, link = null, onSaved }
   };
   form.querySelector('#b-clinic').onchange = (e) => loadRemote(e.target.value, null, null);
   if (raw.b_clinic_id) await loadRemote(raw.b_clinic_id, raw.b_location_id, raw.b_device_id);
+
+  form.querySelectorAll('.routing-section').forEach(sec => {
+    const dir = sec.dataset.dir, dests = sec.querySelector(`[data-dests="${dir}"]`);
+    sec.querySelectorAll(`[name=route-${dir}]`).forEach(r => r.onchange = () => {
+      dests.classList.toggle('hidden', form.querySelector(`[name=route-${dir}]:checked`).value !== 'yes');
+    });
+  });
 
   form.querySelector('#new-endpoint').onclick = () => openEndpointForm({
     clinic, onSaved: (ep) => {
@@ -169,8 +211,15 @@ export async function openLinkForm({ clinic, site = null, link = null, onSaved }
     if (kind === 'site' && !payload.b_clinic_id) { showFormError(form, 'Choose a remote clinic.'); return; }
     if (kind === 'endpoint' && !payload.b_endpoint_id) { showFormError(form, 'Choose or create an endpoint.'); return; }
     try {
-      if (isEdit) await vpnApi.updateLink(link.id, payload);
-      else await vpnApi.createLink(clinic.id, payload);
+      if (isEdit) {
+        await vpnApi.updateLink(link.id, payload);
+        if (transit && payload.remote_kind === 'site') {
+          await vpnApi.setTransit(link.id, { origin: 'a', destinations: collectTransit(form, 'a') });
+          await vpnApi.setTransit(link.id, { origin: 'b', destinations: collectTransit(form, 'b') });
+        }
+      } else {
+        await vpnApi.createLink(clinic.id, payload);
+      }
       toast(isEdit ? 'VPN link updated' : 'VPN link added', 'success'); modal.close(); onSaved && onSaved();
     } catch (e) { showFormError(form, e.message); }
   };

@@ -1176,3 +1176,53 @@ def test_vpn_map_overlay(client):
     assert "AC" not in names and "A-nopos" not in names
     ab = next(l for l in client.get("/api/vpn/map").json()["links"] if l["name"] == "AB")
     assert ab["a"]["lat"] == 51.0 and ab["b"]["lat"] == 51.1 and ab["status_label"] == "Up"
+
+
+def test_vpn_transit_and_connectivity(client):
+    def mk(n, lat=None, lng=None): return client.post("/api/clinics", json={"name": n, "lat": lat, "lng": lng}).json()["id"]
+    sdi, coc, abc, deff = mk("SDI Site", 51.0, -114.0), mk("COC Site", 51.1, -114.1), mk("ABC Site", 51.2, -114.2), mk("DEF Site", 51.3, -114.3)
+    l1 = client.post(f"/api/clinics/{sdi}/vpn/links", json={"remote_kind": "site", "b_clinic_id": coc, "name": "SDI-COC", "status": "up"}).json()
+    l2 = client.post(f"/api/clinics/{coc}/vpn/links", json={"remote_kind": "site", "b_clinic_id": abc, "name": "COC-ABC", "status": "up"}).json()
+    l3 = client.post(f"/api/clinics/{coc}/vpn/links", json={"remote_kind": "site", "b_clinic_id": deff, "name": "COC-DEF", "status": "up"}).json()
+
+    # Onward-access options for the SDI side of SDI-COC = sites directly linked to COC (ABC, DEF).
+    opts = client.get(f"/api/vpn/links/{l1['id']}/transit", params={"from": "a"}).json()
+    assert opts["via"]["clinic_name"] == "COC Site"
+    assert {o["clinic_name"] for o in opts["options"]} == {"ABC Site", "DEF Site"}
+    assert all(o["selected"] is False for o in opts["options"])
+
+    # Select ABC + DEF as reachable through COC.
+    dests = [{"clinic_id": o["clinic_id"], "location_id": o["location_id"], "exit_vpn_link_id": o["exit_vpn_link_id"]} for o in opts["options"]]
+    assert client.put(f"/api/vpn/links/{l1['id']}/transit", json={"origin": "a", "destinations": dests}).json()["count"] == 2
+    assert all(o["selected"] for o in client.get(f"/api/vpn/links/{l1['id']}/transit", params={"from": "a"}).json()["options"])
+
+    # Connectivity from SDI: COC direct, ABC + DEF remote via COC with a 2-hop path.
+    conn = client.get(f"/api/clinics/{sdi}/connectivity").json()
+    assert [d["clinic_name"] for d in conn["direct"]] == ["COC Site"] and conn["direct"][0]["relationship"] == "direct"
+    remote = {r["clinic_name"]: r for r in conn["remote"]}
+    assert set(remote) == {"ABC Site", "DEF Site"}
+    assert remote["ABC Site"]["via"]["clinic_name"] == "COC Site" and len(remote["ABC Site"]["path"]) == 2
+
+    # Directional: ABC does not reach SDI back through COC (no reverse transit configured).
+    conn_abc = client.get(f"/api/clinics/{abc}/connectivity").json()
+    assert [d["clinic_name"] for d in conn_abc["direct"]] == ["COC Site"] and conn_abc["remote"] == []
+
+    # Onward options exclude the source itself (ABC's SDI-COC-... would never list COC->SDI as a loop-back).
+    # Disabling the entry tunnel drops both direct and remote connectivity from SDI.
+    client.put(f"/api/vpn/links/{l1['id']}", json={"status": "disabled", "remote_kind": "site", "b_clinic_id": coc, "name": "SDI-COC"})
+    conn2 = client.get(f"/api/clinics/{sdi}/connectivity").json()
+    assert conn2["direct"] == [] and conn2["remote"] == []
+
+    # Re-enable, then disabling the EXIT tunnel drops only that remote destination.
+    client.put(f"/api/vpn/links/{l1['id']}", json={"status": "up", "remote_kind": "site", "b_clinic_id": coc, "name": "SDI-COC"})
+    client.put(f"/api/vpn/links/{l3['id']}", json={"status": "disabled", "remote_kind": "site", "b_clinic_id": deff, "name": "COC-DEF"})
+    conn3 = client.get(f"/api/clinics/{sdi}/connectivity").json()
+    assert {r["clinic_name"] for r in conn3["remote"]} == {"ABC Site"}
+
+    # Transit rows survive a backup round-trip in the export.
+    assert "vpn_transit_routes" in client.get("/api/export/backup.json").json()
+
+    # Validation: onward access can't be configured on a link to a custom endpoint.
+    ep = client.post(f"/api/clinics/{sdi}/vpn/endpoints", json={"name": "AHS"}).json()
+    epl = client.post(f"/api/clinics/{sdi}/vpn/links", json={"remote_kind": "endpoint", "b_endpoint_id": ep["id"]}).json()
+    assert client.get(f"/api/vpn/links/{epl['id']}/transit").status_code == 422

@@ -192,6 +192,16 @@ and is stored in a single SQLite file.
   deliberately build out a connected spiderweb (and collapse it again); clicking a remote site
   jumps to that site's topology, and clicking a link opens it. The full company-wide graph is
   never shown unprompted.
+- **Onward access (VPN routing)** – on a site-to-site VPN link, each direction has a routing
+  section answering "can this site reach sites *beyond* the far end through this VPN?" Choosing
+  **Yes** reveals a checklist of the sites directly VPN-connected to the intermediate site; the
+  ones you tick are recorded as explicit two-hop routes (e.g. SDI → COC → ABC). Routes are
+  **directional** (SDI reaching ABC through COC does not let ABC reach SDI) and never inferred —
+  onward access is always a deliberate choice. A **connectivity resolver** (`GET
+  …/clinics/{id}/connectivity?site=`) answers "which sites can this site reach?", returning
+  directly-linked sites/endpoints and the transit-reachable sites with their full path. A
+  tunnel marked **disabled** drops out of the calculation; up/down/unknown stay as documented
+  paths with their recorded status shown — the app documents intent, never live reachability.
 - **Map VPN overlay** – a **🔒 VPN** toggle on the map (off by default) draws a dashed indigo
   line for each VPN link between sites with known coordinates, connecting the actual **site**
   pins (not just the primary clinic pin). Multiple tunnels between the same two sites collapse
@@ -324,6 +334,7 @@ The web UI talks to a JSON API that you can use directly; interactive docs are a
 | `…/clinics/{id}/devices`, `…/devices/next-name`, `…/clinics/{id}/topology`, `/api/devices/{id}`, `…/tickets` | Equipment inventory (`?site=main\|<id>\|all` scopes devices/topology/racks) |
 | `GET …/clinics/{id}/sites`, `…/clinics/{id}/locations` | Sites (Main Site + secondary locations) |
 | `…/clinics/{id}/vpn/links`, `/api/vpn/links/{id}`, `/api/vpn/map`, `…/clinics/{id}/vpn/endpoints`, `/api/vpn/endpoints/{id}` | Canonical VPN links, map overlay + reusable endpoint directory |
+| `GET/PUT /api/vpn/links/{id}/transit`, `GET …/clinics/{id}/connectivity` | Onward-access routes + connectivity resolver |
 | `POST …/devices/{id}/services`, `GET/PUT/DELETE /api/services/{id}` | Running services on servers/VMs |
 | `GET/PUT /api/pricebook`, `GET …/clinics/{id}/quote-defaults`, `…/quotes` | Price book and quotes |
 | `GET/POST/PUT/DELETE /api/inventory`, `…/inventory/{id}/adjust` | Inventory items and stock |

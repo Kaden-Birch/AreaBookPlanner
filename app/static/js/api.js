@@ -161,6 +161,9 @@ export const vpn = {
   getLink: (id) => api.get(`/api/vpn/links/${id}`),
   updateLink: (id, data) => api.put(`/api/vpn/links/${id}`, data),
   removeLink: (id) => api.del(`/api/vpn/links/${id}`),
+  transitOptions: (linkId, from) => api.get(`/api/vpn/links/${linkId}/transit`, { from }),
+  setTransit: (linkId, data) => api.put(`/api/vpn/links/${linkId}/transit`, data),
+  connectivity: (clinicId, site) => api.get(`/api/clinics/${clinicId}/connectivity`, site && site !== 'all' ? { site } : undefined),
 };
 export const settings = { get: () => api.get('/api/settings'), update: (data) => api.put('/api/settings', data) };
 export async function scanCard(file) {

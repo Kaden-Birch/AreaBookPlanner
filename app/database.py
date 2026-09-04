@@ -407,9 +407,29 @@ CREATE TABLE IF NOT EXISTS vpn_links (
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+-- Onward-access ("transit") routes: an explicit, directional statement that traffic from a
+-- source site may continue through an intermediate ("via") site to a destination site, using
+-- two documented VPN links. Two hops only; never inferred, always chosen by the user.
+CREATE TABLE IF NOT EXISTS vpn_transit_routes (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_clinic_id   INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    source_location_id INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    entry_vpn_link_id  INTEGER NOT NULL REFERENCES vpn_links(id) ON DELETE CASCADE,
+    via_clinic_id      INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    via_location_id    INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    exit_vpn_link_id   INTEGER NOT NULL REFERENCES vpn_links(id) ON DELETE CASCADE,
+    dest_clinic_id     INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    dest_location_id   INTEGER REFERENCES clinic_locations(id) ON DELETE SET NULL,
+    rationale          TEXT,
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_vpn_links_a ON vpn_links(a_clinic_id);
 CREATE INDEX IF NOT EXISTS idx_vpn_links_b ON vpn_links(b_clinic_id);
 CREATE INDEX IF NOT EXISTS idx_vpn_endpoints_private ON vpn_endpoints(private_clinic_id);
+CREATE INDEX IF NOT EXISTS idx_transit_source ON vpn_transit_routes(source_clinic_id);
+CREATE INDEX IF NOT EXISTS idx_transit_entry ON vpn_transit_routes(entry_vpn_link_id);
 CREATE INDEX IF NOT EXISTS idx_locations_clinic ON clinic_locations(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_clinic ON clinic_links(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_links_other ON clinic_links(other_clinic_id);

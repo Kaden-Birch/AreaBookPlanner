@@ -599,3 +599,19 @@ class VpnLinkIn(BaseModel):
     _blank = field_validator(
         "name", "vpn_type", "notes", "a_location_id", "a_device_id",
         "b_clinic_id", "b_location_id", "b_device_id", "b_endpoint_id", mode="before")(_blank_to_none)
+
+
+class TransitDestIn(BaseModel):
+    """One onward-access destination selected on a VPN link's routing section."""
+    clinic_id: int
+    location_id: Optional[int] = None       # None = the destination clinic's Main Site
+    exit_vpn_link_id: int
+    rationale: Optional[str] = None
+
+    _blank = field_validator("location_id", "rationale", mode="before")(_blank_to_none)
+
+
+class TransitSetIn(BaseModel):
+    """Replace the set of onward-access destinations for one direction of a VPN link."""
+    origin: Literal["a", "b"]               # which side of the link is the source
+    destinations: list[TransitDestIn] = []

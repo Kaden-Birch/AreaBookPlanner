@@ -492,6 +492,7 @@ def export_backup(conn: sqlite3.Connection = Depends(db_dependency)):
         "clinic_tickets": rows_to_list(conn.execute("SELECT * FROM clinic_tickets")),
         "vpn_endpoints": rows_to_list(conn.execute("SELECT * FROM vpn_endpoints")),
         "vpn_links": rows_to_list(conn.execute("SELECT * FROM vpn_links")),
+        "vpn_transit_routes": rows_to_list(conn.execute("SELECT * FROM vpn_transit_routes")),
     }
     return Response(
         content=json.dumps(data, indent=2),
@@ -511,7 +512,7 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         raise HTTPException(status_code=422, detail="Unrecognised backup format")
     tables = ["clinic_groups", "clinics", "contacts", "appointments", "clinic_notes", "tasks", "clinic_events",
               "clinic_locations", "clinic_links", "attachments", "email_templates", "saved_views", "devices", "device_services", "device_links", "device_tickets", "quotes",
-              "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets", "vpn_endpoints", "vpn_links"]
+              "inventory_items", "invoices", "invoice_lines", "orders", "clinic_tickets", "vpn_endpoints", "vpn_links", "vpn_transit_routes"]
     if replace:
         for t in reversed(tables):
             conn.execute(f"DELETE FROM {t}")
@@ -711,8 +712,9 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         cur = conn.execute(f"INSERT INTO vpn_endpoints ({cols}) VALUES ({marks})", list(row.values()))
         if old_id is not None:
             endpoint_map[old_id] = cur.lastrowid
+    vpn_link_map: dict[int, int] = {}
     for row in data.get("vpn_links", []):
-        row.pop("id", None)
+        old_id = row.pop("id", None)
         if row.get("a_clinic_id") not in clinic_map:
             continue
         if row.get("b_kind") == "site" and row.get("b_clinic_id") not in clinic_map:
@@ -728,7 +730,24 @@ def import_backup(data: dict, replace: bool = False, conn: sqlite3.Connection = 
         row["b_endpoint_id"] = endpoint_map.get(row.get("b_endpoint_id"))
         cols = ", ".join(row.keys())
         marks = ", ".join("?" * len(row))
-        conn.execute(f"INSERT INTO vpn_links ({cols}) VALUES ({marks})", list(row.values()))
+        cur = conn.execute(f"INSERT INTO vpn_links ({cols}) VALUES ({marks})", list(row.values()))
+        if old_id is not None:
+            vpn_link_map[old_id] = cur.lastrowid
+    for row in data.get("vpn_transit_routes", []):
+        row.pop("id", None)
+        if row.get("entry_vpn_link_id") not in vpn_link_map or row.get("exit_vpn_link_id") not in vpn_link_map:
+            continue
+        if row.get("source_clinic_id") not in clinic_map or row.get("via_clinic_id") not in clinic_map or row.get("dest_clinic_id") not in clinic_map:
+            continue
+        row["source_clinic_id"] = clinic_map[row["source_clinic_id"]]
+        row["via_clinic_id"] = clinic_map[row["via_clinic_id"]]
+        row["dest_clinic_id"] = clinic_map[row["dest_clinic_id"]]
+        row["source_location_id"] = row["via_location_id"] = row["dest_location_id"] = None
+        row["entry_vpn_link_id"] = vpn_link_map[row["entry_vpn_link_id"]]
+        row["exit_vpn_link_id"] = vpn_link_map[row["exit_vpn_link_id"]]
+        cols = ", ".join(row.keys())
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO vpn_transit_routes ({cols}) VALUES ({marks})", list(row.values()))
     return {"status": "merged", "counts": {t: len(data.get(t, [])) for t in tables}}
 
 

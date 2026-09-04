@@ -2,7 +2,7 @@
 import { clinics, devices, vpn as vpnApi } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
-import { openVpnPanel, openLinkForm } from '../vpn.js';
+import { openVpnPanel, openLinkForm, openConnectivityCheck } from '../vpn.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -440,7 +440,7 @@ async function renderVpnGraph(body) {
   }
   body.innerHTML = `
     <div class="topo-wrap" id="topo-wrap">
-      <div class="topo-hint">Showing VPN links for <strong>${esc(clinic.name)}</strong>. Click <strong>+</strong> on a remote site to reveal its own VPN links; click a link to open it, or a remote site to jump to its topology.</div>
+      <div class="topo-hint">Showing VPN links for <strong>${esc(clinic.name)}</strong>. Click <strong>+</strong> on a remote site to reveal its own VPN links; click a link to open it, or a remote site to jump to its topology. <button class="btn btn-sm" id="cc-btn">Check reachability</button></div>
       <svg class="topo-svg" viewBox="0 0 ${W} ${H}" width="${W * state.zoom}" height="${H * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
     </div>
     <div class="topo-legend">
@@ -452,6 +452,8 @@ async function renderVpnGraph(body) {
     try { const link = await vpnApi.getLink(Number(el.dataset.vpn)); openLinkForm({ clinic, link, onSaved: () => { clinicLinksCache.clear(); renderVpnGraph(body); } }); }
     catch (err) { toast(err.message, 'error'); }
   });
+  const ccBtn = body.querySelector('#cc-btn');
+  if (ccBtn) ccBtn.onclick = () => openConnectivityCheck({ clinicId: clinic.id, site: siteParam(), label: `${clinic.name}` });
   body.querySelectorAll('.vg-toggle').forEach(el => el.onclick = (ev) => {
     ev.stopPropagation();
     const key = el.dataset.toggle;

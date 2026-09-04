@@ -62,6 +62,71 @@ async function terminatorOptions(clinicId, selected) {
     `<option value="${d.id}" ${String(d.id) === String(selected ?? '') ? 'selected' : ''}>${esc(d.icon)} ${esc(d.name)}${d.location_name ? ` · ${esc(d.location_name)}` : ''}</option>`).join('');
 }
 
+// ---- Connectivity check tool ----------------------------------------------------
+// "Can this site reach another site?" — resolved from the source site's connectivity.
+
+export async function openConnectivityCheck({ clinicId, site = null, label = '' }) {
+  const modal = openModal({
+    title: 'Connectivity check',
+    size: 'modal-lg',
+    body: `<div id="cc-body" class="mt">Loading…</div>`,
+    footer: `<button class="btn" data-act="close">Close</button>`,
+  });
+  modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
+  const bodyEl = modal.body.querySelector('#cc-body');
+  let conn, clinicsList;
+  try {
+    [conn, clinicsList] = await Promise.all([vpnApi.connectivity(clinicId, site), clinicsApi.list().catch(() => [])]);
+  } catch (e) { bodyEl.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return modal; }
+  clinicsList = Array.isArray(clinicsList) ? clinicsList : (clinicsList.clinics || []);
+  const srcLabel = label || `${conn.source_site.clinic_name} · ${conn.source_site.site_name}`;
+  // Reachable index by "clinicId:siteId".
+  const reach = new Map();
+  conn.direct.filter(d => d.kind === 'site').forEach(d => reach.set(`${d.clinic_id}:${d.site_id}`, { rel: 'direct', d }));
+  conn.remote.forEach(r => reach.set(`${r.clinic_id}:${r.site_id}`, { rel: 'via', d: r }));
+  // "To" options: every clinic's Main Site, plus any reachable destination (may be a secondary site).
+  const opts = new Map();
+  clinicsList.forEach(c => { if (c.id !== conn.source_site.clinic_id) opts.set(`${c.id}:main`, `${c.name} · Main Site`); });
+  reach.forEach((v, k) => { const d = v.d; opts.set(k, `${d.clinic_name} · ${d.site_name}`); });
+
+  bodyEl.innerHTML = `
+    <div class="field-row">
+      <div class="field"><label>From</label><input value="${attr(srcLabel)}" disabled></div>
+      <div class="field"><label>To</label><select id="cc-to"><option value="">— Choose a site —</option>${[...opts.entries()].map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+    </div>
+    <div id="cc-result" class="mt"></div>`;
+  const resEl = bodyEl.querySelector('#cc-result');
+  bodyEl.querySelector('#cc-to').onchange = (e) => {
+    const key = e.target.value;
+    if (!key) { resEl.innerHTML = ''; return; }
+    const hit = reach.get(key);
+    const toLabel = opts.get(key);
+    if (!hit) {
+      resEl.innerHTML = `<div class="card"><p><span class="badge badge-grey">Not documented as reachable</span></p>
+        <p class="small muted">No direct VPN link or configured onward route documents reaching ${esc(toLabel)} from ${esc(srcLabel)}. Open a VPN link and set onward access to record a route.</p></div>`;
+      return;
+    }
+    const d = hit.d;
+    if (hit.rel === 'direct') {
+      resEl.innerHTML = `<div class="card"><p><span class="badge badge-green">✓ Directly reachable</span></p>
+        <div class="cc-path"><div>${esc(conn.source_site.clinic_name)} · ${esc(conn.source_site.site_name)}</div>
+          <div class="cc-hop">→ ${esc(d.vpn_name || 'VPN link')} <span class="muted">(${esc(d.status_label)})</span></div>
+          <div>${esc(d.clinic_name)} · ${esc(d.site_name)}</div></div>
+        <p class="small muted mt">Documented connectivity — not a live reachability test.</p></div>`;
+    } else {
+      resEl.innerHTML = `<div class="card"><p><span class="badge badge-yellow">✓ Reachable via ${esc(d.via.clinic_name)}</span></p>
+        <div class="cc-path"><div>${esc(conn.source_site.clinic_name)} · ${esc(conn.source_site.site_name)}</div>
+          <div class="cc-hop">→ VPN link</div>
+          <div>${esc(d.via.clinic_name)} · ${esc(d.via.site_name)}</div>
+          <div class="cc-hop">→ VPN link</div>
+          <div>${esc(d.clinic_name)} · ${esc(d.site_name)}</div></div>
+        ${d.rationale ? `<p class="small">${esc(d.rationale)}</p>` : ''}
+        <p class="small muted mt">Documented connectivity — not a live reachability test.</p></div>`;
+    }
+  };
+  return modal;
+}
+
 function routingHtml(dir, t) {
   const anySel = t.options.some(o => o.selected);
   return `<div class="form-section routing-section" data-dir="${dir}">

@@ -762,6 +762,17 @@ details summary { cursor: pointer; font-weight: 600; }
 .route-dests { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
 label.checkbox.block { display: flex; align-items: center; gap: 6px; }
 
+/* Focused connectivity mode on the map */
+.map-banner.conn { display: flex; gap: 8px; align-items: center; }
+.conn-pin { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.conn-pin.source { background: var(--primary); }
+.conn-pin.direct { background: #2fae66; }
+.conn-pin.via { background: #e8890c; }
+.leaflet-tooltip.conn-tip { background: #e8890c; color: #fff; border: none; font-size: 11px; font-weight: 600; padding: 1px 6px; }
+.leaflet-tooltip.conn-tip::before { display: none; }
+.cc-path { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; font-size: 13px; }
+.cc-path .cc-hop { color: var(--muted); font-size: 12px; padding-left: 10px; }
+
 /* Running-service cards on a server/VM detail */
 .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .svc-card { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: block; width: 100%; }

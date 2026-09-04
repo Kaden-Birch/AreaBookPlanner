@@ -210,6 +210,15 @@ and is stored in a single SQLite file.
   endpoints appear only if they were given a map position. The overlay respects the map's
   filters: a line whose clinic endpoint is filtered out fades and goes non-interactive, so
   hidden clinics are never exposed.
+- **Connectivity mode** – a pin's popup has a **🔒 Connectivity** action that focuses the map on
+  one site: it hides everything else and draws only what that site can reach — the source
+  (blue), directly-linked sites/endpoints (green solid lines) and transit-reachable sites
+  (orange dashed lines labelled "via …"). Clicking a destination summarises the path, the VPN
+  links used and their status, with links to each site's topology and VPN link details.
+  Focusing never changes the map's saved filters. A **Connectivity check** tool (in the mode's
+  banner and on the VPN map view) answers "can this site reach that one?" in plain language,
+  showing the documented path or explaining that no route is documented — always making clear
+  this is documented intent, not a live reachability test.
 - **Virtual machines** are a first-class device type: a VM's uplink is the host server
   it runs on, and it draws as a smaller, distinct box in the topology (dotted virtual
   link). Devices can be marked **off-site** (a laptop at home, say) and appear in a

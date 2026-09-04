@@ -6,6 +6,7 @@ import {
   openModal, formData, shorthandBadge, options, fmtDateOnly,
 } from '../ui.js';
 import { openClinicForm, openAppointmentForm, quickLog, quickLogButtons } from '../forms.js';
+import { openConnectivityCheck, openLinkForm } from '../vpn.js';
 
 let map = null;
 let markers = new Map();        // clinic id -> L.marker
@@ -19,6 +20,7 @@ let allLocations = [];
 let locationLayer = null;
 let vpnLayer = null;
 let allVpn = [];
+let connectivityLayer = null;
 let savedViews = [];
 let meta = null;
 let driveCache = { key: null, data: null };
@@ -30,6 +32,8 @@ const state = {
   near: { on: false, centre: null, mode: 'km', km: 5, min: 15, staleOnly: false, picking: false },
   // Route planner
   route: { on: false, ids: [], start: null, startMode: 'first', picking: false, loop: false, result: null },
+  // Focused connectivity mode (from one selected site)
+  connectivity: { on: false, clinicId: null, site: null, label: '' },
 };
 
 export async function render(container, params) {
@@ -79,6 +83,7 @@ export async function render(container, params) {
       <div class="map-container" id="map-container">
         <div id="map"></div>
         <div class="map-banner hidden" id="map-banner"><span id="banner-text"></span><button class="btn btn-sm" id="cancel-pick">Cancel</button></div>
+        <div class="map-banner conn hidden" id="conn-banner"><span id="conn-text"></span><button class="btn btn-sm" id="conn-check">Check reachability</button><button class="btn btn-sm" id="conn-exit">Exit connectivity view</button></div>
       </div>
     </div>`;
 
@@ -95,6 +100,7 @@ export async function render(container, params) {
   nearLayer = L.layerGroup().addTo(map);
   locationLayer = L.layerGroup().addTo(map);
   vpnLayer = L.layerGroup().addTo(map);
+  connectivityLayer = L.layerGroup().addTo(map);
   (state.cluster ? clusterLayer : plainLayer).addTo(map);
   markers = new Map();
 
@@ -142,6 +148,8 @@ export async function render(container, params) {
   container.querySelector('#route-btn').onclick = () => { state.route.on = !state.route.on; setActive('route-btn', state.route.on); document.getElementById('route-panel').classList.toggle('hidden', !state.route.on); if (state.route.on) renderRoutePanel(); else clearRoute(); applyFilters(); };
   container.querySelector('#place-btn').onclick = () => setPlacing(!state.placing);
   container.querySelector('#cancel-pick').onclick = () => { setPlacing(false); state.near.picking = false; state.route.picking = false; updateBanner(); };
+  container.querySelector('#conn-exit').onclick = exitConnectivity;
+  container.querySelector('#conn-check').onclick = () => openConnectivityCheck({ clinicId: state.connectivity.clinicId, site: state.connectivity.site, label: state.connectivity.label });
 
   await load();
   if (state.near.on) renderNearPanel();
@@ -153,6 +161,7 @@ export function destroy(container) {
   if (map) { map.remove(); map = null; }
   markers = new Map();
   allVpn = [];
+  state.connectivity = { on: false, clinicId: null, site: null, label: '' };
   container.classList.remove('full');
   state.placing = false;
   state.near.picking = false;
@@ -306,6 +315,7 @@ function matches(c) {
 }
 
 function applyFilters() {
+  if (state.connectivity.on) return;  // focused connectivity mode owns the map; leave it alone
   const counts = {};
   COLOR_ORDER.forEach(c => { counts[c] = 0; });
   allClinics.forEach(c => { counts[c.color]++; });
@@ -346,7 +356,12 @@ function applyFilters() {
         ${l.phone ? `<p>☎ <a href="tel:${attr(l.phone)}">${esc(l.phone)}</a></p>` : ''}
         ${parent && parent.address ? `<p class="small muted">Main location: ${esc(parent.address)}</p>` : ''}
         <div class="popup-actions"><a class="btn btn-sm btn-primary" href="#/clinics/${l.clinic_id}">Open clinic</a>
-          <a class="btn btn-sm" href="https://www.google.com/maps/dir/?api=1&destination=${l.lat},${l.lng}" target="_blank" rel="noopener">Directions</a></div>`, { maxWidth: 320 });
+          <a class="btn btn-sm" href="https://www.google.com/maps/dir/?api=1&destination=${l.lat},${l.lng}" target="_blank" rel="noopener">Directions</a>
+          <button class="btn btn-sm" data-act="conn-loc" title="Show which sites this site can reach over VPN">🔒 Connectivity</button></div>`, { maxWidth: 320 });
+      m.on('popupopen', (e) => {
+        const btn = e.popup.getElement().querySelector('[data-act=conn-loc]');
+        if (btn) btn.onclick = () => { m.closePopup(); enterConnectivity(l.clinic_id, String(l.id), `${l.clinic_name} — ${l.name}`); };
+      });
       m.addTo(locationLayer);
     }
   }
@@ -495,6 +510,7 @@ function popupHtml(c) {
       <button class="btn btn-sm" data-act="route">${state.route.ids.includes(c.id) ? '− Route' : '+ Route'}</button>
       <button class="btn btn-sm" data-act="move" title="Drag the pin to a new spot">Move pin</button>
       <a class="btn btn-sm" href="${attr(directionsUrl(c))}" target="_blank" rel="noopener">Directions</a>
+      <button class="btn btn-sm" data-act="connectivity" title="Show which sites this site can reach over VPN">🔒 Connectivity</button>
     </div>`;
 }
 
@@ -511,6 +527,97 @@ function wirePopup(el, c, marker) {
     toggleRouteClinic(c.id, !state.route.ids.includes(c.id));
     marker.closePopup();
   };
+  const conn = el.querySelector('[data-act=connectivity]');
+  if (conn) conn.onclick = () => { marker.closePopup(); enterConnectivity(c.id, 'main', `${c.name} — Main Site`); };
+}
+
+// ---- Focused connectivity mode -------------------------------------------
+
+function connIcon(kind) {
+  const glyph = kind === 'source' ? '📍' : '🔒';
+  return L.divIcon({ className: '', html: `<div class="conn-pin ${kind}">${glyph}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+}
+
+async function enterConnectivity(clinicId, site, label) {
+  state.connectivity = { on: true, clinicId, site, label };
+  map.removeLayer(state.cluster ? clusterLayer : plainLayer);
+  locationLayer.clearLayers();
+  vpnLayer.clearLayers();
+  nearLayer.clearLayers();
+  if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+  document.getElementById('conn-banner').classList.remove('hidden');
+  document.getElementById('conn-text').textContent = `Connectivity from: ${label}`;
+  let data;
+  try { data = await vpnApi.connectivity(clinicId, site); }
+  catch (e) { toast(e.message, 'error'); return exitConnectivity(); }
+  drawConnectivity(data);
+}
+
+function exitConnectivity() {
+  state.connectivity = { on: false, clinicId: null, site: null, label: '' };
+  connectivityLayer.clearLayers();
+  document.getElementById('conn-banner').classList.add('hidden');
+  (state.cluster ? clusterLayer : plainLayer).addTo(map);
+  applyFilters();
+}
+
+function drawConnectivity(data) {
+  connectivityLayer.clearLayers();
+  const src = data.source_site;
+  const pts = [];
+  if (src.lat != null) {
+    L.marker([src.lat, src.lng], { icon: connIcon('source'), zIndexOffset: 1000 })
+      .bindPopup(`<div class="popup-title">📍 ${esc(src.clinic_name)} · ${esc(src.site_name)}</div><p class="small muted">Selected source site</p>`).addTo(connectivityLayer);
+    pts.push([src.lat, src.lng]);
+  }
+  for (const d of data.direct) {
+    if (d.lat == null) continue;
+    if (src.lat != null) L.polyline([[src.lat, src.lng], [d.lat, d.lng]], { color: '#2fae66', weight: 3, opacity: 0.85 }).addTo(connectivityLayer);
+    connMarker(d, data);
+    pts.push([d.lat, d.lng]);
+  }
+  for (const r of data.remote) {
+    if (r.lat == null) continue;
+    const via = r.via;
+    const from = (via.lat != null) ? [via.lat, via.lng] : (src.lat != null ? [src.lat, src.lng] : null);
+    if (from) L.polyline([from, [r.lat, r.lng]], { color: '#e8890c', weight: 2.5, opacity: 0.85, dashArray: '7 5' }).addTo(connectivityLayer);
+    connMarker(r, data).bindTooltip(`via ${esc(via.clinic_name)}`, { permanent: true, direction: 'top', className: 'conn-tip', offset: [0, -12] });
+    pts.push([r.lat, r.lng]);
+  }
+  if (pts.length > 1) map.fitBounds(pts, { padding: [70, 70], maxZoom: 12 });
+}
+
+function connMarker(d, data) {
+  const via = d.relationship === 'via';
+  const mk = L.marker([d.lat, d.lng], { icon: connIcon(via ? 'via' : 'direct') })
+    .bindPopup(() => connPopup(d, data), { maxWidth: 320 }).addTo(connectivityLayer);
+  mk.on('popupopen', (e) => {
+    e.popup.getElement().querySelectorAll('[data-vpn]').forEach(b => b.onclick = async () => {
+      try { const link = await vpnApi.getLink(Number(b.dataset.vpn)); openLinkForm({ clinic: { id: data.source_site.clinic_id, name: data.source_site.clinic_name }, link, onSaved: () => enterConnectivity(state.connectivity.clinicId, state.connectivity.site, state.connectivity.label) }); }
+      catch (err) { toast(err.message, 'error'); }
+    });
+  });
+  return mk;
+}
+
+function connPopup(d, data) {
+  const via = d.relationship === 'via';
+  const name = d.kind === 'endpoint' ? `🌐 ${esc(d.name)}` : `${esc(d.clinic_name)} · ${esc(d.site_name)}`;
+  let html = `<div class="popup-title">🔒 ${name}</div>
+    <p><span class="badge ${via ? 'badge-yellow' : 'badge-green'}">${via ? `Reachable via ${esc(d.via.clinic_name)}` : 'Direct VPN'}</span></p>`;
+  if (via) {
+    html += `<p class="small">Path: ${esc(data.source_site.clinic_name)} → ${esc(d.via.clinic_name)} → ${esc(d.clinic_name)}</p>`;
+    html += `<div class="small">${d.path.map(h => `<a href="#" data-vpn="${h.vpn_link_id}">VPN link</a>`).join(' → ')}</div>`;
+    if (d.rationale) html += `<p class="small muted">${esc(d.rationale)}</p>`;
+  } else {
+    html += `<p class="small"><a href="#" data-vpn="${d.vpn_link_id}">${esc(d.vpn_name || 'VPN link')}</a> · status ${esc(d.status_label)}</p>`;
+  }
+  if (d.kind !== 'endpoint') {
+    const q = d.site_id && d.site_id !== 'main' ? `&site=${d.site_id}` : '';
+    html += `<div class="popup-actions"><a class="btn btn-sm btn-primary" href="#/clinics/${d.clinic_id}/equipment?view=topology${q}">Site topology</a><a class="btn btn-sm" href="#/clinics/${d.clinic_id}">Open clinic</a></div>`;
+  }
+  html += `<p class="small muted mt">Documented connectivity — not a live reachability test.</p>`;
+  return html;
 }
 
 // ---- Near me -------------------------------------------------------------

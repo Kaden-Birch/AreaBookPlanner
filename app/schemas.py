@@ -20,6 +20,7 @@ def _blank_to_none(v):
 
 
 class ClinicIn(BaseModel):
+    area_id: Optional[int] = None
     name: str = Field(min_length=1, max_length=200)
     address: Optional[str] = None
     display_address: Optional[str] = None  # shown on the clinic page; falls back to `address`
@@ -146,6 +147,7 @@ class AppointmentPatch(BaseModel):
 
 
 class NoteIn(BaseModel):
+    visibility: Literal['general', 'sales', 'technical'] = 'general'
     body: str = Field(min_length=1)
     author: Optional[str] = None
     kind: str = "note"
@@ -232,6 +234,7 @@ class BulkGeocodeRequest(BaseModel):
 
 
 class TaskIn(BaseModel):
+    visibility: Literal['general', 'sales', 'technical'] = 'general'
     clinic_id: Optional[int] = None
     contact_id: Optional[int] = None
     title: str = Field(min_length=1, max_length=200)

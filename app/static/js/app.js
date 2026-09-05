@@ -20,7 +20,10 @@ import * as quotesList from './pages/quotes.js';
 import { initNotifications } from './notifications.js';
 import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
-import { navigate, toast, toggleTheme, getTheme } from './ui.js';
+import { navigate, toast, toggleTheme, getTheme, esc } from './ui.js';
+import { boot, role, allowedPage, renderAdmin, renderItHome, pruneWorkspaceUI } from './auth.js';
+
+const ready = boot();
 
 const routes = [
   { pattern: /^\/?$/, page: dashboard, nav: '' },
@@ -48,11 +51,14 @@ let current = null;
 const app = document.getElementById('app');
 
 async function route() {
+  if (!(await ready)) return;
+  if (role() === 'admin') { await renderAdmin(app); return; }
   const hash = window.location.hash.replace(/^#/, '') || '/';
   const [path, query = ''] = hash.split('?');
   const params = new URLSearchParams(query);
   const match = routes.find(r => r.pattern.test(path));
   if (!match) { navigate('#/'); return; }
+  if (!allowedPage(match.nav) || (path.includes('/equipment') && role() !== 'it') || ((path.endsWith('/quote') || path.endsWith('/edit')) && !['sales','manager'].includes(role()))) { navigate('#/'); return; }
 
   if (current && current.page.destroy) current.page.destroy(app);
   current = match;
@@ -60,10 +66,13 @@ async function route() {
   app.innerHTML = '<div class="loading">Loading…</div>';
   const routeParams = path.match(match.pattern).groups || {};
   try {
-    await match.page.render(app, params, routeParams);
+    if(match.nav==='' && role()==='it') await renderItHome(app);
+    else if(match.nav==='' && role()==='client_success') await clientsPage.render(app,params,routeParams);
+    else await match.page.render(app, params, routeParams);
+    pruneWorkspaceUI(app);
   } catch (e) {
     console.error(e);
-    app.innerHTML = `<div class="card empty">Something went wrong: ${e.message}</div>`;
+    app.innerHTML = `<div class="card empty">Something went wrong: ${esc(e.message)}</div>`;
   }
   window.scrollTo(0, 0);
 }
@@ -82,8 +91,8 @@ const syncThemeBtn = () => { themeBtn.textContent = getTheme() === 'dark' ? '☀
 themeBtn.onclick = () => { toggleTheme(); syncThemeBtn(); };
 syncThemeBtn();
 
-initNotifications();
-initSearch();
+ready.then(ok => { if(ok && role() !== 'admin') { initNotifications(); initSearch(); } });
+new MutationObserver(() => { if(role()) pruneWorkspaceUI(document.body); }).observe(document.body, {childList:true, subtree:true});
 
 // Surface API failures that escape page code.
 window.addEventListener('unhandledrejection', (e) => {

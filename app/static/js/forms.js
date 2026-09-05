@@ -5,6 +5,7 @@ import {
   toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl, navigate,
 } from './ui.js';
 import { openGroupForm } from './pages/settings.js';
+import { user, role } from './auth.js';
 
 // ---- Clinic --------------------------------------------------------------
 
@@ -71,12 +72,14 @@ function collectHours(form) {
 export async function openClinicForm({ clinic = null, initial = {}, onSaved } = {}) {
   const meta = await getMeta();
   const groupList = await groups.list();
-  const c = { city: 'Calgary', province: 'AB', relationship: 'prospect', priority: 'medium', ...(clinic || {}), ...initial };
+  const activeArea = user?.areas.find(a=>a.role===role() && a.id===user.area_id);
+  const c = { city: activeArea?.name || '', province: 'AB', relationship: 'prospect', priority: 'medium', ...(clinic || {}), ...initial };
   const isEdit = !!clinic;
   const groupOpts = (sel) => `<option value="">— None —</option>` + groupList.map(g => `<option value="${g.id}" ${String(g.id) === String(sel) ? 'selected' : ''}>${esc(g.name)}</option>`).join('');
 
   const body = `
     <form id="clinic-form" autocomplete="off">
+      <p class="help">Service Area: <strong>${esc(activeArea?.name || 'Unassigned')}</strong>. ${role()==='manager'?'Change an existing clinic’s Area from its profile.':'New clinics belong to your selected Area; contact a Manager to reassign.'}</p>
       ${!isEdit ? `<div class="ai-bar" id="ai-toggle-bar"><button type="button" class="btn btn-ai" id="ai-toggle">✨ Use AI to add automatically</button></div>` : ''}
       <div class="ai-bar hidden" id="ai-back-bar">
         <button type="button" class="btn btn-link" id="ai-back">← Enter details manually</button>

@@ -123,8 +123,8 @@ async def upload_attachment(
         service_id = None
     filename = _safe_name(file.filename or "file")
     cur = conn.execute(
-        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption, note_id, service_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (clinic_id, filename, "", content_type, len(data), kind, caption, note_id, service_id),
+        "INSERT INTO attachments (clinic_id, filename, stored_name, content_type, size, kind, caption, note_id, service_id, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, filename, "", content_type, len(data), kind, caption, note_id, service_id, 'technical' if conn.user['active_role']=='it' else 'general'),
     )
     stored = f"{cur.lastrowid}_{filename}"
     Path(ATTACHMENTS_DIR).mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ from ..schemas import TaskIn, TaskPatch
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-TASK_COLUMNS = ["clinic_id", "contact_id", "title", "notes", "due_date", "due_time", "reminder_minutes", "rep", "priority", "done"]
+TASK_COLUMNS = ["clinic_id", "contact_id", "title", "notes", "due_date", "due_time", "reminder_minutes", "rep", "priority", "done", "visibility"]
 
 SELECT = """SELECT t.*, cl.name AS clinic_name, c.first_name AS contact_first_name, c.last_name AS contact_last_name
             FROM tasks t LEFT JOIN clinics cl ON cl.id = t.clinic_id
@@ -73,13 +73,16 @@ def list_tasks(
 @router.post("", status_code=201)
 def create_task(payload: TaskIn, conn: sqlite3.Connection = Depends(db_dependency)):
     data = payload.model_dump()
+    data['rep'] = conn.user['display_name']
+    if conn.user['active_role'] == 'it' and 'visibility' not in payload.model_fields_set:
+        data['visibility'] = 'technical'
     _validate(conn, data)
     data["done"] = int(data["done"])
-    cols = ", ".join(TASK_COLUMNS + ["done_at"])
-    marks = ", ".join("?" * (len(TASK_COLUMNS) + 1))
+    cols = ", ".join(TASK_COLUMNS + ["done_at", "area_id"])
+    marks = ", ".join("?" * (len(TASK_COLUMNS) + 2))
     cur = conn.execute(
         f"INSERT INTO tasks ({cols}) VALUES ({marks})",
-        [data[c] for c in TASK_COLUMNS] + [now_iso() if data["done"] else None],
+        [data[c] for c in TASK_COLUMNS] + [now_iso() if data["done"] else None, conn.user['area_id']],
     )
     return _get_or_404(conn, cur.lastrowid)
 
@@ -93,6 +96,8 @@ def get_task(task_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
 def update_task(task_id: int, payload: TaskIn, conn: sqlite3.Connection = Depends(db_dependency)):
     before = _get_or_404(conn, task_id)
     data = payload.model_dump()
+    if 'visibility' not in payload.model_fields_set:
+        data['visibility'] = before['visibility']
     _validate(conn, data)
     data["done"] = int(data["done"])
     done_at = before["done_at"] if before["done"] and data["done"] else (now_iso() if data["done"] else None)

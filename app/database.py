@@ -10,6 +10,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from fastapi import Request
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./data/areabook.db")
 ATTACHMENTS_DIR = os.environ.get("ATTACHMENTS_DIR") or str(Path(DATABASE_PATH).parent / "attachments")
@@ -615,6 +616,20 @@ def init_db() -> None:
     try:
         conn.executescript(SCHEMA)
         _apply_migrations(conn)
+        from .auth import SCHEMA as AUTH_SCHEMA
+        conn.executescript(AUTH_SCHEMA)
+        for table, column, ddl in [
+            ("clinics", "area_id", "INTEGER REFERENCES areas(id)"),
+            ("tasks", "area_id", "INTEGER REFERENCES areas(id)"),
+            ("contacts", "area_id", "INTEGER REFERENCES areas(id)"),
+            ("orders", "area_id", "INTEGER REFERENCES areas(id)"),
+            ("clinic_notes", "visibility", "TEXT NOT NULL DEFAULT 'general'"),
+            ("tasks", "visibility", "TEXT NOT NULL DEFAULT 'general'"),
+            ("appointments", "visibility", "TEXT NOT NULL DEFAULT 'general'"),
+            ("attachments", "visibility", "TEXT NOT NULL DEFAULT 'general'"),
+        ]:
+            if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         conn.commit()
     finally:
         conn.close()
@@ -633,10 +648,10 @@ def get_db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def db_dependency() -> Iterator[sqlite3.Connection]:
+def db_dependency(request: Request) -> Iterator[sqlite3.Connection]:
     """FastAPI dependency yielding a connection per request."""
-    with get_db() as conn:
-        yield conn
+    from .access import scoped_db
+    yield from scoped_db(request)
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict | None:

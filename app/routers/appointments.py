@@ -104,6 +104,7 @@ def list_appointments(
 @router.post("", status_code=201)
 def create_appointment(payload: AppointmentIn, conn: sqlite3.Connection = Depends(db_dependency)):
     data = payload.model_dump()
+    data['rep'] = conn.user['display_name']
     _validate(conn, data)
     cols = ", ".join(APPT_COLUMNS)
     marks = ", ".join("?" * len(APPT_COLUMNS))

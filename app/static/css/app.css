@@ -115,6 +115,10 @@ p { margin: 0 0 8px; }
 .mt { margin-top: 12px; }
 .mb { margin-bottom: 12px; }
 .hidden { display: none !important; }
+[hidden] { display: none !important; }
+#account-menu { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#account-menu select { width: auto; max-width: 155px; padding: 5px; }
+#account-menu label { margin: 0; font-size: 12px; }
 pre.wrap { white-space: pre-wrap; font-family: inherit; margin: 0; }
 strong { font-weight: 600; }
 
@@ -139,6 +143,11 @@ strong { font-weight: 600; }
 .topbar .btn:hover { background: rgba(255,255,255,.16); }
 .topbar .btn-primary { background: var(--c-blue); border-color: var(--c-blue); }
 .theme-toggle { font-size: 16px; padding: 4px 10px; }
+@media (max-width: 1600px) {
+  .topbar { height: auto; min-height: var(--topbar-h); flex-wrap: wrap; padding: 8px 16px; gap: 8px; }
+  .topbar-right { flex-wrap: wrap; }
+  .topnav { order: 3; width: 100%; }
+}
 
 /* Layout ------------------------------------------------------------- */
 .page { padding: 20px; max-width: 1400px; margin: 0 auto; }

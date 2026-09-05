@@ -13,6 +13,8 @@ import {
 } from '../forms.js';
 import { taskRow, wireTaskRows } from './tasks.js';
 import { openDeviceForm, plural } from '../equipment.js';
+import { user, role, technical, business, selling } from '../auth.js';
+import { api } from '../api.js';
 import { devices as devicesApi } from '../api.js';
 import { openInvoiceForm } from '../billing-forms.js';
 
@@ -228,6 +230,7 @@ export async function render(container, params, routeParams) {
             <div class="actions"><button class="btn btn-sm" id="activity-toggle">${activityOpen ? 'Hide history ▲' : 'Show history ▼'}</button></div></div>
           ${quickLogButtons(meta)}
           <form id="note-form" class="mb note-compose">
+            <label>Note visibility <select name="visibility"><option value="general">General — all workspaces</option>${technical()?'<option value="technical">Technical — IT only</option>':'<option value="sales">Sales — business workspaces</option>'}</select></label>
             <textarea name="body" rows="2" placeholder="Add a note… type @ to mention a contact (e.g. Called @Sarah, back Tuesday)"></textarea>
             <div class="note-compose-row">
               <select id="note-context" title="Attach this note to an appointment or task">
@@ -331,6 +334,15 @@ export async function render(container, params, routeParams) {
     </div>`;
 
   // Wire actions
+  if(role()==='manager') {
+    const areaControl=document.createElement('label');
+    areaControl.innerHTML=`Service Area <select>${user.areas.filter(a=>a.role==='manager').map(a=>`<option value="${a.id}" ${a.id===clinic.area_id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>`;
+    container.querySelector('.page-header').append(areaControl);
+    areaControl.querySelector('select').onchange=async e=>{
+      try {await api.patch(`/api/clinics/${clinic.id}/area`,{area_id:Number(e.target.value)});await api.post('/api/auth/workspace',{role:'manager',area_id:Number(e.target.value)});location.reload();}
+      catch(err){toast(err.message,'error');e.target.value=String(clinic.area_id);}
+    };
+  }
   const editClinic = () => openClinicForm({ clinic, onSaved: reload });
   container.querySelector('#btn-edit').onclick = editClinic;
   container.querySelector('#btn-edit-notes').onclick = editClinic;
@@ -420,7 +432,7 @@ export async function render(container, params, routeParams) {
     const file = notePhoto.files[0];
     if (!body && !file) return;
     const ctx = noteForm.querySelector('#note-context').value;
-    const extra = {};
+    const extra = {visibility: noteForm.elements.visibility.value};
     if (ctx.startsWith('appt:')) extra.appointment_id = Number(ctx.slice(5));
     else if (ctx.startsWith('task:')) extra.task_id = Number(ctx.slice(5));
     try {

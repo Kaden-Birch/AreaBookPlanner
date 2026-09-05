@@ -39,7 +39,8 @@ CLINIC_TYPES = [
 
 
 @router.get("/meta")
-def meta():
+def meta(conn: sqlite3.Connection = Depends(db_dependency)):
+    area = conn.raw.execute('SELECT * FROM areas WHERE id=?', (conn.user['area_id'],)).fetchone()
     return {
         "relationships": RELATIONSHIP_LABELS,
         "colors": COLOR_LABELS,
@@ -57,7 +58,7 @@ def meta():
         "link_types": LINK_TYPES,
         "quick_logs": QUICK_LOGS,
         "reminder_options": REMINDER_OPTIONS,
-        "map_default": {"lat": 51.0447, "lng": -114.0719, "zoom": 11},
+        "map_default": {"lat": area['latitude'], "lng": area['longitude'], "zoom": area['default_zoom']},
     }
 
 

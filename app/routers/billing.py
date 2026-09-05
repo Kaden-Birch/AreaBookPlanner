@@ -155,9 +155,9 @@ def create_order(payload: OrderIn, conn: sqlite3.Connection = Depends(db_depende
             data["unit_price"] = data["unit_price"] if data["unit_price"] is not None else item["unit_price"]
             data["sku"] = data["sku"] or item["sku"]
             data["supplier"] = data["supplier"] or item["supplier"]
-    cols = ", ".join(ORDER_COLUMNS)
-    marks = ", ".join("?" * len(ORDER_COLUMNS))
-    cur = conn.execute(f"INSERT INTO orders ({cols}) VALUES ({marks})", [data[c] for c in ORDER_COLUMNS])
+    cols = ", ".join(ORDER_COLUMNS + ['area_id'])
+    marks = ", ".join("?" * (len(ORDER_COLUMNS) + 1))
+    cur = conn.execute(f"INSERT INTO orders ({cols}) VALUES ({marks})", [data[c] for c in ORDER_COLUMNS] + [conn.user['area_id']])
     return _order_detail(conn, cur.lastrowid)
 
 

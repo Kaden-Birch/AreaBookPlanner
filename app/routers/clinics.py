@@ -19,6 +19,7 @@ from ..schemas import ArchiveIn, ClinicIn, ClinicTicketIn, LinkIn, LocationIn, N
 router = APIRouter(prefix="/api/clinics", tags=["clinics"])
 
 CLINIC_COLUMNS = [
+    "area_id",
     "name", "address", "display_address", "city", "province", "postal_code", "hours",
     "phone", "fax", "email", "website",
     "lat", "lng", "relationship", "clinic_type", "emr_system", "it_provider", "provider_count",
@@ -288,6 +289,7 @@ def list_clinics(
 @router.post("", status_code=201)
 def create_clinic(payload: ClinicIn, conn: sqlite3.Connection = Depends(db_dependency)):
     data = payload.model_dump()
+    data['area_id'] = conn.user['area_id']
     data["hours"] = hours_to_json(data.get("hours"))
     _sync_stage_and_relationship(data, None)
     _apply_competitor_followup(data, None)
@@ -504,7 +506,7 @@ def quick_log(clinic_id: int, payload: QuickLogIn, conn: sqlite3.Connection = De
         text += f" — {payload.detail}"
     cur = conn.execute(
         "INSERT INTO clinic_notes (clinic_id, body, author, kind) VALUES (?, ?, ?, 'quick')",
-        (clinic_id, text, payload.author),
+        (clinic_id, text, conn.user['display_name']),
     )
     conn.execute("UPDATE clinics SET updated_at = ? WHERE id = ?", (now_iso(), clinic_id))
     return row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -589,6 +591,12 @@ def delete_link(clinic_id: int, link_id: int, conn: sqlite3.Connection = Depends
 def update_clinic(clinic_id: int, payload: ClinicIn, conn: sqlite3.Connection = Depends(db_dependency)):
     before = _get_clinic_or_404(conn, clinic_id)
     data = payload.model_dump()
+    data['area_id'] = before['area_id']
+    if conn.user['active_role'] == 'client_success':
+        editable = {'phone','fax','email','website','hours','notes','next_follow_up','display_address','name'}
+        for key in data:
+            if key not in editable:
+                data[key] = before.get(key, data[key])
     data["hours"] = hours_to_json(data.get("hours"))
     _sync_stage_and_relationship(data, before)
     _apply_competitor_followup(data, before)
@@ -620,6 +628,24 @@ def update_location(
         (float(lat), float(lng), now_iso(), clinic_id),
     )
     return enrich_clinic(conn, _get_clinic_or_404(conn, clinic_id))
+
+
+@router.patch('/{clinic_id}/area')
+def assign_area(clinic_id: int, body: dict, conn=Depends(db_dependency)):
+    _get_clinic_or_404(conn, clinic_id)
+    aid = body.get('area_id')
+    if not conn.raw.execute('''SELECT 1 FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
+        WHERE user_id=? AND role='manager' AND ua.area_id=? AND a.is_active=1''', (conn.user['id'],aid)).fetchone():
+        raise HTTPException(403,'Destination Area is not assigned to your Manager role')
+    # A transfer intentionally crosses the selected Area boundary. Validate both
+    # sides, then use a separate transaction without per-request write guards.
+    from ..database import get_db
+    with get_db() as raw:
+        changed = raw.execute('UPDATE clinics SET area_id=? WHERE id=? AND area_id=?',(aid,clinic_id,conn.user['area_id']))
+        if not changed.rowcount:
+            raise HTTPException(409, 'Clinic Area changed; reload and try again')
+        raw.execute('INSERT INTO account_audit(actor_id,action,target_id) VALUES (?,?,?)',(conn.user['id'],'assign_clinic_area',clinic_id))
+    return {'id':clinic_id,'area_id':aid}
 
 
 @router.delete("/{clinic_id}", status_code=204)
@@ -663,9 +689,9 @@ def add_note(clinic_id: int, payload: NoteIn, conn: sqlite3.Connection = Depends
         raise HTTPException(status_code=422, detail="Service does not belong to this clinic")
     body = _sanitize_mentions(conn, clinic_id, payload.body.strip())
     cur = conn.execute(
-        "INSERT INTO clinic_notes (clinic_id, body, author, kind, appointment_id, task_id, attachment_id, service_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (clinic_id, body, payload.author, payload.kind if payload.kind in ("note", "quick", "email", "call") else "note",
-         payload.appointment_id, payload.task_id, payload.attachment_id, payload.service_id),
+        "INSERT INTO clinic_notes (clinic_id, body, author, kind, appointment_id, task_id, attachment_id, service_id, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (clinic_id, body, conn.user['display_name'], payload.kind if payload.kind in ("note", "quick", "email", "call") else "note",
+         payload.appointment_id, payload.task_id, payload.attachment_id, payload.service_id, 'technical' if payload.service_id else payload.visibility),
     )
     conn.execute("UPDATE clinics SET updated_at = ? WHERE id = ?", (now_iso(), clinic_id))
     return _enrich_note(conn, row_to_dict(conn.execute("SELECT * FROM clinic_notes WHERE id = ?", (cur.lastrowid,)).fetchone()))

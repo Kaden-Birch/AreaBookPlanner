@@ -14,8 +14,30 @@ from datetime import datetime, timedelta  # noqa: E402
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
+    # Legacy business-function regressions run the same routers on an isolated
+    # test app. Production authentication/scoping is exercised independently,
+    # with real sessions, in test_access.py (no production bypass flag exists).
+    from fastapi import FastAPI
+    from app.database import db_dependency, get_db, init_db
+    from app import database
+    original_path = database.DATABASE_PATH
+    database.DATABASE_PATH = os.path.join(tempfile.mkdtemp(), 'legacy.db')
+    init_db()
+    class BusinessConnection:
+        user = {'area_id': 1, 'active_role': 'it', 'display_name': 'Kaden'}
+        def __init__(self, raw): self.raw = raw
+        def __getattr__(self, name): return getattr(self.raw, name)
+    def business_db():
+        with get_db() as conn:
+            yield BusinessConnection(conn)
+    with get_db() as conn:
+        conn.execute("INSERT INTO areas(id,name,latitude,longitude) VALUES (1,'Test Area',51,-114)")
+    business_app = FastAPI()
+    business_app.include_router(app.router)
+    business_app.dependency_overrides[db_dependency] = business_db
+    with TestClient(business_app) as c:
         yield c
+    database.DATABASE_PATH = original_path
 
 
 def test_marker_colors():

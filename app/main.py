@@ -4,8 +4,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
@@ -21,6 +21,43 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Area Book Planner", version="1.0.0", lifespan=lifespan)
+from .auth import router as auth_router, admin_router, session_user
+from .database import get_db
+from .access import permission_for
+
+app.include_router(auth_router)
+app.include_router(admin_router)
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/"):
+        # Same-origin writes, including login, prevent login CSRF and session switching CSRF.
+        origin = request.headers.get("origin")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+            return JSONResponse({"detail": "Cross-origin writes are not allowed"}, status_code=403)
+        if not path.startswith("/api/auth/"):
+            try:
+                with get_db() as conn:
+                    user = session_user(request, conn)
+                    if user["must_change_password"]:
+                        raise HTTPException(403, "Change your password first")
+                    if not path.startswith("/api/admin/") and user["active_role"] not in permission_for(path, request.method):
+                        raise HTTPException(403, "This action is unavailable in your workspace")
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    response = await call_next(request)
+    if path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        if path.startswith('/api/attachments/') and path.endswith('/file'):
+            # Uploaded HTML/SVG must never execute with the application's session.
+            response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'; style-src 'unsafe-inline'"
+    response.headers['X-Frame-Options'] = 'DENY'
+    if not path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 app.include_router(clinics.router)
 app.include_router(contacts.router)

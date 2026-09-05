@@ -104,9 +104,9 @@ def create_contact(payload: ContactIn, conn: sqlite3.Connection = Depends(db_dep
     data = payload.model_dump()
     _check_clinic(conn, data["clinic_id"])
     data = _prepare(conn, data)
-    cols = ", ".join(CONTACT_COLUMNS)
-    marks = ", ".join("?" * len(CONTACT_COLUMNS))
-    cur = conn.execute(f"INSERT INTO contacts ({cols}) VALUES ({marks})", [data[c] for c in CONTACT_COLUMNS])
+    cols = ", ".join(CONTACT_COLUMNS + ['area_id'])
+    marks = ", ".join("?" * (len(CONTACT_COLUMNS) + 1))
+    cur = conn.execute(f"INSERT INTO contacts ({cols}) VALUES ({marks})", [data[c] for c in CONTACT_COLUMNS] + [conn.user['area_id']])
     return _get_or_404(conn, cur.lastrowid)
 
 

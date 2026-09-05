@@ -6,7 +6,11 @@ and is stored in a single SQLite file.
 
 ## Features
 
-- **Map hub (defaults to Calgary)** – every clinic is a coloured pin. Place pins by
+- **Accounts and role workspaces** – Sales, Client Success, IT, Manager and separate
+  Administration. Switch assigned roles without signing out; each role has its own
+  assigned Areas and default map centre. Client Success sees current clients only.
+  Backend permissions apply to lists, direct links, search, exports and attachments.
+- **Map hub (defaults to your assigned Area)** – every accessible clinic is a coloured pin. Place pins by
   address lookup (OpenStreetMap geocoding), by clicking the map, or by dragging a pin.
   Filter by colour and search from the sidebar; click a pin for a quick summary,
   directions, or to book an appointment.
@@ -321,12 +325,26 @@ uvicorn app.main:app --reload --port 8080
 
 The database is created at `./data/areabook.db` (override with `DATABASE_PATH`).
 
+## Account setup and upgrading
+
+Read [the account/Area rollout guide](docs/accounts-and-areas.md) before deploying
+this version to an existing installation. Back up the SQLite database and attachments
+first. On first launch, create the initial administrator (no default password), create
+Areas, explicitly assign existing clinics, and create staff with role-specific Area
+assignments. Existing unassigned clinics are preserved but hidden from staff.
+
+Use HTTPS for LAN/production access. Session cookies are Secure, HttpOnly and
+SameSite=Strict; HTTP is supported only on localhost for development. A trusted reverse
+proxy must preserve the public Host and forward the HTTPS scheme to Uvicorn.
+
 Optional demo data for a first look:
 
 ```bash
 python scripts/seed_demo.py            # adds a handful of Calgary clinics
-python scripts/seed_demo.py --url http://localhost:8080   # against a running server
 ```
+
+Assign seeded clinics to an Area through Administration before viewing them. The old
+unauthenticated `--url` seed mode is no longer supported; API clients need a session.
 
 ## Tests
 
@@ -339,6 +357,10 @@ python -m pytest tests -q
 
 The web UI talks to a JSON API that you can use directly; interactive docs are at
 <http://localhost:8080/docs>.
+
+All operational endpoints require a login session and an assigned active role/Area.
+Only `/api/auth/status`, `/api/auth/setup` (first run) and login/logout are public.
+The container health check uses the data-free setup-status endpoint.
 
 | Endpoint | Purpose |
 |----------|---------|

@@ -19,7 +19,14 @@
 7. Validate a staff account in each role before opening access to the team.
 
 HTTPS is required outside localhost. Behind a reverse proxy, preserve the public
-Host and forward the HTTPS scheme; trust proxy headers only from the actual proxy.
+Host. Nginx Proxy Manager's standard HTTPS-to-HTTP forwarding is supported without
+extra proxy headers or `FORWARDED_ALLOW_IPS` configuration for authentication. The
+origin check accepts HTTPS for the exact forwarded Host/port even if the upstream
+connection uses HTTP; unrelated hosts, different ports and malformed origins remain
+blocked. This does not turn off CSRF checks or make session cookies insecure.
+If you separately configure trusted forwarded headers for accurate client-IP logging
+and login throttling, trust only the actual proxy; do not use a wildcard. Otherwise
+clients behind the proxy share its IP for the per-username login throttle.
 Sessions last eight hours, use random tokens stored hashed in SQLite, and use
 HttpOnly/SameSite=Strict/Secure cookies. Localhost HTTP is a development exception.
 Login is throttled after ten failed attempts per client/normalized username in a

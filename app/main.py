@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -29,13 +30,41 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 
 
+def _origin_key(value: str):
+    """Canonical browser origin, rejecting credentials and non-origin URL parts."""
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+            return None
+        return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == 'https' else 80)
+    except ValueError:
+        return None
+
+
+def allowed_write_origin(origin: str, request_url: str) -> bool:
+    source = _origin_key(origin)
+    target = _origin_key(request_url)
+    if source is None or target is None:
+        return False
+    if source == target:
+        return True
+    # TLS-terminating proxies (including Nginx Proxy Manager) preserve the public
+    # Host while forwarding over HTTP. Accept HTTPS for that exact authority,
+    # without trusting arbitrary X-Forwarded-* headers or unrelated origins.
+    if target[0] == 'http' and source[0] == 'https':
+        return source == _origin_key('https://' + urlsplit(request_url).netloc)
+    return False
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/"):
         # Same-origin writes, including login, prevent login CSRF and session switching CSRF.
         origin = request.headers.get("origin")
-        if request.method not in ("GET", "HEAD", "OPTIONS") and origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        if request.method not in ("GET", "HEAD", "OPTIONS") and origin is not None and not allowed_write_origin(origin, str(request.base_url)):
             return JSONResponse({"detail": "Cross-origin writes are not allowed"}, status_code=403)
         if not path.startswith("/api/auth/"):
             try:

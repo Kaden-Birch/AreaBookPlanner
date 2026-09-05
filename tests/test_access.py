@@ -231,3 +231,47 @@ def test_login_throttling_and_cookie(environment):
         assert r.status_code==200
         cookie=r.headers['set-cookie'].lower()
         assert all(v in cookie for v in ['httponly','secure','samesite=strict'])
+
+
+@pytest.mark.parametrize('origin,target,allowed', [
+    ('https://areabook.kadenbirch.com','http://areabook.kadenbirch.com/',True),
+    ('https://areabook.kadenbirch.com:443','http://areabook.kadenbirch.com/',True),
+    ('https://areabook.kadenbirch.com','https://areabook.kadenbirch.com/',True),
+    ('http://localhost:8080','http://localhost:8080/',True),
+    ('https://example.test:8443','http://example.test:8443/',True),
+    ('https://evil.example','http://areabook.kadenbirch.com/',False),
+    ('https://areabook.kadenbirch.com.evil.example','http://areabook.kadenbirch.com/',False),
+    ('https://areabook.kadenbirch.com:8443','http://areabook.kadenbirch.com/',False),
+    ('http://areabook.kadenbirch.com','https://areabook.kadenbirch.com/',False),
+    ('null','http://areabook.kadenbirch.com/',False),
+    ('','http://areabook.kadenbirch.com/',False),
+    ('https://user@areabook.kadenbirch.com','http://areabook.kadenbirch.com/',False),
+    ('https://areabook.kadenbirch.com/path','http://areabook.kadenbirch.com/',False),
+    ('https://areabook.kadenbirch.com:invalid','http://areabook.kadenbirch.com/',False),
+])
+def test_proxy_origin_validation(origin,target,allowed):
+    from app.main import allowed_write_origin
+    assert allowed_write_origin(origin,target) is allowed
+
+
+def test_first_run_behind_tls_proxy(tmp_path,monkeypatch):
+    monkeypatch.setattr(database,'DATABASE_PATH',str(tmp_path/'proxy.db'))
+    # NPM connects over HTTP, preserving the public Host and browser Origin.
+    with TestClient(app,base_url='http://areabook.kadenbirch.com') as proxy:
+        headers={'Origin':'https://areabook.kadenbirch.com'}
+        r=proxy.post('/api/auth/setup',headers=headers,json={'username':'admin','password':PASSWORD})
+        assert r.status_code==200,r.text
+        assert 'Secure' in r.headers['set-cookie']
+        # Emulate the browser sending its Secure cookie over HTTPS to NPM,
+        # which forwards it to the HTTP upstream unchanged.
+        headers['Cookie']='areabook_session='+proxy.cookies.get('areabook_session')
+        assert proxy.get('/api/auth/me',headers=headers).status_code==200
+        r=proxy.post('/api/admin/areas',headers=headers,json={'name':'Lethbridge','latitude':49.69,'longitude':-112.83})
+        assert r.status_code==200,r.text
+        assert proxy.post('/api/auth/logout',headers=headers).status_code==200
+        assert proxy.get('/api/auth/me',headers=headers).status_code==401
+        r=proxy.post('/api/auth/login',headers={'Origin':headers['Origin']},json={'username':'admin','password':PASSWORD})
+        assert r.status_code==200,r.text
+        assert 'Secure' in r.headers['set-cookie']
+        # Spoofed forwarded metadata must not authorize an unrelated website.
+        assert proxy.post('/api/auth/login',headers={'Origin':'https://evil.example','X-Forwarded-Host':'evil.example','X-Forwarded-Proto':'https'},json={'username':'admin','password':PASSWORD}).status_code==403

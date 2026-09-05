@@ -334,8 +334,9 @@ Areas, explicitly assign existing clinics, and create staff with role-specific A
 assignments. Existing unassigned clinics are preserved but hidden from staff.
 
 Use HTTPS for LAN/production access. Session cookies are Secure, HttpOnly and
-SameSite=Strict; HTTP is supported only on localhost for development. A trusted reverse
-proxy must preserve the public Host and forward the HTTPS scheme to Uvicorn.
+SameSite=Strict; HTTP is supported only on localhost for development. A reverse proxy
+must preserve the public Host. HTTPS-to-HTTP termination by Nginx Proxy Manager is
+supported without a `FORWARDED_ALLOW_IPS` setting for login/origin validation.
 
 Optional demo data for a first look:
 

@@ -2,6 +2,7 @@
 import { api, devices, services as servicesApi, clinics as clinicsApi, attachments } from './api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, fmtDateTime, navigate, toDateInput, getRepName, renderNoteBody } from './ui.js';
 import { attachMentionAutocomplete } from './notes.js';
+import { openNetwork } from './network.js';
 
 const SECRETS_NOTICE = 'Do not store passwords, credentials, API keys, private keys, recovery codes, or other secrets here. Store them in the approved password manager.';
 const safeWebUrl = url => /^https?:\/\//i.test(url || '');
@@ -69,8 +70,8 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
           <div class="field" id="link-field"><label>Link</label>
             <div class="flex mt" style="gap:14px"><label class="checkbox"><input type="radio" name="link_type" value="ethernet" ${d.link_type !== 'wireless' ? 'checked' : ''}> 🔌 Wired</label><label class="checkbox"><input type="radio" name="link_type" value="wireless" ${d.link_type === 'wireless' ? 'checked' : ''}> 📶 Wireless</label></div>
             <div class="help hidden" id="virtual-help">🧊 Virtual link to its host server</div></div>
-          <div class="field"><label>IP address</label><input name="ip_address" value="${attr(d.ip_address)}" placeholder="192.168.1.20" class="mono"></div>
-          <div class="field"><label>MAC address</label><input name="mac_address" value="${attr(d.mac_address)}" placeholder="AA:BB:CC:DD:EE:FF"></div>
+          <div class="field"><label>Primary IP address</label><input name="ip_address" value="${attr(d.ip_address)}" placeholder="192.168.1.20" class="mono" ${d.network_managed?'readonly':''}>${d.network_managed?'<span class="help">Edit through Network interfaces &amp; addresses on device details.</span>':''}</div>
+          <div class="field"><label>MAC address</label><input name="mac_address" value="${attr(d.mac_address)}" placeholder="AA:BB:CC:DD:EE:FF" ${d.network_managed?'readonly':''}></div>
         </div>
       </div>
       <div class="form-section"><h3>Hardware</h3>
@@ -228,6 +229,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
           <dl class="kv">
             ${d.user_name ? `<dt>User</dt><dd>${esc(d.user_name)}</dd>` : ''}
             <dt>IP address</dt><dd class="mono">${esc(d.ip_address || '—')}</dd>
+            <dt>Network</dt><dd><button class="btn btn-sm" id="device-network">Network interfaces &amp; addresses</button></dd>
             ${d.mac_address ? `<dt>MAC</dt><dd class="mono">${esc(d.mac_address)}</dd>` : ''}
             ${d.os ? `<dt>OS</dt><dd>${esc(d.os)}</dd>` : ''}
             <dt>Hardware</dt><dd>${esc([d.manufacturer, d.model].filter(Boolean).join(' ') || '—')}</dd>
@@ -271,6 +273,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
     onClose: () => onChanged && onChanged(),
   });
   const reopen = (id) => { modal.close(); openDeviceDetail({ deviceId: id, clinic, onChanged }); };
+  modal.body.querySelector('#device-network').onclick=()=>openNetwork({clinic,deviceId:d.id,onChanged:()=>reopen(d.id)});
   modal.body.querySelectorAll('[data-open]').forEach(el => { el.onclick = () => reopen(Number(el.dataset.open)); });
   modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
   modal.root.querySelector('[data-act=edit]').onclick = () => { modal.close(); openDeviceForm({ clinic, device: d, onSaved: (saved) => { if (saved) openDeviceDetail({ deviceId: d.id, clinic, onChanged }); else onChanged && onChanged(); } }); };

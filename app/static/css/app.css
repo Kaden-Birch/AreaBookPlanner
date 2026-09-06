@@ -775,6 +775,27 @@ details summary { cursor: pointer; font-weight: 600; }
 .topology-vpn-line { fill: none; stroke: #8b6ace; stroke-width: 1.5; stroke-dasharray: 5 4; }
 .topology-vpn { cursor: pointer; }
 .topology-vpn > rect { stroke: #8b6ace; stroke-dasharray: 5 4; }
+.topology-device.accent-network, .topology-colour-legend .accent-network { --device-color: #369dba; color: #369dba; }
+.topology-device.accent-server, .topology-device.accent-vm, .topology-colour-legend .accent-server { --device-color: #a17de4; color: #a17de4; }
+.topology-device.accent-endpoint, .topology-colour-legend .accent-endpoint { --device-color: #45a785; color: #45a785; }
+.topology-device.accent-phone, .topology-colour-legend .accent-phone { --device-color: #d99b24; color: #d99b24; }
+.topology-device.accent-printer, .topology-colour-legend .accent-printer { --device-color: #8a8f98; color: #8a8f98; }
+.topology-device.accent-security, .topology-colour-legend .accent-security { --device-color: #e56961; color: #e56961; }
+.topology-device.accent-other { --device-color: #8a8f98; }
+.topology-device > rect.type-stripe { fill: var(--device-color); stroke: none; }
+.topology-device.vm > rect:not(.type-stripe) { fill: #f0e9fb; stroke: #9670d4; stroke-width: 2; }
+[data-theme="dark"] .topology-device.vm > rect:not(.type-stripe) { fill: #302642; stroke: #ae8be6; }
+.topology-link.virtual path:not(.hit) { stroke: #a17de4; stroke-width: 2; }
+.topology-colour-legend, .topology-vlan-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; font-size: 12px; }
+.topology-vlan-bar input[type=checkbox] { width: auto; }
+.topology-vlan-bar button[aria-pressed=true] { border-color: var(--primary); background: var(--surface-2); box-shadow: inset 0 -2px var(--primary); }
+.vlan-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+.vlan-dim { opacity: .22; }
+.network-interface, [data-address] { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 12px 0; min-width: 0; }
+.network-interface label, #vlan-form label { display: block; margin: 6px 0; font-size: 13px; }
+.network-interface input:not([type=radio]), .network-interface select, .network-interface textarea, #vlan-form input, #vlan-form select, #vlan-form textarea { display: block; width: 100%; }
+.network-interface input[type=radio] { width: auto; }
+.vlan-record { padding: 14px 0; border-bottom: 1px solid var(--border); }
 .topo-wrap { position: relative; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: auto; max-height: calc(100vh - 220px); min-height: 320px; }
 .topo-tools { position: sticky; top: 8px; left: 8px; z-index: 5; display: inline-flex; gap: 4px; margin: 8px; }
 .topo-svg { display: block; font-family: inherit; }

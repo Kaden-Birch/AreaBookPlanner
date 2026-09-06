@@ -48,6 +48,23 @@ test('wide branches use bounded width and separate rows',()=>{
   const many=Array.from({length:500},(_,id)=>({id,device_type:'workstation'}));
   const pos=layoutGraph(many,many.slice(1).map(n=>edge(0,n.id)));
   assert.equal(pos.size,500);
-  assert.equal(new Set([...pos.values()].map(p=>p.y)).size,500);
+  assert.equal(new Set([...pos.values()].map(p=>`${p.x}:${p.y}`)).size,500);
   assert.ok(Math.max(...[...pos.values()].map(p=>p.x))<=300);
+});
+
+test('upper tiers stay packed regardless of descendants, in both orientations',()=>{
+  const list=Array.from({length:12},(_,id)=>({id,device_type:'switch'}));
+  const links=[edge(0,1),edge(0,2),...list.slice(3).map(n=>edge(1,n.id))];
+  const horizontal=layoutGraph(list,links,'horizontal');
+  assert.equal(horizontal.get(2).y-horizontal.get(1).y,96);
+  assert.equal(horizontal.get(2).x,horizontal.get(1).x);
+  const vertical=layoutGraph(list,links,'vertical');
+  assert.equal(vertical.get(2).x-vertical.get(1).x,240);
+  assert.equal(vertical.get(2).y,vertical.get(1).y);
+});
+
+test('VLAN-only display preserves paths through nonmember devices',()=>{
+  const g=displayGraph(nodes,[edge(1,2),edge(2,3)],[],[],[2,4]);
+  assert.deepEqual(g.nodes.map(n=>n.id),[1,3]);
+  assert.deepEqual(g.edges[0].hidden,[2]);
 });

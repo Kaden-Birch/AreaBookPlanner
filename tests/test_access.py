@@ -382,3 +382,93 @@ def test_device_edit_preserves_unconverted_services(environment):
     assert result.json()['legacy_services']=='[broken json'
     with database.get_db() as conn:
         assert conn.execute('SELECT services FROM devices WHERE id=?',(did,)).fetchone()[0]=='[broken json'
+
+
+def test_interfaces_dual_stack_vlans_and_primary_compatibility(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    d=staff.post('/api/clinics/1/devices',json={'device_type':'server','name':'Dual stack'}).json()
+    r=staff.post('/api/clinics/1/vlans',json={'tag':20,'name':'Production','subnets':['10.20.0.10/24','2001:db8:20::/64']})
+    assert r.status_code==201,r.text
+    vlan=r.json()
+    assert vlan['subnets']==['10.20.0.0/24','2001:db8:20::/64']
+    payload={'interfaces':[{'name':'eth0','mac_address':'aabbccddeeff','memberships':[{'vlan_id':vlan['id'],'mode':'access'}],
+        'addresses':[{'address':'10.20.0.10/24','vlan_id':vlan['id'],'is_primary':True}, {'address':'2001:0db8:20::10','prefix_length':64,'vlan_id':vlan['id']}]}]}
+    r=staff.put(f"/api/devices/{d['id']}/network",json=payload)
+    assert r.status_code==200,r.text
+    saved=r.json();i=saved['interfaces'][0]
+    assert i['mac_address']=='AA:BB:CC:DD:EE:FF'
+    assert [a['version'] for a in i['addresses']]==[4,6]
+    assert i['addresses'][1]['address']=='2001:db8:20::10'
+    assert staff.get(f"/api/devices/{d['id']}").json()['ip_address']=='10.20.0.10'
+    r=staff.put(f"/api/devices/{d['id']}",json={'name':'Renamed','device_type':'server','ip_address':'wrong'})
+    assert r.status_code==200,r.text
+    assert r.json()['ip_address']=='10.20.0.10'
+    topo=staff.get('/api/clinics/1/topology').json()
+    n=next(n for n in topo['nodes'] if n['id']==d['id'])
+    assert len(n['addresses'])==2
+    assert n['vlan_memberships'][0]['mode']=='access'
+    assert staff.put(f"/api/devices/{d['id']}/network",json=saved).status_code==200
+    assert staff.delete(f"/api/clinics/1/vlans/{vlan['id']}").status_code==409
+    saved['interfaces'][0]['addresses'][1]['is_primary']=True
+    assert staff.put(f"/api/devices/{d['id']}/network",json=saved).status_code==422
+    assert len(staff.get(f"/api/devices/{d['id']}/network").json()['interfaces'][0]['addresses'])==2
+
+
+def test_network_validation_gateway_and_site_boundaries(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    with database.get_db() as conn:
+        loc=conn.execute("INSERT INTO clinic_locations(clinic_id,name) VALUES (1,'Branch')").lastrowid
+    v=staff.post('/api/clinics/1/vlans',json={'tag':10,'name':'Main'}).json()
+    assert staff.post('/api/clinics/1/vlans',json={'tag':10,'name':'Duplicate'}).status_code==409
+    branch=staff.post('/api/clinics/1/vlans',json={'tag':10,'name':'Branch','location_id':loc})
+    assert branch.status_code==201,branch.text
+    for bad in [{'tag':4095,'name':'Bad'},{'tag':5,'name':'Bad','color':'red;script'},{'tag':5,'name':'Bad','subnets':['wrong']}]:
+        assert staff.post('/api/clinics/1/vlans',json=bad).status_code==422
+    base={'interfaces':[{'name':'LAN','addresses':[{'address':'2001:db8::5','prefix_length':64}]}]}
+    r=staff.put('/api/devices/1/network',json=base)
+    assert r.status_code==200,r.text
+    saved=r.json();iid=saved['interfaces'][0]['id']
+    assert staff.put(f"/api/clinics/1/vlans/{v['id']}",json={'tag':10,'name':'Main','gateway_interface_id':iid}).status_code==200
+    assert staff.put('/api/devices/1/network',json={'interfaces':[]}).status_code==409
+    assert staff.put('/api/devices/1',json={'device_type':'workstation','location_id':loc}).status_code==409
+    saved['interfaces'][0]['memberships']=[{'vlan_id':branch.json()['id'],'mode':'access'}]
+    assert staff.put('/api/devices/1/network',json=saved).status_code==422
+    for bad in ['300.1.1.1','2001:db8::xyz','fe80::1%eth0','10.0.0.1/33']:
+        assert staff.put('/api/devices/1/network',json={'interfaces':[{'name':'LAN','addresses':[{'address':bad}]}]}).status_code==422
+    assert staff.get('/api/devices/1/network').json()['interfaces'][0]['id']==iid
+
+
+def test_network_roles_and_remote_records(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    with database.get_db() as conn:
+        did=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (3,'router','Remote')").lastrowid
+        iid=conn.execute("INSERT INTO network_interfaces(device_id,name) VALUES (?,'secret')",(did,)).lastrowid
+        vid=conn.execute("INSERT INTO vlans(clinic_id,tag,name) VALUES (3,10,'Remote VLAN')").lastrowid
+    assert staff.get(f'/api/devices/{did}/network').status_code==404
+    assert staff.get('/api/clinics/3/vlans').status_code==404
+    assert staff.post('/api/clinics/3/vlans',json={'tag':20,'name':'Denied'}).status_code==404
+    assert staff.post('/api/clinics/1/vlans',json={'tag':20,'name':'Denied','gateway_interface_id':iid}).status_code==422
+    assert staff.put('/api/devices/1/network',json={'interfaces':[{'name':'NIC','memberships':[{'vlan_id':vid}]}]}).status_code==422
+    assert staff.put('/api/devices/1/network',json={'interfaces':[{'id':iid,'name':'Stolen'}]}).status_code==422
+    switch(staff,'sales')
+    assert staff.get('/api/clinics/1/vlans').status_code==403
+    assert staff.get('/api/devices/1/network').status_code==403
+    assert staff.put('/api/devices/1/network',json={'interfaces':[]}).status_code==403
+
+
+def test_network_migration_preserves_legacy_and_is_repeatable(tmp_path,monkeypatch):
+    monkeypatch.setattr(database,'DATABASE_PATH',str(tmp_path/'network-upgrade.db'))
+    database.init_db()
+    with database.get_db() as conn:
+        conn.execute("INSERT INTO clinics(id,name) VALUES (1,'Legacy')")
+        for id,ip in [(1,'10.0.0.10/24'),(2,'2001:db8::1'),(3,'DHCP - ask IT')]:
+            conn.execute("INSERT INTO devices(id,clinic_id,device_type,name,ip_address) VALUES (?,1,'server',?,?)",(id,str(id),ip))
+    database.init_db();database.init_db()
+    with database.get_db() as conn:
+        assert conn.execute('SELECT COUNT(*) FROM network_interfaces').fetchone()[0]==2
+        assert conn.execute('SELECT COUNT(*) FROM network_addresses').fetchone()[0]==2
+        assert conn.execute('SELECT prefix_length FROM network_addresses WHERE version=6').fetchone()[0] is None
+        assert conn.execute('SELECT ip_address FROM devices WHERE id=3').fetchone()[0]=='DHCP - ask IT'

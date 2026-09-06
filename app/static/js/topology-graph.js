@@ -1,7 +1,8 @@
 // Pure display transformations. Never mutate the API graph or write relationships.
-export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = []) {
+export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = [], hiddenDevices = []) {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const hidden = new Set(hiddenTypes), folded = new Set(collapsed);
+  const hiddenIds = new Set(hiddenDevices), isHidden=n=>hidden.has(n.device_type)||hiddenIds.has(n.id);
   const children = new Map(nodes.map(n => [n.id, []]));
   const outgoing = new Map(nodes.map(n => [n.id, []]));
   for (const e of edges) {
@@ -22,9 +23,9 @@ export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = []) {
   const removed = new Set();
   for (const id of folded) {
     // A hidden group header must not invisibly swallow its visible children.
-    if (byId.has(id) && !hidden.has(byId.get(id).device_type)) descendants(id).forEach(d => removed.add(d));
+    if (byId.has(id) && !isHidden(byId.get(id))) descendants(id).forEach(d => removed.add(d));
   }
-  const visible = nodes.filter(n => !hidden.has(n.device_type) && !removed.has(n.id));
+  const visible = nodes.filter(n => !isHidden(n) && !removed.has(n.id));
   const ids = new Set(visible.map(n => n.id)), links = [], keys = new Set();
   for (const n of visible) {
     const queue = outgoing.get(n.id).map(e => ({ e, path: [], primary: !!e.primary }));
@@ -43,22 +44,40 @@ export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = []) {
       for (const next of outgoing.get(id) || []) queue.push({ e: next, path: [...path, id], primary: primary && !!next.primary });
     }
   }
-  return { nodes: visible, edges: links, counts, collapsedCount: [...removed].filter(id=>!hidden.has(byId.get(id).device_type)).length };
+  return { nodes: visible, edges: links, counts, collapsedCount: [...removed].filter(id=>!isHidden(byId.get(id))).length };
 }
 
-// Compact left-to-right outline: depth consumes width; sibling devices consume height.
-export function layoutGraph(nodes, edges) {
+export const nodeHeight = n => n.services?.length ? (n.services.length > 1 ? 112 : 98) : 80;
+
+// Pack each tier independently; descendants never reserve blank space in higher tiers.
+export function layoutGraph(nodes, edges, orientation = 'horizontal') {
   const ids = new Set(nodes.map(n => n.id)), child = new Map(nodes.map(n => [n.id, []])), parent = new Set();
   for (const e of edges) if (e.primary && !parent.has(e.to) && ids.has(e.from) && ids.has(e.to)) {
     child.get(e.from).push(e.to); parent.add(e.to);
   }
-  const pos = new Map(), visited = new Set(); let row = 0;
-  const walk = (id, depth) => {
-    if (visited.has(id)) return;
-    visited.add(id); pos.set(id, { x: 30 + depth * 270, y: 30 + row++ * 132 });
-    child.get(id).forEach(c => walk(c, depth + 1));
+  const pos = new Map(), visited = new Set(), tiers=[];
+  const walk=(root)=>{
+    const queue=[{id:root,depth:0}];
+    for(let j=0;j<queue.length;j++){
+      const {id,depth}=queue[j];if(visited.has(id))continue;
+      visited.add(id);(tiers[depth] ||= []).push(id);
+      child.get(id).forEach(c=>queue.push({id:c,depth:depth+1}));
+    }
   };
-  nodes.filter(n => !parent.has(n.id)).forEach(n => walk(n.id, 0));
-  nodes.forEach(n => walk(n.id, 0)); // Gracefully render cyclic or incomplete imports.
+  nodes.filter(n=>!parent.has(n.id)).forEach(n=>walk(n.id));
+  nodes.forEach(n=>walk(n.id));
+  const widest=Math.max(1,...tiers.map(t=>t.length));
+  const byId=new Map(nodes.map(n=>[n.id,n]));
+  const tierHeights=tiers.map(t=>t.reduce((sum,id)=>sum+nodeHeight(byId.get(id))+16,0));
+  const tallest=Math.max(0,...tierHeights);let tierY=30;
+  tiers.forEach((tier,depth)=>{
+    let rowY=30+(tallest-tierHeights[depth])/2;
+    tier.forEach((id,index)=>{
+      const slot=index+(widest-tier.length)/2;
+      pos.set(id,orientation==='vertical'?{x:30+slot*240,y:tierY}:{x:30+depth*270,y:rowY});
+      rowY+=nodeHeight(byId.get(id))+16;
+    });
+    tierY+=Math.max(...tier.map(id=>nodeHeight(byId.get(id))))+32;
+  });
   return pos;
 }

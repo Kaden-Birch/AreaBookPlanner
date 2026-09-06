@@ -63,5 +63,6 @@ regressions. Graph checks cover hidden paths, extra links, cycles, collapse,
 disconnected devices, and a 500-device wide branch. Browser checks cover filter
 persistence, shortcut inspection, search reveal, collapse, and camera controls.
 
-This phase adds no database migration. VLANs, interfaces, and multiple IPv4/IPv6
-addresses remain Phase 2.
+Phase 1 added no database migration. See [Phase 2](topology-phase-two.md) for the
+subsequent VLAN/interface/address model and revised compact horizontal/vertical
+layouts; those layout improvements supersede the original outline placement.

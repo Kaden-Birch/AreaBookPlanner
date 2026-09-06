@@ -5,6 +5,7 @@ import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, devic
 import { openVpnPanel, openLinkForm, openConnectivityCheck } from '../vpn.js';
 import { mountTopology } from '../topology-view.js';
 import { user } from '../auth.js';
+import { openNetwork, openVlans } from '../network.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -97,6 +98,7 @@ async function load() {
   else if (state.status !== 'all') list = list.filter(d => d.status === state.status);
   document.getElementById('equip-count').textContent = `${data.summary.active} active · ${data.summary.total} total`;
   renderSummary(data.summary);
+  document.getElementById('summary').classList.toggle('hidden', state.view === 'topology');
   document.getElementById('list-tools').classList.toggle('hidden', state.view !== 'list');
   const body = document.getElementById('equip-body');
   if (state.view === 'list') renderList(body, list, data);
@@ -173,6 +175,8 @@ async function renderTopology(body) {
   mountTopology(body, topo, meta, `topology-v1:${user?.id}:${clinic.id}:${state.site}`, {
     device: id => openDeviceDetail({ deviceId: id, clinic, onChanged: load }),
     service: id => openServiceDetail({ clinic, serviceId: id, onChanged: load }),
+    network: id => openNetwork({clinic,deviceId:id,onChanged:load}),
+    vlans: () => openVlans({clinic,site:siteParam(),onChanged:load}),
     edit: () => { state.edit = true; state.source = null; renderTopology(body); },
     vpn: async id => {
       try { const link = await vpnApi.getLink(id); openLinkForm({ clinic, site: siteParam(), link, onSaved: load }); }

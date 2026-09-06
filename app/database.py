@@ -624,6 +624,8 @@ def init_db() -> None:
     try:
         conn.executescript(SCHEMA)
         _apply_migrations(conn)
+        from .network_schema import initialize as initialize_network
+        initialize_network(conn)
         from .auth import SCHEMA as AUTH_SCHEMA
         conn.executescript(AUTH_SCHEMA)
         for table, column, ddl in [

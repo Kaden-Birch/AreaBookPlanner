@@ -31,6 +31,7 @@ DEVICE_SERVICE_COLUMNS = [
 ]
 
 SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
+                   (SELECT COUNT(*) FROM network_interfaces i WHERE i.device_id=d.id) AS network_managed,
                    (SELECT COUNT(*) FROM devices x WHERE x.uplink_id = d.id) AS downlink_count,
                    (SELECT COUNT(*) FROM device_tickets t WHERE t.device_id = d.id) AS ticket_count
             FROM devices d LEFT JOIN devices u ON u.id = d.uplink_id
@@ -345,7 +346,9 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
             edges.append({"from": l["uplink_id"], "to": l["device_id"], "link_type": l["link_type"] or "ethernet", "primary": False, "link_id": l["id"]})
     from .vpn import topology_links
     vpn = topology_links(conn, clinic_id, site)
-    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn}
+    from .network import enrich_topology
+    vlans = enrich_topology(conn, nodes + offsite_nodes, clinic_id, site)
+    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn, "vlans": vlans}
 
 
 # ---- Extra connections (multiple uplinks / edge cases) ---------------------------
@@ -603,6 +606,15 @@ def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     clinic = _clinic_or_404(conn, before["clinic_id"])
     data = payload.model_dump()
     data.pop("quantity", None)
+    if before.get('network_managed'):
+        data['ip_address'] = before['ip_address']
+        data['mac_address'] = before['mac_address']
+        if data.get('location_id') != before['location_id'] and conn.execute('''SELECT m.id FROM interface_vlans m
+            JOIN network_interfaces i ON i.id=m.interface_id WHERE i.device_id=?''',(device_id,)).fetchone():
+            raise HTTPException(409, 'Remove VLAN memberships before moving this device to another site')
+        if data.get('location_id') != before['location_id'] and conn.execute('''SELECT v.id FROM vlans v
+            JOIN network_interfaces i ON i.id=v.gateway_interface_id WHERE i.device_id=?''',(device_id,)).fetchone():
+            raise HTTPException(409, 'Update the VLAN gateway before moving this device to another site')
     _validate(conn, before["clinic_id"], data)
     _check_uplink(conn, before["clinic_id"], device_id, data.get("uplink_id"))
     if not data.get("name"):

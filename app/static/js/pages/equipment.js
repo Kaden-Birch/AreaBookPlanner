@@ -3,6 +3,8 @@ import { clinics, devices, vpn as vpnApi } from '../api.js';
 import { esc, attr, options, debounce, setTitle, shorthandBadge, dot, toast, confirmDialog } from '../ui.js';
 import { openDeviceForm, openDeviceDetail, openServiceDetail, accentClass, deviceSubtitle, plural } from '../equipment.js';
 import { openVpnPanel, openLinkForm, openConnectivityCheck } from '../vpn.js';
+import { mountTopology } from '../topology-view.js';
+import { user } from '../auth.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -166,6 +168,20 @@ function svcLines(n, h, trunc) {
 }
 
 async function renderTopology(body) {
+  if (state.edit) return renderTopologyEditor(body);
+  const topo = await devices.topology(clinic.id, siteParam());
+  mountTopology(body, topo, meta, `topology-v1:${user?.id}:${clinic.id}:${state.site}`, {
+    device: id => openDeviceDetail({ deviceId: id, clinic, onChanged: load }),
+    service: id => openServiceDetail({ clinic, serviceId: id, onChanged: load }),
+    edit: () => { state.edit = true; state.source = null; renderTopology(body); },
+    vpn: async id => {
+      try { const link = await vpnApi.getLink(id); openLinkForm({ clinic, site: siteParam(), link, onSaved: load }); }
+      catch (e) { toast(e.message, 'error'); }
+    },
+  });
+}
+
+async function renderTopologyEditor(body) {
   const topo = await devices.topology(clinic.id, siteParam());
   const byId = Object.fromEntries([...topo.nodes, ...(topo.offsite || [])].map(n => [n.id, n]));
   if (!topo.nodes.length && !(topo.offsite || []).length) { body.innerHTML = '<div class="card empty">Nothing to draw yet. Add a firewall or router first, then plug other devices into it via “Uplink device”.</div>'; return; }
@@ -285,7 +301,7 @@ async function renderTopology(body) {
         <button class="btn btn-sm" id="zoom-out">−</button><button class="btn btn-sm" id="zoom-reset">${Math.round(state.zoom * 100)}%</button><button class="btn btn-sm" id="zoom-in">+</button>
         <button class="btn btn-sm ${state.edit ? 'active' : ''}" id="edit-conn" title="Draw or remove connections between devices">${state.edit ? '✓ Done editing' : '✎ Edit connections'}</button>
       </div>
-      ${state.edit ? `<div class="topo-hint" id="topo-hint">${state.source ? `Now click the device that <strong>${esc(byId[state.source] ? byId[state.source].name : '')}</strong> connects up to (its uplink). Or click a line to remove it.` : 'Click a device, then its uplink, to connect them. Click a line to remove it. The primary uplink is kept unless you remove it.'}</div>` : ''}
+      ${state.edit ? `<div class="topo-hint" id="topo-hint">Showing all devices while editing connections. ${state.source ? `Now click the device that <strong>${esc(byId[state.source] ? byId[state.source].name : '')}</strong> connects up to (its uplink). Or click a line to remove it.` : 'Click a device, then its uplink, to connect them. Click a line to remove it. The primary uplink is kept unless you remove it.'}</div>` : ''}
       <svg class="topo-svg" viewBox="0 0 ${fullW + ox} ${fullH + oy}" width="${(fullW + ox) * state.zoom}" height="${(fullH + oy) * state.zoom}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>
     </div>
     <div class="topo-legend">

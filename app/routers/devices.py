@@ -332,7 +332,7 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
         if d["uplink_id"] in by_id and not by_id[d["uplink_id"]]["off_site"]:
             children[d["uplink_id"]].append(d["id"])
     node_keys = ("id", "name", "device_type", "type_label", "icon", "is_network", "is_vm", "off_site", "designation",
-                 "ip_address", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model")
+                 "ip_address", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model", "serial")
     svc = _services_by_device(conn, [d["id"] for d in devices if d["device_type"] in ("server", "vm")])
     nodes = [{k: d.get(k) for k in node_keys} | {"children": children[d["id"]], "services": svc.get(d["id"], [])} for d in onsite]
     offsite_nodes = [{k: d.get(k) for k in node_keys} | {"children": [], "services": svc.get(d["id"], [])} for d in devices if d["off_site"]]

@@ -1,9 +1,10 @@
 // Device form, device detail (with tickets, services, downlinks, uplink chain) and helpers.
-import { devices, services as servicesApi, clinics as clinicsApi, attachments } from './api.js';
+import { api, devices, services as servicesApi, clinics as clinicsApi, attachments } from './api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, fmtDateTime, navigate, toDateInput, getRepName, renderNoteBody } from './ui.js';
 import { attachMentionAutocomplete } from './notes.js';
 
-const SECRETS_NOTICE = 'Do not store passwords, credentials, API keys, private keys, recovery codes, or other secrets here. Keep those in the approved password manager.';
+const SECRETS_NOTICE = 'Do not store passwords, credentials, API keys, private keys, recovery codes, or other secrets here. Store them in the approved password manager.';
+const safeWebUrl = url => /^https?:\/\//i.test(url || '');
 
 export function linkGlyph(t) { return t === 'wireless' ? '📶' : t === 'virtual' ? '🧊' : '🔌'; }
 
@@ -237,8 +238,9 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
             <dt>Added</dt><dd>${esc(fmtDate(d.created_at))}</dd>
           </dl>
           ${(d.device_type === 'server' || d.is_vm) ? `
-          <div class="card-header mt" style="padding:0"><h3>Running services (${d.services.length})</h3><div class="actions"><button class="btn btn-sm" id="add-service">+ Add service</button></div></div>
-          ${d.services.length ? `<div class="svc-cards">${d.services.map(s => serviceCard(s)).join('')}</div>` : '<p class="muted small">None recorded. Use “+ Add service” to document what runs here.</p>'}` : ''}
+          <div class="card-header mt" style="padding:0"><h3>Running services (${d.services.length})</h3><div class="actions"><button class="btn btn-sm" id="add-service">+ Add running service</button></div></div>
+          ${d.legacy_services ? `<div class="form-warn mb">Legacy service text could not be converted automatically. Review it and add the appropriate running services; the original is retained.<pre class="wrap">${esc(d.legacy_services)}</pre></div>` : ''}
+          ${d.services.length ? `<div class="svc-cards">${d.services.map(s => serviceCard(s)).join('')}</div>` : '<p class="muted small">None recorded. Use “+ Add running service” to document what runs here.</p>'}` : ''}
           <h3 class="mt">Notes</h3>
           ${d.notes ? `<pre class="wrap">${esc(d.notes)}</pre>` : '<p class="muted small">No notes.</p>'}
         </div>
@@ -337,7 +339,7 @@ function serviceCard(s) {
 function ticketRow(t) {
   return `<div class="ticket-row">
     <span>🎫</span>
-    <div class="body">${t.url ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : `<strong>${esc(t.title)}</strong>`}
+    <div class="body">${safeWebUrl(t.url) ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : `<strong>${esc(t.title)}</strong>`}
       <div class="muted small">${t.ticket_date ? esc(fmtDateOnly(t.ticket_date)) : esc(fmtDate(t.created_at))}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
     <button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>
   </div>`;
@@ -357,12 +359,14 @@ export async function openServiceForm({ clinic, device = null, service = null, o
       <div class="field"><label>Description</label><textarea name="description" rows="2">${esc(s.description)}</textarea></div>
       <div class="field-row">
         <div class="field"><label>IP address(es)</label><input name="ip_addresses" value="${attr(s.ip_addresses)}" placeholder="10.0.0.5, 10.0.0.6"></div>
-        <div class="field"><label>Port(s) / protocol(s)</label><input name="ports" value="${attr(s.ports)}" placeholder="443/tcp, 1433/tcp"></div>
+        <div class="field"><label>Ports</label><input name="ports" value="${attr(s.ports)}" placeholder="443, 1433 (legacy 443/tcp entries are preserved)"></div>
+        <div class="field"><label>Protocols</label><input name="protocols" value="${attr(s.protocols)}" placeholder="TCP, UDP, HTTPS"></div>
       </div>
       <div class="field-row">
         <div class="field"><label>Internal URL</label><input name="internal_url" value="${attr(s.internal_url)}" placeholder="http://server.local:8080"></div>
-        <div class="field"><label>Public / service website</label><input name="public_url" value="${attr(s.public_url)}" placeholder="https://vendor.example"></div>
+        <div class="field"><label>Public URL</label><input name="public_url" value="${attr(s.public_url)}" placeholder="https://service.clinic.example"></div>
       </div>
+      <div class="field"><label>Vendor / service website</label><input name="vendor_or_service_url" value="${attr(s.vendor_or_service_url)}" placeholder="https://vendor.example"></div>
       <div class="field-row">
         <div class="field"><label>Support portal / docs</label><input name="support_url" value="${attr(s.support_url)}" placeholder="https://support.vendor.example"></div>
         <div class="field"><label>Support email</label><input name="support_email" value="${attr(s.support_email)}"></div>
@@ -394,7 +398,7 @@ export async function openServiceDetail({ clinic, serviceId, onChanged }) {
   let contacts = (clinic && clinic.contacts) || [];
   const clinicId = (clinic && clinic.id) || s.clinic_id;
   if (!contacts.length) { try { contacts = (await clinicsApi.get(clinicId)).contacts || []; } catch { /* ignore */ } }
-  const link = (label, url) => url ? `<dt>${label}</dt><dd><a href="${attr(url)}" target="_blank" rel="noopener">${esc(url)}</a></dd>` : '';
+  const link = (label, url) => url ? `<dt>${label}</dt><dd>${safeWebUrl(url)?`<a href="${attr(url)}" target="_blank" rel="noopener">${esc(url)}</a>`:esc(url)}</dd>` : '';
   const modal = openModal({
     title: `🧩 ${s.name}`,
     size: 'modal-lg',
@@ -405,8 +409,10 @@ export async function openServiceDetail({ clinic, serviceId, onChanged }) {
         ${s.description ? `<dt>Description</dt><dd>${esc(s.description)}</dd>` : ''}
         ${s.ip_addresses ? `<dt>IP address(es)</dt><dd class="mono">${esc(s.ip_addresses)}</dd>` : ''}
         ${s.ports ? `<dt>Ports</dt><dd class="mono">${esc(s.ports)}</dd>` : ''}
+        ${s.protocols ? `<dt>Protocols</dt><dd>${esc(s.protocols)}</dd>` : ''}
         ${link('Internal URL', s.internal_url)}
-        ${link('Website', s.public_url)}
+        ${link('Public URL', s.public_url)}
+        ${link('Vendor / service website', s.vendor_or_service_url)}
         ${link('Support / docs', s.support_url)}
         ${s.support_email ? `<dt>Support email</dt><dd><a href="mailto:${attr(s.support_email)}">${esc(s.support_email)}</a></dd>` : ''}
         ${s.notes ? `<dt>Notes</dt><dd><pre class="wrap">${esc(s.notes)}</pre></dd>` : ''}
@@ -414,6 +420,14 @@ export async function openServiceDetail({ clinic, serviceId, onChanged }) {
       <div class="card-header mt" style="padding:0"><h3>Photos &amp; files</h3>
         <div class="actions"><label class="btn btn-sm" style="margin:0">📎 Upload <input type="file" id="svc-file" class="hidden" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"></label></div></div>
       <div id="svc-attach">${serviceAttachments(s)}</div>
+      <h3 class="mt">Related support tickets</h3>
+      <div id="svc-tickets"></div>
+      <form id="svc-ticket-form" class="mt">
+        <div class="field-row"><div class="field"><label>Ticket title<input name="title" required maxlength="300"></label></div><div class="field"><label>Ticket date<input name="ticket_date" type="date"></label></div></div>
+        <div class="field"><label>Support ticket URL<input name="url" type="url" required placeholder="https://support.example/tickets/123"></label></div>
+        <div class="field"><label>Context / notes<textarea name="notes" rows="2"></textarea></label></div>
+        <button class="btn btn-sm" type="submit">+ Link support ticket</button>
+      </form>
       <h3 class="mt">Notes &amp; activity</h3>
       <form id="svc-note-form" class="note-compose">
         <textarea name="body" rows="2" placeholder="Add a dated note… type @ to mention a contact"></textarea>
@@ -426,6 +440,21 @@ export async function openServiceDetail({ clinic, serviceId, onChanged }) {
   const reload = async () => { try { s = await servicesApi.get(serviceId); } catch { return; }
     modal.body.querySelector('#svc-attach').innerHTML = serviceAttachments(s);
     modal.body.querySelector('#svc-notes').innerHTML = serviceNotes(s);
+    renderTickets();
+  };
+  const renderTickets = () => {
+    const host=modal.body.querySelector('#svc-tickets');
+    host.innerHTML=s.tickets?.length?s.tickets.map(ticketRow).join(''):'<p class="muted small">No support tickets linked.</p>';
+    host.querySelectorAll('[data-del-ticket]').forEach(b=>b.onclick=async()=>{
+      if(!await confirmDialog('Remove this ticket link? The external support ticket will not be deleted.')) return;
+      try {await api.del(`/api/services/${serviceId}/tickets/${b.dataset.delTicket}`);await reload();}catch(e){toast(e.message,'error');}
+    });
+  };
+  renderTickets();
+  modal.body.querySelector('#svc-ticket-form').onsubmit=async e=>{
+    e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;
+    try {await api.post(`/api/services/${serviceId}/tickets`,formData(e.target));e.target.reset();await reload();toast('Ticket linked','success');}
+    catch(err){toast(err.message,'error');}finally{button.disabled=false;}
   };
   modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
   modal.root.querySelector('[data-act=edit]').onclick = () => { modal.close(); openServiceForm({ clinic, service: s, onSaved: () => openServiceDetail({ clinic, serviceId, onChanged }) }); };

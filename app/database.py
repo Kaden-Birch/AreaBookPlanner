@@ -475,6 +475,8 @@ def _connect() -> sqlite3.Connection:
 
 # Columns added after the first release. Applied with ALTER TABLE on existing databases.
 MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "device_services": [("protocols", "TEXT"), ("vendor_or_service_url", "TEXT")],
+    "clinic_tickets": [("service_id", "INTEGER REFERENCES device_services(id) ON DELETE CASCADE")],
     "clinics": [
         ("stage", "TEXT NOT NULL DEFAULT 'prospect'"),
         ("deal_value", "REAL"),
@@ -582,17 +584,23 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE clinics SET stage = 'won' WHERE relationship = 'current_client' AND stage <> 'won'")
     # The "Contacted" stage was removed; fold any existing rows up into "Interested".
     conn.execute("UPDATE clinics SET stage = 'prospect' WHERE stage = 'contacted'")
-    # Migrate legacy free-text device services (a JSON array of names) into structured
-    # device_services rows, then clear the text column so it isn't migrated twice.
+    # Migrate newline text or JSON service names, deduplicating per device.
+    # Clear only successfully converted text; preserve ambiguous data for review.
     import json as _json
-    for row in conn.execute("SELECT id, services FROM devices WHERE services IS NOT NULL AND services <> ''").fetchall():
+    for row in conn.execute("SELECT id, services FROM devices WHERE services IS NOT NULL AND services <> '' AND device_type IN ('server','vm')").fetchall():
         try:
             names = _json.loads(row[1])
         except (ValueError, TypeError):
-            names = []
+            if row[1].lstrip().startswith(('[','{')):
+                continue  # Ambiguous/malformed JSON: preserve original for review.
+            names = row[1].splitlines()
+        if isinstance(names, str):
+            names = names.splitlines()
+        if not isinstance(names, list) or not all(isinstance(n,str) for n in names):
+            continue
         for name in names:
             name = str(name).strip()
-            if name:
+            if name and not conn.execute('SELECT 1 FROM device_services WHERE device_id=? AND name=?',(row[0],name)).fetchone():
                 conn.execute("INSERT INTO device_services (device_id, name) VALUES (?, ?)", (row[0], name))
         conn.execute("UPDATE devices SET services = NULL WHERE id = ?", (row[0],))
     if conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0] == 0:

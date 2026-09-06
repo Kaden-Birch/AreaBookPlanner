@@ -26,6 +26,7 @@ DEVICE_COLUMNS = [
 ]
 
 DEVICE_SERVICE_COLUMNS = [
+    "protocols", "vendor_or_service_url",
     "name", "description", "ip_addresses", "ports", "internal_url", "public_url", "support_url", "support_email", "notes",
 ]
 
@@ -57,6 +58,7 @@ def _decorate(row: dict) -> dict:
     else:
         row["link_type_effective"] = row.get("link_type")
         row["link_label"] = LINK_TYPES_NET.get(row.get("link_type") or "", None)
+    row["legacy_services"] = row.get("services")
     try:
         row["services"] = json.loads(row["services"]) if row.get("services") else []
     except (TypeError, ValueError):
@@ -607,7 +609,8 @@ def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
         data["name"] = template_name(clinic, data["device_type"], before["number"] or next_number(conn, before["clinic_id"], data["device_type"]))
     parsed = _parse_number(clinic, data["device_type"], data["name"])
     data["number"] = parsed if parsed is not None else (before["number"] if before["device_type"] == data["device_type"] else next_number(conn, before["clinic_id"], data["device_type"]))
-    data["services"] = None  # structured services live in device_services, not the text column
+    # Never erase text that the startup migration preserved for manual review.
+    data["services"] = before.get("legacy_services")
     sets = ", ".join(f"{c} = ?" for c in DEVICE_COLUMNS)
     conn.execute(f"UPDATE devices SET {sets}, updated_at = ? WHERE id = ?", [data.get(c) for c in DEVICE_COLUMNS] + [now_iso(), device_id])
     return get_device(device_id, conn)
@@ -658,6 +661,7 @@ def _service_detail(conn: sqlite3.Connection, service_id: int) -> dict:
         "SELECT * FROM attachments WHERE service_id = ? ORDER BY created_at DESC, id DESC", (service_id,)))
     s["photos"] = [a for a in atts if a["kind"] == "photo"]
     s["files"] = [a for a in atts if a["kind"] != "photo"]
+    s['tickets'] = rows_to_list(conn.execute('SELECT *,ticket_at AS ticket_date FROM clinic_tickets WHERE service_id=? ORDER BY created_at DESC,id DESC',(service_id,)))
     return s
 
 
@@ -694,3 +698,30 @@ def delete_service(service_id: int, conn: sqlite3.Connection = Depends(db_depend
     if conn.execute("DELETE FROM device_services WHERE id = ?", (service_id,)).rowcount == 0:
         raise HTTPException(status_code=404, detail="Service not found")
     return None
+
+
+@router.post('/services/{service_id}/tickets', status_code=201)
+def add_service_ticket(service_id: int, payload: TicketIn, conn=Depends(db_dependency)):
+    s = _service_row(conn, service_id)
+    from urllib.parse import urlsplit
+    if not payload.title.strip():
+        raise HTTPException(422, 'Ticket title is required')
+    if payload.url:
+        try:
+            parsed = urlsplit(payload.url)
+            valid = parsed.scheme in ('http','https') and bool(parsed.hostname) and parsed.username is None
+        except ValueError:
+            valid = False
+        if not valid:
+            raise HTTPException(422, 'Ticket URL must be an http:// or https:// URL')
+    cur = conn.execute('''INSERT INTO clinic_tickets(clinic_id,device_id,service_id,title,url,ticket_at,notes)
+        VALUES (?,?,?,?,?,?,?)''',(s['clinic_id'],s['device_id'],service_id,payload.title.strip(),payload.url,payload.ticket_date,payload.notes))
+    return dict(conn.execute('SELECT *,ticket_at AS ticket_date FROM clinic_tickets WHERE id=?',(cur.lastrowid,)).fetchone())
+
+
+@router.delete('/services/{service_id}/tickets/{ticket_id}', status_code=204)
+def remove_service_ticket(service_id: int, ticket_id: int, conn=Depends(db_dependency)):
+    _service_row(conn,service_id)
+    cur=conn.execute('DELETE FROM clinic_tickets WHERE id=? AND service_id=?',(ticket_id,service_id))
+    if not cur.rowcount:
+        raise HTTPException(404,'Ticket link not found')

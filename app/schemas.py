@@ -371,6 +371,8 @@ class ServiceIn(BaseModel):
     description: Optional[str] = None
     ip_addresses: Optional[str] = None
     ports: Optional[str] = None
+    protocols: Optional[str] = None
+    vendor_or_service_url: Optional[str] = None
     internal_url: Optional[str] = None
     public_url: Optional[str] = None
     support_url: Optional[str] = None
@@ -378,7 +380,7 @@ class ServiceIn(BaseModel):
     notes: Optional[str] = None
 
     _blank = field_validator("description", "ip_addresses", "ports", "internal_url", "public_url",
-                             "support_url", "support_email", "notes", mode="before")(_blank_to_none)
+                             "support_url", "support_email", "notes", "protocols", "vendor_or_service_url", mode="before")(_blank_to_none)
 
     @field_validator("name")
     @classmethod

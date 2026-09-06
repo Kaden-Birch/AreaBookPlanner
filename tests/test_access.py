@@ -320,3 +320,65 @@ def test_it_dashboard_empty_area(environment):
     d=staff.get('/api/it/dashboard').json()
     assert all(v==0 for v in d['summary'].values())
     assert d['clinics']==d['attention']==d['upcoming']==[]
+
+
+def test_structured_service_fields_tickets_and_permissions(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    service_ids=[]
+    for kind in ('server','vm'):
+        d=staff.post('/api/clinics/1/devices',json={'device_type':kind,'name':kind+' host'}).json()
+        payload={'name':'Database','protocols':'TCP, HTTPS','ports':'443, 1433','vendor_or_service_url':'https://vendor.example',
+                 'internal_url':'https://db.local','public_url':'https://db.example','support_email':'support@example.com'}
+        r=staff.post(f"/api/devices/{d['id']}/services",json=payload)
+        assert r.status_code==201,r.text
+        s=r.json();service_ids.append(s['id'])
+        assert all(s[k]==v for k,v in payload.items())
+        r=staff.post(f"/api/services/{s['id']}/tickets",json={'title':'Database case','url':'https://support.example/123','notes':'Intermittent failures'})
+        assert r.status_code==201,r.text
+        tid=r.json()['id']
+        detail=staff.get(f"/api/services/{s['id']}").json()
+        assert detail['tickets'][0]['id']==tid
+        assert staff.post(f"/api/services/{s['id']}/tickets",json={'title':'Unsafe','url':'javascript:alert(1)'}).status_code==422
+        payload['protocols']='TCP'
+        assert staff.put(f"/api/services/{s['id']}",json=payload).json()['protocols']=='TCP'
+        assert staff.delete(f"/api/services/{s['id']}/tickets/{tid}").status_code==204
+        assert staff.get(f"/api/services/{s['id']}").json()['tickets']==[]
+    with database.get_db() as conn:
+        did=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (3,'server','Remote')").lastrowid
+        sid=conn.execute("INSERT INTO device_services(device_id,name) VALUES (?,'Remote service')",(did,)).lastrowid
+    assert staff.get(f'/api/services/{sid}').status_code==404
+    assert staff.post(f'/api/services/{sid}/tickets',json={'title':'Denied'}).status_code==404
+    switch(staff,'sales')
+    assert staff.get(f'/api/services/{service_ids[0]}').status_code==403
+    assert staff.post(f'/api/services/{service_ids[0]}/tickets',json={'title':'Denied'}).status_code==403
+
+
+def test_service_text_migration_preserves_and_deduplicates(tmp_path,monkeypatch):
+    monkeypatch.setattr(database,'DATABASE_PATH',str(tmp_path/'legacy-services.db'))
+    database.init_db()
+    values=['DNS\nFile shares\nDNS','["Backup","Monitoring"]','[broken json','{"unexpected":"data"}','"SQL\\nWeb"']
+    with database.get_db() as conn:
+        conn.execute("INSERT INTO clinics(id,name) VALUES (1,'Legacy')")
+        for i,value in enumerate(values,1):
+            conn.execute("INSERT INTO devices(id,clinic_id,device_type,name,services) VALUES (?,1,'server',?,?)",(i,str(i),value))
+    database.init_db()
+    database.init_db()
+    with database.get_db() as conn:
+        names=[r[0] for r in conn.execute('SELECT name FROM device_services ORDER BY id')]
+        assert names==['DNS','File shares','Backup','Monitoring','SQL','Web']
+        assert conn.execute('SELECT services FROM devices WHERE id=3').fetchone()[0]=='[broken json'
+        assert conn.execute('SELECT services FROM devices WHERE id=4').fetchone()[0]=='{"unexpected":"data"}'
+        assert conn.execute('SELECT services FROM devices WHERE id=1').fetchone()[0] is None
+
+
+def test_device_edit_preserves_unconverted_services(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    with database.get_db() as conn:
+        did=conn.execute("INSERT INTO devices(clinic_id,device_type,name,services) VALUES (1,'server','Legacy','[broken json')").lastrowid
+    result=staff.put(f'/api/devices/{did}',json={'device_type':'server','name':'Renamed'})
+    assert result.status_code==200,result.text
+    assert result.json()['legacy_services']=='[broken json'
+    with database.get_db() as conn:
+        assert conn.execute('SELECT services FROM devices WHERE id=?',(did,)).fetchone()[0]=='[broken json'

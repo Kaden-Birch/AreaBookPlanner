@@ -146,16 +146,15 @@ const NODE_W = 172, NODE_H = 56, GAP_X = 18, GAP_Y = 46;
 
 function nodeDim(n) { return n.is_vm ? { w: 132, h: 42 } : { w: NODE_W, h: NODE_H }; }
 
-// Whether a node shows its running services inline (leaf server/VM nodes only, to avoid
-// colliding with children drawn directly below a node).
+// Reserve vertical space for service names, including on hosts with child VMs.
 function hasInlineServices(n) {
-  return (n.device_type === 'server' || n.is_vm) && n.services && n.services.length && !n.children.length;
+  return (n.device_type === 'server' || n.is_vm) && n.services && n.services.length;
 }
 function svcLineCount(n) {
   if (!hasInlineServices(n)) return 0;
   return Math.min(2, n.services.length) + (n.services.length > 2 ? 1 : 0);
 }
-// Compact, clickable service names rendered just below a leaf server/VM node.
+// Compact, clickable service names rendered just below a server/VM node.
 function svcLines(n, h, trunc) {
   if (!hasInlineServices(n)) return '';
   const shown = n.services.slice(0, 2);
@@ -182,16 +181,16 @@ async function renderTopology(body) {
     return widths[id];
   };
   const pos = {};
-  const place = (id, x0, depth) => {
+  const place = (id, x0, y) => {
     const n = byId[id];
     const w = widths[id];
-    pos[id] = { x: x0 + w / 2 - NODE_W / 2, y: depth * (NODE_H + GAP_Y) };
+    pos[id] = { x: x0 + w / 2 - NODE_W / 2, y };
     let cx = x0;
-    for (const c of n.children) { place(c, cx, depth + 1); cx += widths[c]; }
+    for (const c of n.children) { place(c, cx, y + NODE_H + GAP_Y + svcLineCount(n)*13); cx += widths[c]; }
   };
   let x = 0;
   const wanDepth = netRoots.length ? 1 : 0;
-  netRoots.forEach(id => { leafWidth(id); place(id, x, wanDepth); x += widths[id]; });
+  netRoots.forEach(id => { leafWidth(id); place(id, x, wanDepth*(NODE_H+GAP_Y)); x += widths[id]; });
   const mainWidth = Math.max(x, NODE_W + GAP_X);
   const mainDepth = Math.max(0, ...Object.values(pos).map(p => p.y)) + NODE_H;
   let y2 = mainDepth + (Object.keys(pos).length ? 70 : 20);
@@ -207,7 +206,8 @@ async function renderTopology(body) {
   const offsite = topo.offsite || [];
   const offY = Math.max(...Object.values(pos).map(p => p.y), 0) + NODE_H + (offsite.length ? 80 : 0);
   const perRow = Math.max(1, Math.floor((Math.max(mainWidth, x2) || (NODE_W + GAP_X)) / (NODE_W + GAP_X)));
-  offsite.forEach((n, i) => { pos[n.id] = { x: (i % perRow) * (NODE_W + GAP_X), y: offY + 26 + Math.floor(i / perRow) * (NODE_H + GAP_Y) }; });
+  const offRowHeight = NODE_H + GAP_Y + Math.max(0, ...offsite.map(svcLineCount))*13;
+  offsite.forEach((n, i) => { pos[n.id] = { x: (i % perRow) * (NODE_W + GAP_X), y: offY + 26 + Math.floor(i / perRow) * offRowHeight }; });
 
   const W = Math.max(mainWidth, x2, offsite.length ? perRow * (NODE_W + GAP_X) : 0) + 40;
   const nodeBottom = (n) => { const p = pos[n.id]; if (!p) return 0; const lines = svcLineCount(n); return p.y + NODE_H + (lines ? lines * 13 + 8 : 0); };
@@ -215,7 +215,7 @@ async function renderTopology(body) {
   const ox = 20, oy = 20;
   const cx = (id) => ox + pos[id].x + NODE_W / 2;
   const boxTop = (id) => oy + pos[id].y + (NODE_H - nodeDim(byId[id]).h) / 2;
-  const boxBot = (id) => boxTop(id) + nodeDim(byId[id]).h;
+  const boxBot = (id) => boxTop(id) + nodeDim(byId[id]).h + (svcLineCount(byId[id]) ? svcLineCount(byId[id])*13+8 : 0);
 
   let svg = '';
   if (netRoots.length) {

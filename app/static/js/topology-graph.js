@@ -35,7 +35,7 @@ export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = [], hid
       if (id === n.id || removed.has(id)) continue;
       if (ids.has(id)) {
         const key = `${n.id}:${id}:${primary}:${path.length ? 'compressed' : 'direct'}`;
-        if (!keys.has(key)) { keys.add(key); links.push({ ...e, from: n.id, primary, hidden: path }); }
+        if (!keys.has(key)) { keys.add(key); links.push({ ...e, details: path.length ? null : e.details, from: n.id, primary, hidden: path }); }
         continue;
       }
       const key = `${id}:${primary}`;
@@ -48,6 +48,31 @@ export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = [], hid
 }
 
 export const nodeHeight = n => n.services?.length ? (n.services.length > 1 ? 112 : 98) : 80;
+
+// Placement groups are documentation, not inferred connectivity or rack elevations.
+export function layoutPhysical(nodes, orientation='horizontal') {
+  const buckets=new Map(),positions=new Map(),groups=[];
+  for(const n of nodes) {
+    const label=[n.off_site?'Off-site':n.location_name||'Main site',n.rack_room||'Room not recorded',n.rack||'Unracked'].join(' · ');
+    if(!buckets.has(label))buckets.set(label,[]);
+    buckets.get(label).push(n);
+  }
+  let x=20,y=20;
+  for(const [label,items] of buckets) {
+    items.sort((a,b)=>(a.rack_position??9999)-(b.rack_position??9999)||a.name.localeCompare(b.name));
+    const cols=Math.min(orientation==='vertical'?2:3,items.length),width=cols*240+20;
+    let rowY=y+42;
+    for(let i=0;i<items.length;i+=cols) {
+      const row=items.slice(i,i+cols);
+      row.forEach((n,j)=>positions.set(n.id,{x:x+20+j*240,y:rowY}));
+      rowY+=Math.max(...row.map(nodeHeight))+20;
+    }
+    groups.push({label,x,y,width,height:rowY-y});
+    // Stack bounded-width groups to avoid unbounded sideways scrolling.
+    y=rowY+24;
+  }
+  return {positions,groups};
+}
 
 // Pack each tier independently; descendants never reserve blank space in higher tiers.
 export function layoutGraph(nodes, edges, orientation = 'horizontal') {

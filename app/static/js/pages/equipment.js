@@ -6,6 +6,7 @@ import { openVpnPanel, openLinkForm, openConnectivityCheck } from '../vpn.js';
 import { mountTopology } from '../topology-view.js';
 import { user } from '../auth.js';
 import { openNetwork, openVlans } from '../network.js';
+import { openConnection } from '../connections.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -176,6 +177,8 @@ async function renderTopology(body) {
     device: id => openDeviceDetail({ deviceId: id, clinic, onChanged: load }),
     service: id => openServiceDetail({ clinic, serviceId: id, onChanged: load }),
     network: id => openNetwork({clinic,deviceId:id,onChanged:load}),
+    connection: (parent,child) => openConnection({clinic,parent,child,onChanged:load}),
+    refresh: () => renderTopology(body),
     vlans: () => openVlans({clinic,site:siteParam(),onChanged:load}),
     edit: () => { state.edit = true; state.source = null; renderTopology(body); },
     vpn: async id => {

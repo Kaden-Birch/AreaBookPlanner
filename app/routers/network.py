@@ -130,6 +130,8 @@ def put_network(did:int,payload:DeviceNetwork,conn=Depends(db_dependency)):
         if any(a.vlan_id is not None and a.vlan_id not in memberships for a in i.addresses):
             raise HTTPException(422,'Address VLAN must be assigned to its interface')
     for iid in existing-set(ids):
+        if conn.execute('SELECT id FROM connection_details WHERE source_interface_id=? OR target_interface_id=?',(iid,iid)).fetchone():
+            raise HTTPException(409,'This interface is assigned to a connection; update the connection before removing it')
         if conn.execute('SELECT id FROM vlans WHERE gateway_interface_id=?',(iid,)).fetchone():
             raise HTTPException(409,'This interface is a VLAN gateway; update the VLAN gateway before removing it')
         conn.execute('DELETE FROM network_interfaces WHERE id=?',(iid,))
@@ -180,6 +182,8 @@ def save_vlan(conn,cid,payload,vid=None):
         if not old: raise HTTPException(404,'VLAN not found')
         if old['location_id']!=payload.location_id and conn.execute('SELECT id FROM interface_vlans WHERE vlan_id=?',(vid,)).fetchone():
             raise HTTPException(409,'Remove VLAN memberships before moving this VLAN to another site')
+        if old['location_id']!=payload.location_id and (conn.execute('SELECT id FROM connection_vlans WHERE vlan_id=?',(vid,)).fetchone() or conn.execute('SELECT id FROM connection_details WHERE native_vlan_id=?',(vid,)).fetchone()):
+            raise HTTPException(409,'Remove this VLAN from connections before moving it to another site')
     if conn.execute('SELECT id FROM vlans WHERE clinic_id=? AND location_id IS ? AND tag=? AND id<>?',(cid,payload.location_id,payload.tag,vid or -1)).fetchone():
         raise HTTPException(409,'That VLAN ID already exists at this site')
     if payload.gateway_interface_id is not None:
@@ -205,11 +209,16 @@ def update_vlan(cid:int,vid:int,payload:Vlan,conn=Depends(db_dependency)):
 def delete_vlan(cid:int,vid:int,conn=Depends(db_dependency)):
     if not conn.execute('SELECT id FROM vlans WHERE clinic_id=? AND id=?',(cid,vid)).fetchone(): raise HTTPException(404,'VLAN not found')
     if conn.execute('SELECT id FROM interface_vlans WHERE vlan_id=?',(vid,)).fetchone(): raise HTTPException(409,'Remove interface memberships before deleting this VLAN')
+    if conn.execute('SELECT id FROM connection_vlans WHERE vlan_id=?',(vid,)).fetchone() or conn.execute('SELECT id FROM connection_details WHERE native_vlan_id=?',(vid,)).fetchone():
+        raise HTTPException(409,'Remove this VLAN from connections before deleting it')
     conn.execute('DELETE FROM vlans WHERE id=?',(vid,))
 
 def enrich_topology(conn,nodes,cid,site):
     by_id={n['id']:n for n in nodes}
-    for n in nodes: n['addresses']=[];n['vlan_memberships']=[]
+    for n in nodes: n['addresses']=[];n['vlan_memberships']=[];n['interface_count']=0
+    for r in conn.execute('''SELECT i.device_id,COUNT(*) AS n FROM network_interfaces i JOIN devices d ON d.id=i.device_id
+        WHERE d.clinic_id=? GROUP BY i.device_id''',(cid,)):
+        if r['device_id'] in by_id: by_id[r['device_id']]['interface_count']=r['n']
     for r in conn.execute('''SELECT a.*,i.device_id,i.name AS interface_name FROM network_addresses a
         JOIN network_interfaces i ON i.id=a.interface_id JOIN devices d ON d.id=i.device_id WHERE d.clinic_id=?
         ORDER BY a.is_primary DESC,a.id''',(cid,)):

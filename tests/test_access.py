@@ -384,6 +384,59 @@ def test_device_edit_preserves_unconverted_services(environment):
         assert conn.execute('SELECT services FROM devices WHERE id=?',(did,)).fetchone()[0]=='[broken json'
 
 
+def test_connection_details_validation_cleanup_and_views(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    parent=staff.post('/api/clinics/1/devices',json={'device_type':'switch','name':'Core','rack':'A'}).json()['id']
+    child=staff.post('/api/clinics/1/devices',json={'device_type':'server','name':'Host','uplink_id':parent}).json()['id']
+    vm=staff.post('/api/clinics/1/devices',json={'device_type':'vm','name':'Guest','uplink_id':child}).json()['id']
+    vlan=staff.post('/api/clinics/1/vlans',json={'tag':20,'name':'Production'}).json()['id']
+    interfaces=[]
+    for did in [parent,child]:
+        r=staff.put(f'/api/devices/{did}/network',json={'interfaces':[{'name':'LAN','memberships':[{'vlan_id':vlan,'mode':'tagged'}]}]})
+        assert r.status_code==200,r.text
+        interfaces.append(r.json()['interfaces'][0]['id'])
+    url=f'/api/clinics/1/connections/{parent}/{child}'
+    payload=dict(source_interface_id=interfaces[0],target_interface_id=interfaces[1],speed_mbps=1000,vlan_mode='trunk',tagged_vlans=[vlan])
+    r=staff.put(url,json=payload)
+    assert r.status_code==200,r.text
+    assert r.json()['details']['tagged_vlans']==[vlan]
+    assert staff.put(url,json=payload|{'target_interface_id':interfaces[0]}).status_code==422
+    assert staff.put(url,json=payload|{'vlan_mode':'access'}).status_code==422
+    assert staff.put(url,json=payload|{'native_vlan_id':vlan}).status_code==422
+    assert staff.put(f'/api/clinics/1/connections/{parent}/{vm}',json={}).status_code==404
+    assert staff.put(f'/api/devices/{parent}/network',json={'interfaces':[]}).status_code==409
+    assert staff.delete(f'/api/clinics/1/vlans/{vlan}').status_code==409
+    topo=staff.get('/api/clinics/1/topology').json()
+    assert vm in [n['id'] for n in topo['nodes']]
+    assert vm not in [n['id'] for n in topo['physical_nodes']]
+    assert next(n for n in topo['physical_nodes'] if n['id']==parent)['rack']=='A'
+    assert not any(i['code']=='trunk_membership' for i in topo['documentation'])
+    assert staff.put(f'/api/devices/{child}',json={'device_type':'server','name':'Host','uplink_id':None}).status_code==200
+    assert staff.get(url).status_code==404
+    with database.get_db() as conn:
+        assert conn.execute('SELECT COUNT(*) FROM connection_details').fetchone()[0]==0
+        assert conn.execute('SELECT COUNT(*) FROM connection_vlans').fetchone()[0]==0
+
+
+def test_connection_scope_and_cross_site_vlan(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    with database.get_db() as conn:
+        remote=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (3,'switch','Remote')").lastrowid
+        loc=conn.execute("INSERT INTO clinic_locations(clinic_id,name) VALUES (1,'Branch')").lastrowid
+    parent=staff.post('/api/clinics/1/devices',json={'device_type':'switch','name':'Core'}).json()['id']
+    child=staff.post('/api/clinics/1/devices',json={'device_type':'switch','name':'Branch','location_id':loc,'uplink_id':parent}).json()['id']
+    vlan=staff.post('/api/clinics/1/vlans',json={'tag':20,'name':'Main'}).json()['id']
+    url=f'/api/clinics/1/connections/{parent}/{child}'
+    assert staff.put(url,json={'vlan_mode':'access','native_vlan_id':vlan}).status_code==422
+    assert staff.get(f'/api/clinics/3/connections/{remote}/{parent}').status_code==404
+    assert staff.put(url,json={'notes':'Documentation only'}).status_code==200
+    switch(staff,'sales')
+    assert staff.get(url).status_code==403
+    assert staff.put(url,json={}).status_code==403
+
+
 def test_interfaces_dual_stack_vlans_and_primary_compatibility(environment):
     _,staff,_=environment
     switch(staff,'it')

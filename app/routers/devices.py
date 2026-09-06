@@ -348,7 +348,22 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
     vpn = topology_links(conn, clinic_id, site)
     from .network import enrich_topology
     vlans = enrich_topology(conn, nodes + offsite_nodes, clinic_id, site)
-    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn, "vlans": vlans}
+    from .connections import link_details, documentation_issues
+    details = link_details(conn, clinic_id)
+    for e in edges: e['details'] = details.get((e['from'],e['to']))
+    physical_nodes = [{k:d.get(k) for k in (*node_keys,'rack','rack_room','rack_position','rack_units')}
+                      | {'children':[], 'services':svc.get(d['id'],[])} for d in all_rows if not d['is_vm']]
+    physical_ids = {d['id'] for d in physical_nodes}
+    physical_edges = [{'from':d['uplink_id'],'to':d['id'],'link_type':_edge_link_type(d),'primary':True}
+                      for d in all_rows if d['id'] in physical_ids and d['uplink_id'] in physical_ids and _edge_link_type(d)!='virtual']
+    for l in conn.execute('SELECT dl.* FROM device_links dl JOIN devices d ON d.id=dl.device_id WHERE d.clinic_id=?',(clinic_id,)):
+        if l['device_id'] in physical_ids and l['uplink_id'] in physical_ids and l['link_type']!='virtual':
+            physical_edges.append({'from':l['uplink_id'],'to':l['device_id'],'link_type':l['link_type'] or 'ethernet','primary':False})
+    for e in physical_edges: e['details'] = details.get((e['from'],e['to']))
+    enrich_topology(conn, physical_nodes, clinic_id, site)
+    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn, "vlans": vlans,
+            'physical_nodes':physical_nodes,'physical_edges':physical_edges,
+            'documentation':documentation_issues(nodes+offsite_nodes,edges,vlans)}
 
 
 # ---- Extra connections (multiple uplinks / edge cases) ---------------------------
@@ -606,6 +621,10 @@ def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     clinic = _clinic_or_404(conn, before["clinic_id"])
     data = payload.model_dump()
     data.pop("quantity", None)
+    if data.get('location_id') != before['location_id'] and conn.execute('''SELECT c.id FROM connection_details c
+        WHERE (c.device_id=? OR c.uplink_id=?) AND (c.native_vlan_id IS NOT NULL OR EXISTS
+        (SELECT 1 FROM connection_vlans v WHERE v.connection_id=c.id))''',(device_id,device_id)).fetchone():
+        raise HTTPException(409,'Remove carried VLANs from this device’s connections before moving it to another site')
     if before.get('network_managed'):
         data['ip_address'] = before['ip_address']
         data['mac_address'] = before['mac_address']

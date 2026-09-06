@@ -27,7 +27,7 @@ def permission_for(path, method):
     if path.startswith(("/api/settings", "/api/import/", "/api/export/backup", "/api/geocode/bulk", "/api/views", "/api/templates", "/api/groups")):
         # Global legacy settings/imports have no safe workspace ownership yet.
         return WORKSPACES if read and path in ("/api/templates", "/api/groups") else set()
-    if re.search(r"/(devices|services|topology|racks|vpn|vlans|network-ranges|connectivity|tickets)(/|\.|$)", path) or path.endswith(("/connect", "/disconnect")):
+    if re.search(r"/(devices|services|topology|racks|vpn|vlans|connections|network-ranges|connectivity|tickets)(/|\.|$)", path) or path.endswith(("/connect", "/disconnect")):
         return {"it"}
     if "/locations" in path or path.endswith("/sites"):
         return WORKSPACES if read else {"it"}
@@ -88,6 +88,8 @@ def scope_rules(role, area):
     rules['vlans'] = owned if role == 'it' else '0'
     rules['network_addresses'] = 'interface_id IN (SELECT id FROM network_interfaces)'
     rules['interface_vlans'] = 'interface_id IN (SELECT id FROM network_interfaces) AND vlan_id IN (SELECT id FROM vlans)'
+    rules['connection_details'] = 'device_id IN (SELECT id FROM devices) AND uplink_id IN (SELECT id FROM devices)' if role=='it' else '0'
+    rules['connection_vlans'] = 'connection_id IN (SELECT id FROM connection_details) AND vlan_id IN (SELECT id FROM vlans)'
     rules["device_links"] = "device_id IN (SELECT id FROM devices) AND uplink_id IN (SELECT id FROM devices)"
     rules["device_tickets"] = "device_id IN (SELECT id FROM devices)"
     rules["invoice_lines"] = "invoice_id IN (SELECT id FROM invoices)"
@@ -144,7 +146,9 @@ class ScopedConnection:
             for col, target in (("clinic_id", "clinics"), ("other_clinic_id", "clinics"), ("contact_id", "contacts"),
                                 ("device_id", "devices"), ("uplink_id", "devices"), ("location_id", "clinic_locations"),
                                 ("invoice_id", "invoices"), ("note_id", "clinic_notes"), ("service_id", "device_services"),
-                                ('interface_id','network_interfaces'), ('vlan_id','vlans'), ('gateway_interface_id','network_interfaces')):
+                                ('interface_id','network_interfaces'), ('vlan_id','vlans'), ('gateway_interface_id','network_interfaces'),
+                                ('source_interface_id','network_interfaces'),('target_interface_id','network_interfaces'),
+                                ('native_vlan_id','vlans'),('connection_id','connection_details')):
                 if col in self.columns[table]:
                     checks.append(f"(NEW.{col} IS NOT NULL AND NOT scope_id('{target}',NEW.{col}))")
             for col, target in (('task_id','tasks'), ('appointment_id','appointments'), ('attachment_id','attachments'), ('private_clinic_id','clinics'), ('b_endpoint_id','vpn_endpoints'), ('a_device_id','devices'), ('b_device_id','devices'), ('a_location_id','clinic_locations'), ('b_location_id','clinic_locations')):

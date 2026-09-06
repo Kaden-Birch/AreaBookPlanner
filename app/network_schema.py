@@ -31,6 +31,30 @@ CREATE TABLE IF NOT EXISTS network_addresses (
  UNIQUE(interface_id,address)
 );
 CREATE INDEX IF NOT EXISTS idx_addresses_interface ON network_addresses(interface_id);
+CREATE TABLE IF NOT EXISTS connection_details (
+ id INTEGER PRIMARY KEY,
+ device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+ uplink_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+ source_interface_id INTEGER REFERENCES network_interfaces(id) ON DELETE SET NULL,
+ target_interface_id INTEGER REFERENCES network_interfaces(id) ON DELETE SET NULL,
+ speed_mbps INTEGER, duplex TEXT NOT NULL DEFAULT 'unknown', media TEXT NOT NULL DEFAULT 'unknown',
+ vlan_mode TEXT NOT NULL DEFAULT 'unknown', native_vlan_id INTEGER REFERENCES vlans(id) ON DELETE SET NULL,
+ admin_status TEXT NOT NULL DEFAULT 'unknown', notes TEXT,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(device_id,uplink_id)
+);
+CREATE TABLE IF NOT EXISTS connection_vlans (
+ id INTEGER PRIMARY KEY, connection_id INTEGER NOT NULL REFERENCES connection_details(id) ON DELETE CASCADE,
+ vlan_id INTEGER NOT NULL REFERENCES vlans(id) ON DELETE CASCADE, UNIQUE(connection_id,vlan_id)
+);
+CREATE TRIGGER IF NOT EXISTS clean_primary_connection AFTER UPDATE OF uplink_id ON devices
+ WHEN OLD.uplink_id IS NOT NEW.uplink_id BEGIN
+ DELETE FROM connection_details WHERE device_id=OLD.id AND uplink_id=OLD.uplink_id
+ AND NOT EXISTS(SELECT 1 FROM device_links WHERE device_id=OLD.id AND uplink_id=OLD.uplink_id);
+END;
+CREATE TRIGGER IF NOT EXISTS clean_extra_connection AFTER DELETE ON device_links BEGIN
+ DELETE FROM connection_details WHERE device_id=OLD.device_id AND uplink_id=OLD.uplink_id
+ AND NOT EXISTS(SELECT 1 FROM devices WHERE id=OLD.device_id AND uplink_id=OLD.uplink_id);
+END;
 """
 
 def initialize(conn):

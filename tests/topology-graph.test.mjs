@@ -2,13 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../app/static/js/topology-graph.js', import.meta.url), 'utf8');
-const { displayGraph, layoutGraph } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { displayGraph, layoutGraph, layoutPhysical } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const nodes = [
   {id:1,device_type:'switch'}, {id:2,device_type:'voip'},
   {id:3,device_type:'workstation'}, {id:4,device_type:'vm'},
 ];
 const edge = (from,to,primary=true) => ({from,to,primary,link_type:'ethernet'});
+
+test('compressed links never masquerade as editable endpoint metadata',()=>{
+  const g=displayGraph(nodes,[edge(1,2),{...edge(2,3),details:{source_interface_id:88}}],['voip']);
+  assert.equal(g.edges[0].details,null);
+});
+
+test('physical groups contain every card without overlap in both orientations',()=>{
+  const items=Array.from({length:31},(_,id)=>({id,name:'Device '+id,rack:id<20?'Rack A':'Rack B',services:id%2?[{},{}]:[]}));
+  for(const orientation of ['vertical','horizontal']){
+    const {positions,groups}=layoutPhysical(items,orientation);
+    assert.equal(positions.size,31);assert.equal(groups.length,2);
+    assert.ok(groups[0].y+groups[0].height<groups[1].y);
+    for(const [id,a] of positions)for(const [other,b] of positions)if(id!==other){
+      const h=items[id].services.length?112:80,otherH=items[other].services.length?112:80;
+      assert.ok(a.x+220<=b.x||b.x+220<=a.x||a.y+h<=b.y||b.y+otherH<=a.y);
+    }
+    assert.ok(Math.max(...groups.map(g=>g.width))<=740);
+  }
+});
 
 test('hidden phones retain the nearest visible relationship without changing stored input',()=>{
   const edges=[edge(1,2),edge(2,3),edge(3,4)], original=JSON.stringify({nodes,edges});

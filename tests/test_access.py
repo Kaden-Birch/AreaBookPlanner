@@ -275,3 +275,48 @@ def test_first_run_behind_tls_proxy(tmp_path,monkeypatch):
         assert 'Secure' in r.headers['set-cookie']
         # Spoofed forwarded metadata must not authorize an unrelated website.
         assert proxy.post('/api/auth/login',headers={'Origin':'https://evil.example','X-Forwarded-Host':'evil.example','X-Forwarded-Proto':'https'},json={'username':'admin','password':PASSWORD}).status_code==403
+
+
+def test_it_dashboard_scope_and_attention(environment):
+    from datetime import date, timedelta
+    _,staff,areas=environment
+    today=date.today()
+    yesterday=(today-timedelta(days=1)).isoformat()
+    with database.get_db() as conn:
+        for cid,name in [(1,'Local server'),(2,'Prospect server'),(3,'Remote server')]:
+            did=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (?,'server',?)",(cid,name)).lastrowid
+            conn.execute('INSERT INTO device_services(device_id,name) VALUES (?,?)',(did,name+' service'))
+            conn.execute("INSERT INTO tasks(clinic_id,title,due_date,visibility) VALUES (?,?,?,'technical')",(cid,name+' task',yesterday))
+            conn.execute("INSERT INTO appointments(clinic_id,title,start_time) VALUES (?,?,?)",(cid,name+' visit',today.isoformat()+'T12:00:00'))
+        conn.execute("INSERT INTO tasks(clinic_id,title,due_date,visibility) VALUES (1,'Hidden sales task',?,'sales')",(yesterday,))
+        conn.execute("INSERT INTO tasks(clinic_id,title,due_date,done) VALUES (1,'Done task',?,1)",(yesterday,))
+        conn.execute("INSERT INTO tasks(area_id,title,due_date) VALUES (?,'Unlinked local task',?)",(areas['Lethbridge'],today.isoformat()))
+        conn.execute("INSERT INTO clinics(name,area_id,relationship) VALUES ('Missing equipment',?,'current_client')",(areas['Lethbridge'],))
+        conn.execute("INSERT INTO vpn_links(name,status,a_clinic_id,b_clinic_id) VALUES ('Cross Area VPN','down',1,3)")
+        conn.execute("INSERT INTO vpn_links(name,status,a_clinic_id,b_clinic_id) VALUES ('Local VPN','down',1,2)")
+    switch(staff,'it')
+    r=staff.get('/api/it/dashboard')
+    assert r.status_code==200,r.text
+    d=r.json()
+    assert d['summary']=={'current_clients':2,'devices':2,'servers':1,'overdue_tasks':1,'open_tasks':2,'services':1}
+    assert {c['name'] for c in d['clinics']}=={'Local client','Missing equipment'}
+    assert {a['kind'] for a in d['attention']}=={'task','vpn','documentation','service'}
+    assert len(d['upcoming'])==2
+    assert all(secret not in r.text for secret in ['Remote','Cross Area VPN','Prospect server','Hidden sales task','Done task'])
+    all_data=staff.get('/api/it/dashboard?include_prospects=true').json()
+    assert all_data['summary']['devices']==3
+    assert all_data['summary']['overdue_tasks']==2
+    assert len(all_data['clinics'])==3
+    for role in ['sales','manager','client_success']:
+        switch(staff,role)
+        assert staff.get('/api/it/dashboard').status_code==403
+
+
+def test_it_dashboard_empty_area(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    with database.get_db() as conn:
+        conn.execute('UPDATE clinics SET area_id=NULL')
+    d=staff.get('/api/it/dashboard').json()
+    assert all(v==0 for v in d['summary'].values())
+    assert d['clinics']==d['attention']==d['upcoming']==[]

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
-from .routers import appointments, billing, clinics, contacts, devices, extras, misc, quotes, tasks, vpn
+from .routers import appointments, billing, clinics, contacts, devices, extras, misc, quotes, tasks, vpn, it_dashboard
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -28,6 +28,7 @@ from .access import permission_for
 
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(it_dashboard.router)
 
 
 def _origin_key(value: str):

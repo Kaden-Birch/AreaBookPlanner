@@ -56,6 +56,27 @@ the newly secured data. No production data is bundled in this commit.
 - Client Success quotes are read-only; Sales and Manager can edit quotes. Billing
   and inventory are available to the three business roles. Renewals remain on Clients.
 
+## IT dashboard
+
+The IT landing page now shows current-client, documented-device, server/VM and overdue
+task counts, an attention queue, work scheduled through the next seven days, and
+searchable clinic cards with site/device/service totals and equipment/topology/rack
+shortcuts. Summary cards filter the relevant section. Lists initially show five work
+items and six clinics, with controls to expand them. Refresh reloads the overview.
+
+The default is current clients in the selected Area; an explicit checkbox includes
+other relationships without changing Area permissions. Unlinked Area tasks remain
+included. These are Area tasks, not personal assignments. Attention includes overdue
+tasks, current clients with no equipment, services with neither support URL nor email,
+and visible VPN links manually marked down. No live health, uptime, or monitoring
+claims are inferred from missing documentation. All equipment statuses count as
+documented; scheduled appointments include today's entries. Technical activity history
+is deferred until reliable change events are recorded.
+
+`GET /api/it/dashboard?include_prospects=false` is IT-only and uses the centralized
+scoped database connection for every source. Switching roles or Areas resets the
+overview. This feature introduces no database migrations or monitoring integrations.
+
 ## Notes and existing shared data
 
 General notes are visible to all four operational roles. Sales notes are visible

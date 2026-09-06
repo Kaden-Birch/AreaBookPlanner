@@ -20,6 +20,8 @@ WORKSPACES = BUSINESS | {"it"}
 
 def permission_for(path, method):
     read = method in ("GET", "HEAD")
+    if path == '/api/it/dashboard':
+        return {'it'} if read else set()
     if path.endswith('/area'):
         return {'manager'}
     if path.startswith(("/api/settings", "/api/import/", "/api/export/backup", "/api/geocode/bulk", "/api/views", "/api/templates", "/api/groups")):

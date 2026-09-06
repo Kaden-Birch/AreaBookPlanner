@@ -133,10 +133,8 @@ export function pruneWorkspaceUI(root) {
 }
 
 export async function renderItHome(container) {
-  const [clinics,tasks]=await Promise.all([api.get('/api/clinics'),api.get('/api/tasks',{done:false})]);
-  container.innerHTML=`<h1>IT workspace</h1><p>${clinics.length} clinics in your selected Area · ${tasks.length} open tasks</p>
-    <div class="card"><h2>Technical documentation</h2>${clinics.map(c=>`<p><a href="#/clinics/${c.id}">${esc(c.name)}</a> · <a href="#/clinics/${c.id}/equipment">Equipment & services</a> · <a href="#/clinics/${c.id}/equipment?view=topology">Topology</a> · <a href="#/clinics/${c.id}/equipment?view=racks">Racks</a></p>`).join('')||'<p>No clinics assigned to this Area yet.</p>'}</div>
-    <div class="card"><h2>Open tasks</h2>${tasks.map(t=>`<p><a href="#/tasks">${esc(t.title)}</a> · ${esc(t.clinic_name||'')} · ${esc(t.due_date||'No due date')}</p>`).join('')||'<p>No open tasks.</p>'}</div>`;
+  const dashboard = await import('./pages/it-dashboard.js');
+  await dashboard.render(container);
 }
 
 export async function renderAdmin(container) {

@@ -10,6 +10,10 @@ and is stored in a single SQLite file.
   Administration. Switch assigned roles without signing out; each role has its own
   assigned Areas and default map centre. Client Success sees current clients only.
   Backend permissions apply to lists, direct links, search, exports and attachments.
+- **IT overview** – clickable equipment/client/task totals, an attention queue for
+  overdue work and documentation gaps, upcoming tasks/appointments, and searchable
+  clinic shortcuts. Defaults to current clients in the selected Area, with optional
+  prospect inclusion. Recorded VPN statuses are labelled as manual, not live monitoring.
 - **Map hub (defaults to your assigned Area)** – every accessible clinic is a coloured pin. Place pins by
   address lookup (OpenStreetMap geocoding), by clicking the map, or by dragging a pin.
   Filter by colour and search from the sidebar; click a pin for a quick summary,

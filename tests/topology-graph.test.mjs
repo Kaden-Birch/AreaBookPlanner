@@ -2,13 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../app/static/js/topology-graph.js', import.meta.url), 'utf8');
-const { displayGraph, layoutGraph, layoutPhysical } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { displayGraph, layoutGraph, layoutPhysical, linkSpeedClass } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const nodes = [
   {id:1,device_type:'switch'}, {id:2,device_type:'voip'},
   {id:3,device_type:'workstation'}, {id:4,device_type:'vm'},
 ];
 const edge = (from,to,primary=true) => ({from,to,primary,link_type:'ethernet'});
+
+test('speed bands are explicit; virtual links override speeds and shortcuts stay neutral',()=>{
+  for(const [speed,expected] of [[null,'unknown'],[0,'unknown'],[100,'slow'],[999,'slow'],[1000,'gig'],[2499,'gig'],[2500,'multi'],[5000,'multi'],[10000,'ten'],[25000,'ten']])
+    assert.equal(linkSpeedClass({details:{speed_mbps:speed}}),'speed-'+expected);
+  assert.equal(linkSpeedClass({link_type:'virtual',details:{speed_mbps:10000}}),'virtual');
+  assert.equal(linkSpeedClass({hidden:[2],link_type:'virtual',details:{speed_mbps:10000}}),'speed-unknown');
+});
 
 test('compressed links never masquerade as editable endpoint metadata',()=>{
   const g=displayGraph(nodes,[edge(1,2),{...edge(2,3),details:{source_interface_id:88}}],['voip']);

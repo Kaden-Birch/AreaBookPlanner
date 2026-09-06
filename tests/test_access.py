@@ -437,6 +437,20 @@ def test_connection_scope_and_cross_site_vlan(environment):
     assert staff.put(url,json={}).status_code==403
 
 
+def test_ip_review_scope_and_ipv6(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    params={'source_ip':'2001:db8:1::1','destination_ip':'2001:db8:1::2'}
+    staff.post('/api/clinics/1/vlans',json={'tag':11,'name':'IPv6','subnets':['2001:db8:1::/64']})
+    r=staff.get('/api/clinics/1/connectivity/ip-review',params=params)
+    assert r.status_code==200,r.text
+    assert r.json()['candidates'][0]['kind']=='local'
+    assert r.json()['source_matches']
+    assert staff.get('/api/clinics/3/connectivity/ip-review',params=params).status_code==404
+    switch(staff,'sales')
+    assert staff.get('/api/clinics/1/connectivity/ip-review',params=params).status_code==403
+
+
 def test_interfaces_dual_stack_vlans_and_primary_compatibility(environment):
     _,staff,_=environment
     switch(staff,'it')

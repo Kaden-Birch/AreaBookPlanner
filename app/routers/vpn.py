@@ -480,6 +480,77 @@ def connectivity(clinic_id: int, site: str | None = None, conn: sqlite3.Connecti
     return {"source_site": source, "direct": direct, "remote": remote}
 
 
+@router.get("/clinics/{clinic_id}/connectivity/ip-review")
+def ip_path_review(clinic_id: int, source_ip: str, destination_ip: str,
+                   site: str | None = None, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Read-only evidence review. Never equate site links with subnet permission."""
+    _clinic_or_404(conn, clinic_id)
+    try:
+        src, dst = ipaddress.ip_address(source_ip.strip()), ipaddress.ip_address(destination_ip.strip())
+        if '%' in source_ip or '%' in destination_ip: raise ValueError()
+    except ValueError:
+        raise HTTPException(422, "Enter valid IPv4 or IPv6 host addresses without a prefix or zone")
+    if src.version != dst.version:
+        raise HTTPException(422, "Use two addresses of the same IP version; address translation is not modelled")
+    resolved=connectivity(clinic_id,site,conn)
+    origin=resolved['source_site']
+
+    def ranges(s):
+        loc=s.get('location_id')
+        if 'location_id' not in s:
+            loc=None if s['site_id']=='main' else int(s['site_id'])
+        result=list(_ranges_for_site(conn,s['clinic_id'],loc))
+        lc,lp=_loc_clause('location_id',loc)
+        import json
+        for v in conn.execute(f"SELECT id,name,subnets FROM vlans WHERE clinic_id=? AND {lc}",[s['clinic_id'],*lp]):
+            for cidr in json.loads(v['subnets'] or '[]'):
+                result.append({'name':v['name'],'cidr':cidr,'vlan_id':v['id']})
+        return result
+
+    def matches(address,items):
+        out=[]
+        for r in items:
+            try:
+                net=ipaddress.ip_network(r['cidr'],strict=False)
+                if address.version==net.version and address in net: out.append(r)
+            except ValueError: pass
+        return out
+
+    source_ranges=ranges(origin)
+    source_matches=matches(src,source_ranges)
+    candidates=[]
+    local_matches=matches(dst,source_ranges)
+    if local_matches:
+        candidates.append({'kind':'local','destination':origin,'matched_ranges':local_matches,'hops':[],
+                           'return_path_documented':None})
+    for dest in resolved['direct']+resolved['remote']:
+        if dest.get('kind')!='site': continue
+        found=matches(dst,ranges(dest))
+        if not found: continue
+        hops=dest.get('path') or [{'vpn_link_id':dest['vpn_link_id'],'from':origin,'to':dest}]
+        safe_hops=[]
+        for hop in hops:
+            row=conn.execute("SELECT name,status FROM vpn_links WHERE id=?",(hop['vpn_link_id'],)).fetchone()
+            safe_hops.append({'vpn_link_id':hop['vpn_link_id'],'name':row['name'],'status':row['status'],
+                              'from':hop['from']['clinic_name']+' · '+hop['from']['site_name'],
+                              'to':hop['to']['clinic_name']+' · '+hop['to']['site_name']})
+        reverse=connectivity(dest['clinic_id'],str(dest['site_id']),conn)
+        returned=any(d.get('kind')=='site' and d['clinic_id']==clinic_id and str(d['site_id'])==str(origin['site_id'])
+                     for d in reverse['direct']+reverse['remote'])
+        candidates.append({'kind':dest['relationship'],'destination':{k:dest[k] for k in ('clinic_id','site_id','clinic_name','site_name')},
+                           'matched_ranges':found,'hops':safe_hops,'return_path_documented':returned})
+    warnings=[]
+    if not source_matches: warnings.append("The source IP is not in a documented network range or VLAN subnet at the selected site.")
+    if not candidates: warnings.append("No matching destination network was found on this site or an explicitly connected destination. Check ranges, onward access, and disabled tunnels.")
+    destinations={(c['destination']['clinic_id'],str(c['destination']['site_id'])) for c in candidates}
+    if len(destinations)>1: warnings.append("The destination IP matches multiple sites. Overlapping address space makes the destination ambiguous; NAT is not modelled.")
+    if any(c['return_path_documented'] is False for c in candidates): warnings.append("An onward path is documented only in the forward direction. Configure or verify return access separately.")
+    if any(h['status']=='down' for c in candidates for h in c['hops']): warnings.append("A tunnel on a documented path is manually marked down.")
+    return {'source_site':origin,'source_ip':str(src),'destination_ip':str(dst),'source_matches':source_matches,
+            'candidates':candidates,'warnings':warnings,'reachability':'unverified',
+            'limitations':"Documentation review only. Subnet allow-lists, firewall rules, NAT, routing tables, and live availability are not verified. A VPN path alone does not establish IP reachability. Only direct and explicitly configured one-intermediate-site paths are considered."}
+
+
 # ---- Optional IP network ranges (advanced) --------------------------------------
 
 RANGE_COLUMNS = ["name", "cidr", "network_type", "notes"]

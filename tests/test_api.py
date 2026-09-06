@@ -1250,6 +1250,36 @@ def test_vpn_transit_and_connectivity(client):
     assert client.get(f"/api/vpn/links/{epl['id']}/transit").status_code == 422
 
 
+def test_ip_path_review_direct_transit_and_unknowns(client):
+    a,b,c=[client.post('/api/clinics',json={'name':'IP review '+n}).json()['id'] for n in ['A','B','C']]
+    ab=client.post(f'/api/clinics/{a}/vpn/links',json={'remote_kind':'site','b_clinic_id':b,'status':'up'}).json()['id']
+    bc=client.post(f'/api/clinics/{b}/vpn/links',json={'remote_kind':'site','b_clinic_id':c,'status':'down'}).json()['id']
+    for cid,subnet in [(a,'10.241.1.0/24'),(b,'10.241.2.0/24'),(c,'10.241.3.0/24')]:
+        assert client.post(f'/api/clinics/{cid}/vlans',json={'tag':241,'name':'LAN','subnets':[subnet]}).status_code==201
+    url=f'/api/clinics/{a}/connectivity/ip-review'
+    params={'source_ip':'10.241.1.10','destination_ip':'10.241.2.10'}
+    r=client.get(url,params=params)
+    assert r.status_code==200,r.text
+    assert r.json()['candidates'][0]['kind']=='direct'
+    assert r.json()['candidates'][0]['return_path_documented']
+    assert r.json()['reachability']=='unverified'
+    params['destination_ip']='10.241.3.10'
+    assert client.get(url,params=params).json()['candidates']==[]
+    assert client.put(f'/api/vpn/links/{ab}/transit',json={'origin':'a','destinations':[{'clinic_id':c,'location_id':None,'exit_vpn_link_id':bc}]}).status_code==200
+    data=client.get(url,params=params).json()
+    assert len(data['candidates'][0]['hops'])==2
+    assert not data['candidates'][0]['return_path_documented']
+    assert any('marked down' in w for w in data['warnings'])
+    client.post(f'/api/clinics/{b}/network-ranges',json={'name':'Overlapping destination','cidr':'10.241.3.0/24'})
+    overlap=client.get(url,params=params).json()
+    assert len(overlap['candidates'])==2
+    assert any('ambiguous' in w for w in overlap['warnings'])
+    assert client.get(url,params=params|{'source_ip':'bad'}).status_code==422
+    assert client.get(url,params=params|{'source_ip':'2001:db8::1'}).status_code==422
+    client.put(f'/api/vpn/links/{ab}',json={'remote_kind':'site','b_clinic_id':b,'status':'disabled'})
+    assert client.get(url,params=params).json()['candidates']==[]
+
+
 def test_site_network_ranges(client):
     a = client.post("/api/clinics", json={"name": "Net A"}).json()["id"]
     b = client.post("/api/clinics", json={"name": "Net B"}).json()["id"]

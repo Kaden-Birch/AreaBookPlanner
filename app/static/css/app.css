@@ -786,6 +786,12 @@ details summary { cursor: pointer; font-weight: 600; }
 .topology-device.vm > rect:not(.type-stripe) { fill: #f0e9fb; stroke: #9670d4; stroke-width: 2; }
 [data-theme="dark"] .topology-device.vm > rect:not(.type-stripe) { fill: #302642; stroke: #ae8be6; }
 .topology-link.virtual path:not(.hit) { stroke: #a17de4; stroke-width: 2; }
+.topology-link.speed-slow path:not(.hit) { stroke: #ef6464; }
+.topology-link.speed-gig path:not(.hit) { stroke: #4c9aff; }
+.topology-link.speed-multi path:not(.hit) { stroke: #36b978; }
+.topology-link.speed-ten path:not(.hit) { stroke: #f39a38; }
+.topology-link.speed-unknown path:not(.hit) { stroke: var(--muted); }
+.topology-link.virtual:not(.compressed) path:not(.hit) { stroke: #a17de4; stroke-dasharray: 2 4; }
 .topology-colour-legend, .topology-vlan-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; font-size: 12px; }
 .topology-vlan-bar input[type=checkbox] { width: auto; }
 .topology-vlan-bar button[aria-pressed=true] { border-color: var(--primary); background: var(--surface-2); box-shadow: inset 0 -2px var(--primary); }
@@ -802,6 +808,11 @@ details summary { cursor: pointer; font-weight: 600; }
 .topo-edge { fill: none; stroke: var(--faint); stroke-width: 2; }
 .topo-edge.wireless { stroke-dasharray: 6 5; stroke: var(--primary); }
 .topo-edge.virtual { stroke-dasharray: 2 4; stroke: #7c5cd6; }
+.topo-edge.speed-slow { stroke: #ef6464; }
+.topo-edge.speed-gig { stroke: #4c9aff; }
+.topo-edge.speed-multi { stroke: #36b978; }
+.topo-edge.speed-ten { stroke: #f39a38; }
+.topo-edge.speed-unknown { stroke: var(--muted); }
 .topo-edge.extra { stroke-dasharray: 8 4; stroke: var(--overdue-ring); stroke-width: 2; }
 .topo-edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
 .topo-wrap.editing .topo-edge-hit:hover { stroke: rgba(255,122,0,.25); }

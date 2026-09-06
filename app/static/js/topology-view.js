@@ -1,5 +1,5 @@
 import { esc, attr } from './ui.js';
-import { displayGraph, layoutGraph, layoutPhysical, nodeHeight } from './topology-graph.js';
+import { displayGraph, layoutGraph, layoutPhysical, nodeHeight, linkSpeedClass } from './topology-graph.js';
 import { accentClass } from './equipment.js';
 
 export function mountTopology(body, topo, meta, key, actions) {
@@ -34,6 +34,7 @@ export function mountTopology(body, topo, meta, key, actions) {
       <button class="btn btn-sm" id="topology-edit">Edit connections</button>
       <label>Layout<select id="topology-orientation"><option value="horizontal" ${orientation==='horizontal'?'selected':''}>Horizontal →</option><option value="vertical" ${orientation==='vertical'?'selected':''}>Vertical ↓</option></select></label>
       <button class="btn btn-sm" id="topology-manage-vlans">Manage VLANs</button>
+      <button class="btn btn-sm" id="topology-routing">VPN IP path review</button>
       <label>View<select id="topology-perspective"><option value="logical" ${perspective==='logical'?'selected':''}>Logical network</option><option value="physical" ${perspective==='physical'?'selected':''}>Physical placement</option></select></label>
     </div><p class="muted small" id="topology-summary" aria-live="polite"></p>
     <div class="topology-vlan-bar"><span>VLANs:</span>${vlanCatalog.map(v=>`<button class="btn btn-sm" data-vlan="${v.id}" aria-pressed="${selectedVlans.has(v.id)}" title="${attr(v.name+' · '+(v.location_name||'Main site')+' · '+v.subnets.join(', '))}"><span class="vlan-dot" style="background:${attr(v.color)}"></span>${v.tag} · ${esc(v.name)}</button>`).join('')||'<span class="muted small">No VLANs recorded.</span>'}<label><input type="checkbox" id="topology-vlan-only" ${vlanOnly?'checked':''}> Only selected VLANs</label><button class="btn btn-sm" id="topology-vlan-clear">Clear VLAN selection</button></div>
@@ -46,7 +47,7 @@ export function mountTopology(body, topo, meta, key, actions) {
     <div id="topology-empty" class="topology-empty" hidden>No devices visible. Change the device filters or expand branches.</div>
   </div>
   <p class="muted small">Drag to pan · Scroll to zoom · Dashed shortcuts contain hidden devices · Hover a VLAN to preview; click to select.</p>
-  <div class="topology-colour-legend"><span class="accent-network">■ Network</span><span class="accent-server">■ Server / VM · purple virtual links</span><span class="accent-endpoint">■ Workstation</span><span class="accent-phone">■ Phone / mobile</span><span class="accent-printer">■ Printer</span><span class="accent-security">■ Security</span><span>Solid: wired · dotted: wireless · dashed: shortcut</span></div>
+  <div class="topology-colour-legend"><span class="accent-network">■ Network</span><span class="accent-server">■ Server / VM · purple virtual links</span><span class="accent-endpoint">■ Workstation</span><span class="accent-phone">■ Phone / mobile</span><span class="accent-printer">■ Printer</span><span class="accent-security">■ Security</span><span>Red: &lt;1 Gb · blue: 1–&lt;2.5 Gb · green: 2.5–&lt;10 Gb · orange: ≥10 Gb · grey: unknown/shortcut · purple dots: virtual</span></div>
   <div id="topology-inspector" class="card" hidden></div>
   <details class="card" id="topology-review"><summary>Documentation review (${(topo.documentation||[]).length} items)</summary><p class="muted">Missing or inconsistent documentation, not live faults or reachability. Review applicability before making changes. Physical placement excludes VMs; use Logical network to see them.</p><div id="topology-documentation"></div></details>
   ${topo.vpn?.length ? `<details class="card"><summary>VPN links (${topo.vpn.length})</summary><div class="actions">${topo.vpn.map(v=>`<button class="btn btn-sm" data-vpn-link="${v.vpn_id}">${esc(v.remote.kind==='endpoint'?v.remote.name:v.remote.clinic_name+' · '+v.remote.site_name)}</button>`).join('')}</div></details>`:''}`;
@@ -87,7 +88,7 @@ export function mountTopology(body, topo, meta, key, actions) {
       const x=a.x+(vertical?110:220),y=a.y+(vertical?nodeHeight(byId.get(e.from)):35),end=b.x+(vertical?110:0),ey=b.y+(vertical?0:35);
       const path=vertical?`M${x},${y} C${x},${y+20} ${end},${ey-20} ${end},${ey}`:`M${x},${y} C${x+25},${y} ${end-25},${ey} ${end},${ey}`;
       const label=e.hidden.length?`${e.hidden.length} hidden: ${e.hidden.map(id=>byId.get(id).name).join(' → ')}`:`${byId.get(e.from).name} → ${byId.get(e.to).name} (${e.link_type}${e.primary?'':', extra link'}) · ${e.details?.source_interface_name||'?'} → ${e.details?.target_interface_name||'?'}${e.details?.speed_mbps?' · '+e.details.speed_mbps+' Mbps':''} · ${e.details?.vlan_mode||'VLAN mode unknown'} · ${e.details?.admin_status||'unknown'} (recorded)`;
-      return `<g class="topology-link ${e.hidden.length?'compressed':''} ${!e.primary?'secondary':''} ${e.link_type==='wireless'?'wireless':''} ${e.link_type==='virtual'?'virtual':''}" data-link="${i}" tabindex="0" role="button" aria-label="${attr(label)}"><title>${esc(label)}</title><path d="${path}"/><path class="hit" d="${path}"/>${e.hidden.length?`<text x="${x+10}" y="${y-8}">+${e.hidden.length} hidden</text>`:''}</g>`;
+      return `<g class="topology-link ${linkSpeedClass(e)} ${e.hidden.length?'compressed':''} ${!e.primary?'secondary':''} ${e.link_type==='wireless'?'wireless':''} ${e.link_type==='virtual'?'virtual':''}" data-link="${i}" tabindex="0" role="button" aria-label="${attr(label)}"><title>${esc(label)}</title><path d="${path}"/><path class="hit" d="${path}"/>${e.hidden.length?`<text x="${x+10}" y="${y-8}">+${e.hidden.length} hidden</text>`:''}</g>`;
     }).join('')+graph.nodes.map(n=>{
       const p=positions.get(n.id), count=graph.counts.get(n.id), folded=collapsed.has(n.id),h=nodeHeight(n);
       const gaps=(topo.documentation||[]).filter(i=>i.kind==='device'&&i.id===n.id);
@@ -156,6 +157,7 @@ export function mountTopology(body, topo, meta, key, actions) {
     b.onclick=()=>{const id=Number(b.dataset.vlan);selectedVlans.has(id)?selectedVlans.delete(id):selectedVlans.add(id);b.setAttribute('aria-pressed',selectedVlans.has(id));save();draw();};
   });
   body.querySelector('#topology-manage-vlans').onclick=actions.vlans;
+  body.querySelector('#topology-routing').onclick=actions.routing;
   body.querySelector('#topology-perspective').onchange=e=>{save(e.target.value);actions.refresh();};
   const report=body.querySelector('#topology-documentation');
   let reportLimit=50;

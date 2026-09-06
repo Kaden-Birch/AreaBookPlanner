@@ -49,6 +49,14 @@ export function displayGraph(nodes, edges, hiddenTypes = [], collapsed = [], hid
 
 export const nodeHeight = n => n.services?.length ? (n.services.length > 1 ? 112 : 98) : 80;
 
+export function linkSpeedClass(edge) {
+  if(edge.hidden?.length)return 'speed-unknown';
+  if(edge.link_type==='virtual')return 'virtual';
+  const speed=Number(edge.details?.speed_mbps);
+  if(!Number.isFinite(speed)||speed<=0)return 'speed-unknown';
+  return speed<1000?'speed-slow':speed<2500?'speed-gig':speed<10000?'speed-multi':'speed-ten';
+}
+
 // Placement groups are documentation, not inferred connectivity or rack elevations.
 export function layoutPhysical(nodes, orientation='horizontal') {
   const buckets=new Map(),positions=new Map(),groups=[];

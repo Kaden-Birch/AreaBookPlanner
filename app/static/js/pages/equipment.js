@@ -7,6 +7,8 @@ import { mountTopology } from '../topology-view.js';
 import { user } from '../auth.js';
 import { openNetwork, openVlans } from '../network.js';
 import { openConnection } from '../connections.js';
+import { openRoutingReview } from '../routing-review.js';
+import { linkSpeedClass } from '../topology-graph.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -179,6 +181,7 @@ async function renderTopology(body) {
     network: id => openNetwork({clinic,deviceId:id,onChanged:load}),
     connection: (parent,child) => openConnection({clinic,parent,child,onChanged:load}),
     refresh: () => renderTopology(body),
+    routing: () => openRoutingReview({clinic,site:siteParam()}),
     vlans: () => openVlans({clinic,site:siteParam(),onChanged:load}),
     edit: () => { state.edit = true; state.source = null; renderTopology(body); },
     vpn: async id => {
@@ -791,7 +794,7 @@ function trunc(str, m) { return str && str.length > m ? str.slice(0, m - 1) + 'â
 
 function edge(a, b, type, e) {
   const my = (a.y + b.y) / 2;
-  const cls = ['topo-edge', type === 'wireless' ? 'wireless' : '', type === 'virtual' ? 'virtual' : '', e && e.primary === false ? 'extra' : ''].join(' ');
+  const cls = ['topo-edge', linkSpeedClass(e||{link_type:type}), type === 'wireless' ? 'wireless' : '', type === 'virtual' ? 'virtual' : '', e && e.primary === false ? 'extra' : ''].join(' ');
   const d = `M${a.x},${a.y} C${a.x},${my} ${b.x},${my} ${b.x},${b.y}`;
   const hit = (e && e.from != null && e.to != null) ? `<path class="topo-edge-hit" data-from="${e.from}" data-to="${e.to}" d="${d}"/>` : '';
   return `<path class="${cls}" d="${d}"/>${hit}`;

@@ -90,6 +90,9 @@ def scope_rules(role, area):
     rules['interface_vlans'] = 'interface_id IN (SELECT id FROM network_interfaces) AND vlan_id IN (SELECT id FROM vlans)'
     rules['connection_details'] = 'device_id IN (SELECT id FROM devices) AND uplink_id IN (SELECT id FROM devices)' if role=='it' else '0'
     rules['connection_vlans'] = 'connection_id IN (SELECT id FROM connection_details) AND vlan_id IN (SELECT id FROM vlans)'
+    history_scope = owned+" AND NOT EXISTS (SELECT 1 FROM json_each(required_clinics) j WHERE j.value NOT IN (SELECT id FROM clinics))"
+    rules['topology_versions'] = history_scope if role=='it' else '0'
+    rules['topology_audit'] = history_scope if role=='it' else '0'
     rules["device_links"] = "device_id IN (SELECT id FROM devices) AND uplink_id IN (SELECT id FROM devices)"
     rules["device_tickets"] = "device_id IN (SELECT id FROM devices)"
     rules["invoice_lines"] = "invoice_id IN (SELECT id FROM invoices)"
@@ -203,7 +206,16 @@ def scoped_db(request: Request):
             WHERE user_id=? AND role=? AND ua.area_id=? AND a.is_active=1""", (user["id"],user["active_role"],user["area_id"])).fetchone()
         if not area:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
-        yield ScopedConnection(conn, user)
+        scoped = ScopedConnection(conn, user)
+        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect)(/|$)',request.url.path)
+        audit = (user['active_role']=='it' and request.method in ('POST','PUT','PATCH','DELETE') and technical
+                 and not request.url.path.endswith(('/import/preview','/versions')))
+        if audit:
+            from .topology_history import capture, record_changes
+            before = capture(scoped)
+        yield scoped
+        if audit:
+            record_changes(scoped,before,user,request.url.path,request.method)
         conn.commit()
     except Exception:
         conn.rollback()

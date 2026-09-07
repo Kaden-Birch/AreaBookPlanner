@@ -1,6 +1,7 @@
 import { esc, attr } from './ui.js';
 import { displayGraph, layoutGraph, layoutPhysical, nodeHeight, linkSpeedClass } from './topology-graph.js';
 import { accentClass } from './equipment.js';
+import { exportTopology } from './topology-reporting.js';
 
 export function mountTopology(body, topo, meta, key, actions) {
   let prefs;
@@ -35,6 +36,7 @@ export function mountTopology(body, topo, meta, key, actions) {
       <label>Layout<select id="topology-orientation"><option value="horizontal" ${orientation==='horizontal'?'selected':''}>Horizontal →</option><option value="vertical" ${orientation==='vertical'?'selected':''}>Vertical ↓</option></select></label>
       <button class="btn btn-sm" id="topology-manage-vlans">Manage VLANs</button>
       <button class="btn btn-sm" id="topology-routing">VPN IP path review</button>
+      <details class="topology-report-menu"><summary>Administration & reports</summary><div class="actions"><button class="btn btn-sm" id="topology-import">Import CSV</button><button class="btn btn-sm" id="topology-history">Versions & audit</button><button class="btn btn-sm" data-export="json">JSON</button><button class="btn btn-sm" data-export="csv">CSV</button><button class="btn btn-sm" data-export="svg">SVG</button><button class="btn btn-sm" data-export="png">PNG</button><button class="btn btn-sm" data-export="print">Print / PDF</button></div><p class="help">Exports use visible devices. Versions capture complete local documentation for this site.</p></details>
       <label>View<select id="topology-perspective"><option value="logical" ${perspective==='logical'?'selected':''}>Logical network</option><option value="physical" ${perspective==='physical'?'selected':''}>Physical placement</option></select></label>
     </div><p class="muted small" id="topology-summary" aria-live="polite"></p>
     <div class="topology-vlan-bar"><span>VLANs:</span>${vlanCatalog.map(v=>`<button class="btn btn-sm" data-vlan="${v.id}" aria-pressed="${selectedVlans.has(v.id)}" title="${attr(v.name+' · '+(v.location_name||'Main site')+' · '+v.subnets.join(', '))}"><span class="vlan-dot" style="background:${attr(v.color)}"></span>${v.tag} · ${esc(v.name)}</button>`).join('')||'<span class="muted small">No VLANs recorded.</span>'}<label><input type="checkbox" id="topology-vlan-only" ${vlanOnly?'checked':''}> Only selected VLANs</label><button class="btn btn-sm" id="topology-vlan-clear">Clear VLAN selection</button></div>
@@ -158,6 +160,9 @@ export function mountTopology(body, topo, meta, key, actions) {
   });
   body.querySelector('#topology-manage-vlans').onclick=actions.vlans;
   body.querySelector('#topology-routing').onclick=actions.routing;
+  body.querySelector('#topology-import').onclick=actions.import;
+  body.querySelector('#topology-history').onclick=actions.history;
+  body.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>exportTopology({scene,graph,context:{...actions.reportContext,perspective,orientation,hidden_types:[...hidden],selected_vlans:[...selectedVlans],vlan_only:vlanOnly},format:b.dataset.export}));
   body.querySelector('#topology-perspective').onchange=e=>{save(e.target.value);actions.refresh();};
   const report=body.querySelector('#topology-documentation');
   let reportLimit=50;

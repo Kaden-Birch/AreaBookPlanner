@@ -1129,3 +1129,17 @@ tr.row-warn td { background: var(--red-bg); }
 .topology-placement rect { fill: var(--surface, #182133); fill-opacity: .35; stroke: #718096; stroke-dasharray: 5 4; }
 .topology-placement text { fill: var(--text, #cbd5e1); font-size: 12px; }
 .documentation-badge { fill: #d99d22; font-weight: 800; cursor: pointer; }
+.topology-import-preview { max-height: 260px; overflow: auto; }
+.topology-report-menu { position: relative; }
+.topology-report-menu[open] { flex-basis: 100%; }
+.topology-print-preview svg { max-width: 100%; height: auto; }
+@media print {
+  body.topology-printing > :not(#modal-root) { display: none !important; }
+  body.topology-printing #modal-root > :not(.topology-print-preview) { display: none !important; }
+  body.topology-printing .topology-print-preview { display: block !important; position: static; padding: 0; background: white; }
+  body.topology-printing .topology-print-preview .modal { width: 100%; max-width: none; max-height: none; box-shadow: none; border: 0; background: white; color: black; }
+  body.topology-printing .topology-print-preview .modal-body { overflow: visible; padding: 0; }
+  body.topology-printing .topology-print-preview .modal-header,
+  body.topology-printing .topology-print-preview .modal-footer { display: none !important; }
+  body.topology-printing svg { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

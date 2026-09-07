@@ -9,6 +9,7 @@ import { openNetwork, openVlans } from '../network.js';
 import { openConnection } from '../connections.js';
 import { openRoutingReview } from '../routing-review.js';
 import { linkSpeedClass } from '../topology-graph.js';
+import { openTopologyImport, openTopologyHistory } from '../topology-reporting.js';
 
 let state = { view: 'list', q: '', type: '', status: '', zoom: 1, edit: false, source: null, rack: null, site: 'all', sites: [], vpnExpanded: new Set() };
 const clinicLinksCache = new Map();  // clinicId -> normalized VPN links (for the VPN map)
@@ -182,6 +183,9 @@ async function renderTopology(body) {
     connection: (parent,child) => openConnection({clinic,parent,child,onChanged:load}),
     refresh: () => renderTopology(body),
     routing: () => openRoutingReview({clinic,site:siteParam()}),
+    import: () => openTopologyImport({clinic,site:siteParam(),onChanged:load}),
+    history: () => openTopologyHistory({clinic,site:siteParam()}),
+    reportContext: {clinic_name:clinic.name,site:state.site},
     vlans: () => openVlans({clinic,site:siteParam(),onChanged:load}),
     edit: () => { state.edit = true; state.source = null; renderTopology(body); },
     vpn: async id => {

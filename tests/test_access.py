@@ -437,6 +437,105 @@ def test_connection_scope_and_cross_site_vlan(environment):
     assert staff.put(url,json={}).status_code==403
 
 
+def test_topology_import_preview_commit_and_stale_detection(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    base='/api/clinics/1/topology'
+    payload={'kind':'devices','site':'main','csv_text':'name,device_type,ip_address,uplink_name\nImported host,server,2001:db8::10,Imported switch\nImported switch,switch,192.0.2.1,\n'}
+    preview=staff.post(base+'/import/preview',json=payload)
+    assert preview.status_code==200,preview.text
+    assert len(preview.json()['rows'])==2
+    assert len(staff.get('/api/clinics/1/devices').json()['devices'])==1
+    assert staff.get(base+'/audit').json()['items']==[]
+    response=staff.post(base+'/import/commit',json=payload|{'preview_token':preview.json()['preview_token']})
+    assert response.status_code==201,response.text
+    data=staff.get('/api/clinics/1/devices').json()['devices']
+    host=next(d for d in data if d['name']=='Imported host')
+    switch_device=next(d for d in data if d['name']=='Imported switch')
+    assert host['uplink_id']==switch_device['id']
+    assert staff.get(f"/api/devices/{host['id']}/network").json()['interfaces'][0]['addresses'][0]['version']==6
+    audit=staff.get(base+'/audit').json()['items']
+    assert len(audit)==1 and 'staff #' in audit[0]['actor']
+    assert any(c['table']=='devices' and c['action']=='added' for c in audit[0]['changes'])
+    assert staff.post(base+'/import/commit',json=payload|{'preview_token':preview.json()['preview_token']}).status_code==409
+    assert staff.post(base+'/import/preview',json=payload).status_code==422
+    another=payload|{'csv_text':'name,device_type\nAnother,switch\n'}
+    token=staff.post(base+'/import/preview',json=another).json()['preview_token']
+    staff.put('/api/devices/1',json={'device_type':'workstation','name':'Changed since preview'})
+    assert staff.post(base+'/import/commit',json=another|{'preview_token':token}).status_code==409
+
+
+def test_topology_import_validation_atomicity_and_network_rows(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    base='/api/clinics/1/topology'
+    def preview(kind,text):return staff.post(base+'/import/preview',json={'kind':kind,'csv_text':text})
+    for text in ['name,device_type\nFirst,switch\nBad,invalid\n',
+                 'name,device_type,ip_address\nBad,switch,999.999.1.1\n',
+                 'name,device_type,uplink_name\nA,switch,B\nB,switch,A\n',
+                 'name,name\nA,B\n']:
+        assert preview('devices',text).status_code==422
+    assert len(staff.get('/api/clinics/1/devices').json()['devices'])==1
+    vlan={'kind':'vlans','csv_text':'tag,name,subnets\n30,Imported VLAN,192.0.2.0/24;2001:db8::/64\n'}
+    p=staff.post(base+'/import/preview',json=vlan)
+    assert p.status_code==200,p.text
+    assert staff.get('/api/clinics/1/vlans').json()['vlans']==[]
+    assert staff.post(base+'/import/commit',json=vlan|{'preview_token':p.json()['preview_token']}).status_code==201
+    interface={'kind':'interfaces','csv_text':'device_name,interface_name,address,prefix_length,vlan_tag,mode\nSecret device,LAN,192.0.2.10,24,30,access\nSecret device,LAN,2001:db8::10,64,30,access\n'}
+    p=staff.post(base+'/import/preview',json=interface)
+    assert p.status_code==200,p.text
+    r=staff.post(base+'/import/commit',json=interface|{'preview_token':p.json()['preview_token']})
+    assert r.status_code==201,r.text
+    saved=staff.get('/api/devices/1/network').json()
+    assert len(next(i for i in saved['interfaces'] if i['name']=='LAN')['addresses'])==2
+    assert next(i for i in saved['interfaces'] if i['name']=='Primary')['addresses'][0]['address']=='10.0.0.1'
+    assert staff.post(base+'/import/preview',json=interface).status_code==422
+    assert staff.get('/api/devices/1/network').json()==saved
+
+
+def test_topology_versions_audit_comparison_and_scope(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    base='/api/clinics/1/topology'
+    version=staff.post(base+'/versions',json={'label':'Before','site':'main'})
+    assert version.status_code==201,version.text
+    vid=version.json()['id']
+    assert staff.get(base+'/audit').json()['items']==[]
+    staff.put('/api/devices/1',json={'device_type':'workstation','name':'Renamed device'})
+    changes=staff.get(base+f'/versions/{vid}/compare?site=main').json()['changes']
+    assert next(c for c in changes if c['table']=='devices')['fields']['name']=={'before':'Secret device','after':'Renamed device'}
+    original=staff.get(base+f'/versions/{vid}?site=main').json()
+    assert original['document']['devices'][0]['name']=='Secret device'
+    assert staff.get(base+f'/versions/{vid}?site=all').status_code==404
+    assert staff.get('/api/clinics/3/topology/versions').status_code==404
+    assert staff.get('/api/clinics/3/topology/audit').status_code==404
+    assert staff.post('/api/clinics/3/topology/import/preview',json={'kind':'devices','csv_text':'name,device_type\nForbidden,switch\n'}).status_code==404
+    assert staff.post(base+'/import/preview',json={'site':'all','kind':'devices','csv_text':'name,device_type\nForbidden,switch\n'}).status_code==422
+    audit=staff.get(base+'/audit?limit=1').json()
+    assert len(audit['items'])==1 and audit['next_before']
+    assert staff.get(base+'/audit?before='+str(audit['next_before'])).json()['items']==[]
+    switch(staff,'sales')
+    for path in ['/versions','/audit',f'/versions/{vid}?site=main']:
+        assert staff.get(base+path).status_code==403
+    assert staff.post(base+'/import/preview',json={'kind':'devices','csv_text':'name,device_type\nForbidden,switch\n'}).status_code==403
+
+
+def test_topology_history_rechecks_remote_vpn_area_scope(environment):
+    _,staff,areas=environment
+    switch(staff,'it')
+    response=staff.post('/api/clinics/1/vpn/links',json={'remote_kind':'site','b_clinic_id':2,'notes':'Remote historical details'})
+    assert response.status_code==201,response.text
+    vid=staff.post('/api/clinics/1/topology/versions',json={'label':'VPN baseline'}).json()['id']
+    assert staff.get(f'/api/clinics/1/topology/versions/{vid}').status_code==200
+    assert staff.get('/api/clinics/1/topology/audit').json()['items']
+    with database.get_db() as conn:
+        conn.execute('UPDATE clinics SET area_id=? WHERE id=2',(areas['Calgary'],))
+    assert staff.get(f'/api/clinics/1/topology/versions/{vid}').status_code==404
+    assert staff.get(f'/api/clinics/1/topology/versions/{vid}/compare').status_code==404
+    assert staff.get('/api/clinics/1/topology/versions').json()==[]
+    assert staff.get('/api/clinics/1/topology/audit').json()['items']==[]
+
+
 def test_ip_review_scope_and_ipv6(environment):
     _,staff,_=environment
     switch(staff,'it')

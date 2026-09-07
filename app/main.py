@@ -13,6 +13,7 @@ from .database import init_db
 from .routers import appointments, billing, clinics, contacts, devices, extras, misc, quotes, tasks, vpn, it_dashboard
 from .routers import network
 from .routers import connections
+from .routers import topology_admin
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -99,6 +100,7 @@ app.include_router(extras.router)
 app.include_router(devices.router)
 app.include_router(network.router)
 app.include_router(connections.router)
+app.include_router(topology_admin.router)
 app.include_router(vpn.router)
 app.include_router(quotes.router)
 app.include_router(billing.router)

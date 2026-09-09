@@ -4,6 +4,25 @@ import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, se
 import * as notif from '../notifications.js';
 
 export async function render(container) {
+  setTitle('My settings');
+  const saved=await api.get('/api/auth/preferences');
+  container.innerHTML=`<div class="page-header"><h1>My settings</h1></div><form class="card" id="personal-settings" style="max-width:680px">
+    <h2>AI connection</h2><p>Your personal API key is used for AI actions you are permitted to perform. It does not grant additional role or Area access.</p>
+    <p class="help">Stored on this server, not in browser storage. Your key is never returned to the browser. Server administrators and database backups may have access; protect the server accordingly.</p>
+    <label class="field">OpenAI API key<input name="api_key" type="password" autocomplete="new-password" placeholder="${saved.ai_configured?'A personal key is saved; leave blank to keep it':'Paste your API key'}"></label>
+    <label class="field">Model (optional)<input name="model" value="${attr(saved.model)}" placeholder="Use the application default"></label>
+    <p class="help">Without a personal key, the existing shared application configuration is used, if available. AI clinic import must also be enabled in the application.</p>
+    <button class="btn btn-primary" type="submit">Save AI settings</button>${saved.ai_configured?'<button class="btn" type="button" id="remove-personal-key">Remove personal key</button>':''}
+    <p role="status" aria-live="polite"></p></form><div class="card" style="max-width:680px"><h2>Appearance and account</h2><p>Use the theme button in the top bar to change appearance. Use Password to change your sign-in password. Your workspace and Area choices remain in the account menu.</p></div>`;
+  const form=container.querySelector('form');
+  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
+    try{await api.put('/api/auth/preferences',{api_key:form.elements.api_key.value.trim()||null,model:form.elements.model.value});await render(container);container.querySelector('[role=status]').textContent='AI settings saved.';}
+    catch(err){showFormError(form,err.message);}finally{button.disabled=false;}};
+  const remove=container.querySelector('#remove-personal-key');if(remove)remove.onclick=async()=>{if(!await confirmDialog('Remove your personal key and use shared configuration, if available?'))return;try{await api.put('/api/auth/preferences',{api_key:'',model:''});await render(container);}catch(err){showFormError(form,err.message);}};
+}
+
+// Retained for a future, separately authorized application-administration screen.
+async function renderLegacySettings(container) {
   setTitle('Settings');
   const [templates, groups, views, geo, ai, pb] = await Promise.all([
     api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(), pricebook.get(),

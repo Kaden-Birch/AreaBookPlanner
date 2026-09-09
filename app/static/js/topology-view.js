@@ -9,6 +9,7 @@ import { accentClass } from './equipment.js';
 import { exportTopology } from './topology-reporting.js';
 import { matchesTopologySearch, matchesTopologyFilter } from './topology-search.js';
 import { validPositions, sceneBounds, viewportRect } from './topology-navigation.js';
+import { organizeTopology } from './topology-workspace.js';
 
 export function mountTopology(body, topo, meta, key, actions) {
   let prefs;
@@ -87,6 +88,7 @@ export function mountTopology(body, topo, meta, key, actions) {
   <div id="topology-inspector" class="card" hidden></div>
   <details class="card" id="topology-review"><summary>Documentation review (${(topo.documentation||[]).length} items)</summary><p class="muted">Missing or inconsistent documentation, not live faults or reachability. Review applicability before making changes. Physical placement excludes VMs; use Logical network to see them.</p><div id="topology-documentation"></div></details>
   ${topo.vpn?.length ? `<details class="card"><summary>VPN links (${topo.vpn.length})</summary><div class="actions">${topo.vpn.map(v=>`<button class="btn btn-sm" data-vpn-link="${v.vpn_id}">${esc(v.remote.kind==='endpoint'?v.remote.name:v.remote.clinic_name+' · '+v.remote.site_name)}</button>`).join('')}</div></details>`:''}`;
+  organizeTopology(body);
   const canvas = body.querySelector('.topology-canvas'), scene = body.querySelector('.topology-scene');
   for(const [value,label] of [['open-work','Open tickets or tasks'],['open-tickets','Open tickets'],['open-tasks','Open tasks']]){const option=document.createElement('option');option.value=value;option.textContent=label;body.querySelector('#topology-quick-filter').append(option);}
   const inspector = body.querySelector('#topology-inspector'), search = body.querySelector('#topology-search');
@@ -107,7 +109,6 @@ export function mountTopology(body, topo, meta, key, actions) {
     view.x=x-(x-view.x)*ratio; view.y=y-(y-view.y)*ratio; view.z=z; camera();
   };
   const fit = () => {
-    canvas.style.height=`${Math.max(280,window.innerHeight-(canvas.getBoundingClientRect().top+window.scrollY)-60)}px`;
     const points=[...[...positions].map(([id,p])=>({...p,h:nodeHeight(byId.get(id))})),...vpnPositions.map(p=>({...p,h:80})),...placementGroups.map(g=>({x:g.x+g.width-230,y:g.y,h:g.height}))];
     const minX=Math.min(30,...points.map(p=>p.x)),minY=Math.min(30,...points.map(p=>p.y));
     const width=Math.max(240,...points.map(p=>p.x+230))-minX, height=Math.max(120,...points.map(p=>p.y+p.h+10))-minY;

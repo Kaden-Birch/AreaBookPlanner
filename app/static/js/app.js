@@ -52,7 +52,7 @@ const app = document.getElementById('app');
 
 async function route() {
   if (!(await ready)) return;
-  if (role() === 'admin') { await renderAdmin(app); return; }
+  if (role() === 'admin' && location.hash !== '#/settings') { await renderAdmin(app); return; }
   const hash = window.location.hash.replace(/^#/, '') || '/';
   const [path, query = ''] = hash.split('?');
   const params = new URLSearchParams(query);

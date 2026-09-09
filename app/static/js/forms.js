@@ -1,5 +1,5 @@
 // Modal forms for clinics, contacts and appointments (shared across pages).
-import { clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, devices, settings as settingsApi } from './api.js';
+import { api, clinics, contacts, appointments, tasks, geocode, getMeta, groups, locations, templates, scanCard, attachments, devices } from './api.js';
 import {
   esc, attr, openModal, confirmDialog, toast, formData, showFormError, options,
   toLocalInput, toDateInput, pinIcon, debounce, getRepName, fillTemplate, mailtoUrl, navigate,
@@ -1181,12 +1181,12 @@ export async function openEmailPicker({ contact, clinic, anchor, onSent }) {
 // ---- Business card scanner (OpenAI vision) ----------------------------------------
 
 export async function openCardScanner({ clinicId = null, onSaved } = {}) {
-  const st = await settingsApi.get().catch(() => ({ ai_configured: false }));
+  const st = await api.get('/api/auth/preferences');
   const modal = openModal({
     title: '📇 Scan a business card',
     size: 'modal-sm',
     body: `
-      ${st.ai_configured ? '' : '<div class="form-warn mb">No OpenAI API key yet. Add one under <a href="#/settings">Settings → AI</a> to enable scanning.</div>'}
+      ${st.ai_configured ? '' : '<div class="form-warn mb">Using shared AI configuration, if available. You can add your own key under <a href="#/settings">Settings → AI connection</a>.</div>'}
       <p class="small">Take a photo of the card (or pick an image). The details are read by AI and dropped into a new contact form for you to check before saving.</p>
       <div class="flex flex-wrap">
         <label class="btn btn-primary" style="margin:0">📷 Take photo <input type="file" id="card-capture" class="hidden" accept="image/*" capture="environment"></label>

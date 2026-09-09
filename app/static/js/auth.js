@@ -64,7 +64,7 @@ function accountMenu() {
     ${role()==='admin'?'<option value="" selected disabled>Choose workspace</option>':''}</select></label>
     ${areas.length>1?`<select id="area-select" aria-label="Area">${areas.map(a=>`<option value="${a.id}" ${a.id===user.area_id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>`:areas.length?`<span>${esc(areas[0].name)}</span>`:''}
     ${user.roles.includes('admin')?'<button class="btn btn-sm" id="administration">Administration</button>':''}
-    <button class="btn btn-sm" id="password-change">Password</button><button class="btn btn-sm" id="signout">Sign out</button>`;
+    <a class="btn btn-sm" href="#/settings">Settings</a><button class="btn btn-sm" id="password-change">Password</button><button class="btn btn-sm" id="signout">Sign out</button>`;
   document.querySelector('.topbar-right').append(host);
   const change=async(nextRole,area_id)=>{
     const stayOnMap=nextRole===role() && location.hash.startsWith('#/map');
@@ -77,7 +77,7 @@ function accountMenu() {
   if(host.querySelector('#area-select')) host.querySelector('#area-select').onchange=e=>change(role(),Number(e.target.value));
   host.querySelector('#signout').onclick=async()=>{await api.post('/api/auth/logout',{});location.reload();};
   host.querySelector('#password-change').onclick=passwordForm;
-  document.querySelectorAll('#topnav a').forEach(a=>a.hidden=!allowedPage(a.dataset.route));
+  document.querySelectorAll('#topnav a').forEach(a=>a.hidden=a.dataset.route==='settings'||!allowedPage(a.dataset.route));
   if(role()==='client_success') document.querySelector('#topnav [data-route=clinics]').hidden=true;
   document.getElementById('global-add-clinic').hidden=!selling();
   document.getElementById('global-add-appointment').hidden=!business();
@@ -86,6 +86,7 @@ function accountMenu() {
 }
 
 export function allowedPage(nav) {
+  if(nav==='settings') return true;
   if(role()==='admin') return false;
   if(['settings'].includes(nav)) return false;
   if(['pipeline','analytics'].includes(nav)) return selling();
@@ -127,7 +128,6 @@ export function pruneWorkspaceUI(root) {
     if(!selling() && (/\/quote$|\/quotes\/\d+\/edit/.test(href))) a.hidden=true;
     if(!business() && /#\/(billing|clients|invoices)/.test(href)) a.hidden=true;
     if(!selling() && /#\/(pipeline|analytics)/.test(href)) a.hidden=true;
-    if(href==='#/settings') a.hidden=true;
     if(href.includes('/api/export/backup')) a.hidden=true;
   });
 }

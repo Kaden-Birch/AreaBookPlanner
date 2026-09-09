@@ -16,6 +16,10 @@ COOKIE = "areabook_session"
 SESSION_SECONDS = 8 * 60 * 60
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS user_ai_settings (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ api_key TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS users (
  id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
  display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
@@ -169,6 +173,32 @@ def login(data: Credentials, request: Request, response: Response):
 def me(request: Request):
     with get_db() as conn:
         return public_user(conn, session_user(request, conn))
+
+
+class PersonalAISettings(BaseModel):
+    api_key: str | None = Field(default=None, max_length=4096)
+    model: str = Field(default='', max_length=150)
+
+
+@router.get('/preferences')
+def preferences(request: Request):
+    with get_db() as conn:
+        user = session_user(request, conn)
+        if user['must_change_password']: raise HTTPException(403, 'Change your password first')
+        row = conn.execute('SELECT api_key,model FROM user_ai_settings WHERE user_id=?', (user['id'],)).fetchone()
+        return {'ai_configured': bool(row and row['api_key']), 'model': row['model'] if row else ''}
+
+
+@router.put('/preferences')
+def save_preferences(payload: PersonalAISettings, request: Request):
+    with get_db() as conn:
+        user = session_user(request, conn)
+        if user['must_change_password']: raise HTTPException(403, 'Change your password first')
+        conn.execute('INSERT OR IGNORE INTO user_ai_settings(user_id) VALUES (?)', (user['id'],))
+        conn.execute('UPDATE user_ai_settings SET model=? WHERE user_id=?', (payload.model.strip(), user['id']))
+        if payload.api_key is not None:
+            conn.execute('UPDATE user_ai_settings SET api_key=? WHERE user_id=?', (payload.api_key.strip(), user['id']))
+    return preferences(request)
 
 
 @router.post("/logout")

@@ -35,6 +35,27 @@ def switch(staff, role):
     assert r.status_code==200,r.text
 
 
+def test_personal_ai_preferences_are_private_and_do_not_expand_roles(environment):
+    admin, staff, _ = environment
+    assert staff.get('/api/auth/preferences').json() == {'ai_configured': False, 'model': ''}
+    saved=staff.put('/api/auth/preferences',json={'api_key':'test-only-personal-key','model':'test-model'})
+    assert saved.status_code==200 and saved.json()=={'ai_configured':True,'model':'test-model'}
+    assert 'test-only-personal-key' not in staff.get('/api/auth/preferences').text
+    assert admin.get('/api/auth/preferences').json()['ai_configured'] is False
+    assert staff.put('/api/settings',json={'openai_api_key':'not-allowed'}).status_code==403
+    switch(staff,'sales')
+    assert staff.get('/api/clinics/1/topology').status_code==403
+    assert staff.put('/api/auth/preferences',json={'model':'updated-model'}).json()['ai_configured'] is True
+    with database.get_db() as conn:
+        from app.routers.extras import get_setting
+        class PersonalConnection:
+            user={'id':conn.execute("SELECT id FROM users WHERE username='staff'").fetchone()[0]}
+            execute=conn.execute
+        assert get_setting(PersonalConnection(),'openai_api_key')=='test-only-personal-key'
+        assert get_setting(PersonalConnection(),'openai_model')=='updated-model'
+    assert staff.put('/api/auth/preferences',json={'api_key':'','model':''}).json()['ai_configured'] is False
+
+
 def test_device_open_work_is_explicit_and_scoped(environment):
     _,staff,_=environment
     switch(staff,'it')

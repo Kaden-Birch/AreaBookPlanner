@@ -170,6 +170,9 @@ DEVICE_TYPES = {
     "camera":       {"label": "Security camera",  "prefix": "CAM", "icon": "📷", "network": False, "security": True},
     "security":     {"label": "Security device",  "prefix": "SEC", "icon": "🔒", "network": False, "security": True},
     "other":        {"label": "Other",           "prefix": "O",  "icon": "📦", "network": False},
+    "storage":      {"label": "Storage",         "prefix": "NAS", "icon": "💾", "network": False},
+    "ups":          {"label": "UPS",             "prefix": "UPS", "icon": "🔋", "network": False},
+    "medical":      {"label": "Medical equipment", "prefix": "MED", "icon": "🩺", "network": False},
 }
 DEVICE_DESIGNATIONS = {
     "server": ["Windows Server", "Linux", "Hypervisor / host", "Domain controller", "File / storage", "Backup", "Database", "EMR server", "NAS", "Other"],

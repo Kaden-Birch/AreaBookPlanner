@@ -9,6 +9,71 @@ from ..database import db_dependency
 
 router=APIRouter(prefix='/api',tags=['network'])
 
+class TicketStatus(BaseModel):
+    status: Literal['unknown','open','closed']
+
+@router.patch('/clinics/{cid}/tickets/{tid}')
+def clinic_ticket_status(cid:int,tid:int,payload:TicketStatus,conn=Depends(db_dependency)):
+    if not conn.execute('SELECT id FROM clinic_tickets WHERE id=? AND clinic_id=?',(tid,cid)).fetchone():raise HTTPException(404,'Ticket not found')
+    conn.execute('UPDATE clinic_tickets SET status=? WHERE id=? AND clinic_id=?',(payload.status,tid,cid))
+    return {'status':payload.status}
+
+@router.patch('/devices/{did}/tickets/{tid}')
+def device_ticket_status(did:int,tid:int,payload:TicketStatus,conn=Depends(db_dependency)):
+    if not conn.execute('SELECT id FROM device_tickets WHERE id=? AND device_id=?',(tid,did)).fetchone():raise HTTPException(404,'Ticket not found')
+    conn.execute('UPDATE device_tickets SET status=? WHERE id=? AND device_id=?',(payload.status,tid,did))
+    return {'status':payload.status}
+
+@router.patch('/services/{sid}/tickets/{tid}')
+def service_ticket_status(sid:int,tid:int,payload:TicketStatus,conn=Depends(db_dependency)):
+    if not conn.execute('SELECT id FROM device_services WHERE id=?',(sid,)).fetchone():raise HTTPException(404,'Service not found')
+    if not conn.execute('SELECT id FROM clinic_tickets WHERE id=? AND service_id=?',(tid,sid)).fetchone():raise HTTPException(404,'Ticket not found')
+    conn.execute('UPDATE clinic_tickets SET status=? WHERE id=? AND service_id=?',(payload.status,tid,sid))
+    return {'status':payload.status}
+
+class LogicalGroup(BaseModel):
+    name: str=Field(min_length=1,max_length=100)
+    description: str=Field(default='',max_length=10000)
+    color: str=Field(default='#547ee8',pattern=r'^#[0-9a-fA-F]{6}$')
+    location_id: int | None=None
+    device_ids: list[int]=Field(default_factory=list,max_length=2000)
+
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls,v):
+        if not v.strip(): raise ValueError('Group name is required')
+        return v.strip()
+
+def logical_groups(conn,cid,site=None):
+    clause='';args=[cid]
+    if site and site!='all':
+        try: loc=None if site=='main' else int(site)
+        except ValueError: raise HTTPException(422,'Invalid site')
+        clause=' AND location_id IS ?';args.append(loc)
+    rows=[dict(r) for r in conn.execute('SELECT * FROM topology_groups WHERE clinic_id=?'+clause+' ORDER BY name,id',args)]
+    devices={r['id']:r['location_id'] for r in conn.execute('SELECT id,location_id FROM devices WHERE clinic_id=?',(cid,))}
+    for r in rows:r['device_ids']=[i for i in json.loads(r['device_ids']) if i in devices and devices[i]==r['location_id']]
+    return rows
+
+@router.put('/clinics/{cid}/topology/groups/{gid}')
+def save_group(cid:int,gid:int,payload:LogicalGroup,conn=Depends(db_dependency)):
+    if not conn.execute('SELECT id FROM clinics WHERE id=?',(cid,)).fetchone():raise HTTPException(404,'Clinic not found')
+    if gid and not conn.execute('SELECT id FROM topology_groups WHERE id=? AND clinic_id=?',(gid,cid)).fetchone():raise HTTPException(404,'Group not found')
+    if payload.location_id is not None and not conn.execute('SELECT id FROM clinic_locations WHERE id=? AND clinic_id=?',(payload.location_id,cid)).fetchone():raise HTTPException(422,'Invalid site')
+    allowed={r['id'] for r in conn.execute('SELECT id FROM devices WHERE clinic_id=? AND location_id IS ?',(cid,payload.location_id))}
+    ids=list(dict.fromkeys(payload.device_ids))
+    if not set(ids)<=allowed:raise HTTPException(422,'Group devices must belong to the selected clinic and site')
+    values=(payload.name,payload.description,payload.color,payload.location_id,json.dumps(ids))
+    if gid:conn.execute('UPDATE topology_groups SET name=?,description=?,color=?,location_id=?,device_ids=? WHERE id=? AND clinic_id=?',(*values,gid,cid))
+    else:gid=conn.execute('INSERT INTO topology_groups(name,description,color,location_id,device_ids,clinic_id) VALUES (?,?,?,?,?,?)',(*values,cid)).lastrowid
+    return {'id':gid}
+
+@router.delete('/clinics/{cid}/topology/groups/{gid}')
+def delete_group(cid:int,gid:int,conn=Depends(db_dependency)):
+    if not conn.execute('SELECT id FROM topology_groups WHERE id=? AND clinic_id=?',(gid,cid)).fetchone():raise HTTPException(404,'Group not found')
+    conn.execute('DELETE FROM topology_groups WHERE id=? AND clinic_id=?',(gid,cid))
+    return {'ok':True}
+
 class Membership(BaseModel):
     vlan_id: int
     mode: Literal['access','tagged','native','routed']='access'
@@ -60,6 +125,7 @@ class Interface(BaseModel):
         return ':'.join(raw[i:i+2] for i in range(0,12,2)).upper()
 
 class DeviceNetwork(BaseModel):
+    ipv6_enabled: bool | None=None
     interfaces: list[Interface]=Field(default_factory=list,max_length=100)
 
 class Vlan(BaseModel):
@@ -105,11 +171,13 @@ def read_network(conn,did):
 @router.get('/devices/{did}/network')
 def get_network(did:int,conn=Depends(db_dependency)):
     d=device(conn,did)
-    return read_network(conn,did)|{'legacy_ip':d['ip_address'],'legacy_mac':d['mac_address'],'location_id':d['location_id']}
+    return read_network(conn,did)|{'legacy_ip':d['ip_address'],'legacy_mac':d['mac_address'],'location_id':d['location_id'],'ipv6_enabled':bool(d['ipv6_enabled'])}
 
 @router.put('/devices/{did}/network')
 def put_network(did:int,payload:DeviceNetwork,conn=Depends(db_dependency)):
     d=device(conn,did)
+    if payload.ipv6_enabled is not None:
+        conn.execute('UPDATE devices SET ipv6_enabled=? WHERE id=?',(payload.ipv6_enabled,did))
     existing={r['id'] for r in conn.execute('SELECT id FROM network_interfaces WHERE device_id=?',(did,))}
     ids=[i.id for i in payload.interfaces if i.id is not None]
     if len(set(ids))!=len(ids) or any(i not in existing for i in ids): raise HTTPException(422,'Invalid or repeated interface ID')
@@ -215,7 +283,10 @@ def delete_vlan(cid:int,vid:int,conn=Depends(db_dependency)):
 
 def enrich_topology(conn,nodes,cid,site):
     by_id={n['id']:n for n in nodes}
-    for n in nodes: n['addresses']=[];n['vlan_memberships']=[];n['interface_count']=0
+    for n in nodes: n['addresses']=[];n['vlan_memberships']=[];n['interface_count']=0;n['interface_macs']=[]
+    for r in conn.execute('''SELECT i.device_id,i.mac_address FROM network_interfaces i JOIN devices d ON d.id=i.device_id
+        WHERE d.clinic_id=? AND i.mac_address IS NOT NULL''',(cid,)):
+        if r['device_id'] in by_id: by_id[r['device_id']]['interface_macs'].append(r['mac_address'])
     for r in conn.execute('''SELECT i.device_id,COUNT(*) AS n FROM network_interfaces i JOIN devices d ON d.id=i.device_id
         WHERE d.clinic_id=? GROUP BY i.device_id''',(cid,)):
         if r['device_id'] in by_id: by_id[r['device_id']]['interface_count']=r['n']
@@ -226,4 +297,19 @@ def enrich_topology(conn,nodes,cid,site):
     for r in conn.execute('''SELECT m.*,i.device_id,i.name AS interface_name FROM interface_vlans m
         JOIN network_interfaces i ON i.id=m.interface_id JOIN devices d ON d.id=i.device_id WHERE d.clinic_id=?''',(cid,)):
         if r['device_id'] in by_id: by_id[r['device_id']]['vlan_memberships'].append(dict(r))
-    return vlan_list(conn,cid,site)
+    catalog=vlan_list(conn,cid,site)
+    for n in nodes:
+        addresses=[];subnets=set()
+        for a in n['addresses']:
+            addresses.append(ipaddress.ip_address(a['address']))
+            if a['prefix_length'] is not None:subnets.add(str(ipaddress.ip_network(f"{a['address']}/{a['prefix_length']}",strict=False)))
+        if n.get('ip_address'):
+            try:addresses.append(ipaddress.ip_address(n['ip_address']))
+            except ValueError:pass
+        for v in catalog:
+            if v['location_id']!=n.get('location_id'):continue
+            for subnet in v['subnets']:
+                network=ipaddress.ip_network(subnet)
+                if any(a.version==network.version and a in network for a in addresses):subnets.add(str(network))
+        n['subnets']=sorted(subnets)
+    return catalog

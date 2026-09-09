@@ -12,6 +12,9 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
   const vlans=catalog.vlans.filter(v=>v.location_id===data.location_id);
   const modal=openModal({title:'Network interfaces & addresses',size:'modal-lg',body:`<p>Record each interface, its IPv4/IPv6 addresses, and VLAN memberships. Choose one primary address for the device.</p>${data.legacy_ip?`<p class="muted small">Previously recorded address: ${esc(data.legacy_ip)}</p>`:''}<form id="network-form"><div id="network-interfaces"></div><button type="button" class="btn" id="network-add">+ Add interface</button><p class="help">Changes, including removals, apply when you save.</p></form>`,footer:'<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save network</button>'});
   const form=modal.body.querySelector('form'),host=form.querySelector('#network-interfaces');
+  const ipv6Label=document.createElement('label');
+  ipv6Label.innerHTML=`<input type="checkbox" name="ipv6_enabled" ${data.ipv6_enabled?'checked':''}> IPv6 is enabled on this device (documentation only)`;
+  form.prepend(ipv6Label);
   const vlanOptions=(selected,empty='No VLAN')=>option('',empty,selected??'')+vlans.map(v=>option(v.id,`${v.tag} · ${v.name}`,selected)).join('');
   const capture=()=>[...host.querySelectorAll('[data-interface]')].map(el=>{
     const val=name=>el.querySelector(`[name="${name}"]`).value;
@@ -47,7 +50,7 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
   const save=async()=>{
     if(!form.reportValidity())return;
     const button=modal.root.querySelector('[data-save]');button.disabled=true;
-    try{await api.put(`/api/devices/${deviceId}/network`,{interfaces:capture()});toast('Network saved','success');modal.close();onChanged?.();}
+    try{await api.put(`/api/devices/${deviceId}/network`,{interfaces:capture(),ipv6_enabled:form.elements.ipv6_enabled.checked});toast('Network saved','success');modal.close();onChanged?.();}
     catch(e){showFormError(form,e.message);}finally{button.disabled=false;}
   };
   modal.root.querySelector('[data-save]').onclick=save;form.onsubmit=e=>{e.preventDefault();save();};draw();

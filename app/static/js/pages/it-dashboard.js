@@ -66,6 +66,7 @@ export async function render(container) {
     if(rows.length>5) host.insertAdjacentHTML('beforeend',`<button class="it-show-more" id="it-attention-more">${showAttention?'Show fewer':`View all ${rows.length} items`}</button>`);
     host.querySelectorAll('.it-work-item').forEach((item,i)=>{
       const entry=rows[i];
+      if(entry.device_id){const link=item.querySelector('a.btn');link.href=`#/clinics/${entry.clinic_id}/equipment?view=topology&site=all&device=${entry.device_id}`;link.textContent='Open device';return;}
       if(!entry.service_id) return;
       const link=item.querySelector('a.btn');
       const button=document.createElement('button');button.className='btn btn-sm';button.textContent='Open service';

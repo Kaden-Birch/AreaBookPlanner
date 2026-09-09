@@ -2,6 +2,12 @@
 import json
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS topology_groups (
+ id INTEGER PRIMARY KEY, clinic_id INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+ location_id INTEGER REFERENCES clinic_locations(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#547ee8',
+ device_ids TEXT NOT NULL DEFAULT '[]'
+);
 CREATE TABLE IF NOT EXISTS topology_versions (
  id INTEGER PRIMARY KEY, clinic_id INTEGER NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
  site TEXT NOT NULL, label TEXT NOT NULL, actor TEXT NOT NULL,
@@ -19,6 +25,10 @@ CREATE INDEX IF NOT EXISTS idx_topology_audit_clinic ON topology_audit(clinic_id
 # Historical records with VPN references require every referenced clinic to
 # remain authorized; access.py enforces that when reading versions and audits.
 QUERIES = {
+ 'device_tickets': "SELECT t.*,d.location_id FROM device_tickets t JOIN devices d ON d.id=t.device_id WHERE d.clinic_id=?",
+ 'support_tickets': "SELECT t.*,d.location_id FROM clinic_tickets t JOIN devices d ON d.id=t.device_id WHERE d.clinic_id=?",
+ 'device_tasks': "SELECT t.*,d.location_id FROM tasks t JOIN devices d ON d.id=t.device_id WHERE d.clinic_id=? AND t.visibility='technical'",
+ 'groups': "SELECT g.* FROM topology_groups g WHERE g.clinic_id=?",
  'devices': "SELECT d.* FROM devices d WHERE d.clinic_id=?",
  'vlans': "SELECT v.* FROM vlans v WHERE v.clinic_id=?",
  'interfaces': "SELECT i.*,d.location_id FROM network_interfaces i JOIN devices d ON d.id=i.device_id WHERE d.clinic_id=?",

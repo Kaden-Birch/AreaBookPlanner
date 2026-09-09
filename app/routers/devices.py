@@ -33,7 +33,10 @@ DEVICE_SERVICE_COLUMNS = [
 SELECT = """SELECT d.*, u.name AS uplink_name, u.device_type AS uplink_type, l.name AS location_name,
                    (SELECT COUNT(*) FROM network_interfaces i WHERE i.device_id=d.id) AS network_managed,
                    (SELECT COUNT(*) FROM devices x WHERE x.uplink_id = d.id) AS downlink_count,
-                   (SELECT COUNT(*) FROM device_tickets t WHERE t.device_id = d.id) AS ticket_count
+                   (SELECT COUNT(*) FROM device_tickets t WHERE t.device_id = d.id) AS ticket_count,
+                   ((SELECT COUNT(*) FROM device_tickets t WHERE t.device_id=d.id AND t.status='open')+
+                    (SELECT COUNT(*) FROM clinic_tickets t WHERE t.device_id=d.id AND t.status='open')) AS open_ticket_count,
+                   (SELECT COUNT(*) FROM tasks t WHERE t.device_id=d.id AND t.done=0) AS open_task_count
             FROM devices d LEFT JOIN devices u ON u.id = d.uplink_id
             LEFT JOIN clinic_locations l ON l.id = d.location_id"""
 
@@ -332,8 +335,8 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
     for d in onsite:
         if d["uplink_id"] in by_id and not by_id[d["uplink_id"]]["off_site"]:
             children[d["uplink_id"]].append(d["id"])
-    node_keys = ("id", "name", "device_type", "type_label", "icon", "is_network", "is_vm", "off_site", "designation",
-                 "ip_address", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model", "serial")
+    node_keys = ("id", "name", "location_id", "open_ticket_count", "open_task_count", "ipv6_enabled", "device_type", "type_label", "icon", "is_network", "is_vm", "off_site", "designation",
+                 "ip_address", "mac_address", "rack", "rack_room", "rack_position", "user_name", "status", "link_type", "uplink_id", "ticket_count", "location_name", "model", "serial")
     svc = _services_by_device(conn, [d["id"] for d in devices if d["device_type"] in ("server", "vm")])
     nodes = [{k: d.get(k) for k in node_keys} | {"children": children[d["id"]], "services": svc.get(d["id"], [])} for d in onsite]
     offsite_nodes = [{k: d.get(k) for k in node_keys} | {"children": [], "services": svc.get(d["id"], [])} for d in devices if d["off_site"]]
@@ -346,7 +349,7 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
             edges.append({"from": l["uplink_id"], "to": l["device_id"], "link_type": l["link_type"] or "ethernet", "primary": False, "link_id": l["id"]})
     from .vpn import topology_links
     vpn = topology_links(conn, clinic_id, site)
-    from .network import enrich_topology
+    from .network import enrich_topology, logical_groups
     vlans = enrich_topology(conn, nodes + offsite_nodes, clinic_id, site)
     from .connections import link_details, documentation_issues
     details = link_details(conn, clinic_id)
@@ -361,7 +364,7 @@ def topology(clinic_id: int, site: str | None = None, conn: sqlite3.Connection =
             physical_edges.append({'from':l['uplink_id'],'to':l['device_id'],'link_type':l['link_type'] or 'ethernet','primary':False})
     for e in physical_edges: e['details'] = details.get((e['from'],e['to']))
     enrich_topology(conn, physical_nodes, clinic_id, site)
-    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn, "vlans": vlans,
+    return {"nodes": nodes, "roots": roots, "edges": edges, "offsite": offsite_nodes, "vpn": vpn, "vlans": vlans, "groups":logical_groups(conn,clinic_id,site),
             'physical_nodes':physical_nodes,'physical_edges':physical_edges,
             'documentation':documentation_issues(nodes+offsite_nodes,edges,vlans)}
 
@@ -589,6 +592,7 @@ def get_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)
     d = _get_or_404(conn, device_id)
     d["services"] = _load_services(conn, device_id)
     d["tickets"] = rows_to_list(conn.execute("SELECT * FROM device_tickets WHERE device_id = ? ORDER BY ticket_date DESC, id DESC", (device_id,)))
+    d['open_tasks']=rows_to_list(conn.execute('SELECT * FROM tasks WHERE device_id=? AND done=0 ORDER BY due_date,id',(device_id,)))
     d["downlinks"] = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.uplink_id = ? ORDER BY d.device_type, d.number", (device_id,)))]
     chain = []
     cur = d
@@ -658,8 +662,8 @@ def delete_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependen
 @router.post("/devices/{device_id}/tickets", status_code=201)
 def add_ticket(device_id: int, payload: TicketIn, conn: sqlite3.Connection = Depends(db_dependency)):
     _get_or_404(conn, device_id)
-    cur = conn.execute("INSERT INTO device_tickets (device_id, title, url, ticket_date, notes) VALUES (?, ?, ?, ?, ?)",
-                       (device_id, payload.title.strip(), payload.url, payload.ticket_date, payload.notes))
+    cur = conn.execute("INSERT INTO device_tickets (device_id, title, url, ticket_date, notes,status) VALUES (?, ?, ?, ?, ?, ?)",
+                       (device_id, payload.title.strip(), payload.url, payload.ticket_date, payload.notes,payload.status))
     return row_to_dict(conn.execute("SELECT * FROM device_tickets WHERE id = ?", (cur.lastrowid,)).fetchone())
 
 
@@ -745,8 +749,8 @@ def add_service_ticket(service_id: int, payload: TicketIn, conn=Depends(db_depen
             valid = False
         if not valid:
             raise HTTPException(422, 'Ticket URL must be an http:// or https:// URL')
-    cur = conn.execute('''INSERT INTO clinic_tickets(clinic_id,device_id,service_id,title,url,ticket_at,notes)
-        VALUES (?,?,?,?,?,?,?)''',(s['clinic_id'],s['device_id'],service_id,payload.title.strip(),payload.url,payload.ticket_date,payload.notes))
+    cur = conn.execute('''INSERT INTO clinic_tickets(clinic_id,device_id,service_id,title,url,ticket_at,notes,status)
+        VALUES (?,?,?,?,?,?,?,?)''',(s['clinic_id'],s['device_id'],service_id,payload.title.strip(),payload.url,payload.ticket_date,payload.notes,payload.status))
     return dict(conn.execute('SELECT *,ticket_at AS ticket_date FROM clinic_tickets WHERE id=?',(cur.lastrowid,)).fetchone())
 
 

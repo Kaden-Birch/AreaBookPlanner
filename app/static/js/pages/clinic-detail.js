@@ -1,6 +1,6 @@
 // Clinic profile: deal, details, locations, connections, attachments, activity timeline,
 // tasks, contacts, appointments, mini map. Clients get a slimmer, client-specific view.
-import { clinics, appointments, attachments, getMeta } from '../api.js';
+import { api, clinics, appointments, attachments, getMeta } from '../api.js';
 import {
   esc, attr, dot, badge, tagList, fmtDate, fmtDateTime, fmtDateOnly, fmtMoney, relativeDays, isPast,
   fullAddress, directionsUrl, pinIcon, secondaryPinIcon, toast, confirmDialog, navigate, setTitle, options,
@@ -14,7 +14,6 @@ import {
 import { taskRow, wireTaskRows } from './tasks.js';
 import { openDeviceForm, plural } from '../equipment.js';
 import { user, role, technical, business, selling } from '../auth.js';
-import { api } from '../api.js';
 import { devices as devicesApi } from '../api.js';
 import { openInvoiceForm } from '../billing-forms.js';
 
@@ -291,7 +290,7 @@ export async function render(container, params, routeParams) {
               <span>🎫</span>
               <div class="body"><div class="name">${t.url ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : esc(t.title)}</div>
                 <div class="sub">${t.ticket_at ? esc(fmtDateTime(t.ticket_at)) : ''}${t.device_name ? ` · 💻 <a href="#/clinics/${clinic.id}/equipment">${esc(t.device_name)}</a>` : ''}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
-              <button class="btn btn-sm btn-link" data-act="del-ticket" data-id="${t.id}">Delete</button>
+              <label>Recorded status<select data-ticket-status="${t.id}">${['unknown','open','closed'].map(s=>`<option value="${s}" ${(t.status||'unknown')===s?'selected':''}>${s}</option>`).join('')}</select></label><button class="btn btn-sm btn-link" data-act="del-ticket" data-id="${t.id}">Delete</button>
             </div>`).join('') : '<p class="muted">No tickets linked. Add a SyncroMSP ticket — title, link, date and (optionally) the machine it’s about.</p>'}
         </div>
 
@@ -371,6 +370,7 @@ export async function render(container, params, routeParams) {
   container.querySelector('#btn-device').onclick = () => openDeviceForm({ clinic, onSaved: reload });
   container.querySelector('#btn-invoice').onclick = () => openInvoiceForm({ clinicId: clinic.id, onSaved: (iv) => iv && navigate(`#/invoices/${iv.id}`) });
   container.querySelector('#btn-ticket').onclick = () => openTicketForm({ clinic, onSaved: reload });
+  container.querySelectorAll('[data-ticket-status]').forEach(el=>el.onchange=async()=>{try{await api.patch(`/api/clinics/${clinic.id}/tickets/${el.dataset.ticketStatus}`,{status:el.value});reload();}catch(e){toast(e.message,'error');}});
   container.querySelectorAll('[data-act=del-ticket]').forEach(b => {
     b.onclick = async () => { if (!(await confirmDialog('Remove this ticket link?'))) return; await clinics.removeTicket(clinic.id, Number(b.dataset.id)); toast('Ticket removed'); reload(); };
   });

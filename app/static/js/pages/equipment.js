@@ -185,7 +185,7 @@ async function renderTopology(body) {
     routing: () => openRoutingReview({clinic,site:siteParam()}),
     import: () => openTopologyImport({clinic,site:siteParam(),onChanged:load}),
     history: () => openTopologyHistory({clinic,site:siteParam()}),
-    reportContext: {clinic_name:clinic.name,site:state.site},
+    reportContext: {clinic_id:clinic.id,clinic_name:clinic.name,site:state.site},
     vlans: () => openVlans({clinic,site:siteParam(),onChanged:load}),
     edit: () => { state.edit = true; state.source = null; renderTopology(body); },
     vpn: async id => {

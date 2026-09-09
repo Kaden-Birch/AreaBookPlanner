@@ -86,6 +86,7 @@ def scope_rules(role, area):
     rules["device_services"] = "device_id IN (SELECT id FROM devices)" if role == "it" else "0"
     rules['network_interfaces'] = 'device_id IN (SELECT id FROM devices)' if role == 'it' else '0'
     rules['vlans'] = owned if role == 'it' else '0'
+    rules['topology_groups'] = owned if role == 'it' else '0'
     rules['network_addresses'] = 'interface_id IN (SELECT id FROM network_interfaces)'
     rules['interface_vlans'] = 'interface_id IN (SELECT id FROM network_interfaces) AND vlan_id IN (SELECT id FROM vlans)'
     rules['connection_details'] = 'device_id IN (SELECT id FROM devices) AND uplink_id IN (SELECT id FROM devices)' if role=='it' else '0'
@@ -207,7 +208,7 @@ def scoped_db(request: Request):
         if not area:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
         scoped = ScopedConnection(conn, user)
-        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect)(/|$)',request.url.path)
+        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path)
         audit = (user['active_role']=='it' and request.method in ('POST','PUT','PATCH','DELETE') and technical
                  and not request.url.path.endswith(('/import/preview','/versions')))
         if audit:

@@ -935,9 +935,10 @@ export async function openOutcomeDialog({ clinic, stage, onSaved }) {
 
 // ---- Tasks -------------------------------------------------------------------
 
-export async function openTaskForm({ task = null, clinicId = null, onSaved } = {}) {
+export async function openTaskForm({ task = null, clinicId = null, deviceId = null, onSaved } = {}) {
   const t = { priority: 'medium', ...(task || {}) };
   if (!task && clinicId) t.clinic_id = clinicId;
+  if (!task && deviceId) t.device_id=deviceId;
   const isEdit = !!task;
   const clinicOpts = await clinicOptions(t.clinic_id);
   const body = `
@@ -965,6 +966,18 @@ export async function openTaskForm({ task = null, clinicId = null, onSaved } = {
   });
   const form = modal.body.querySelector('#task-form');
   const clinicSel = form.elements.clinic_id, contactSel = form.elements.contact_id;
+  if(role()==='it') {
+    const label=document.createElement('label');label.textContent='Device (optional; makes this a technical task)';
+    const deviceSel=document.createElement('select');deviceSel.name='device_id';label.append(deviceSel);form.append(label);
+    let revision=0;
+    const loadDevices=async()=>{const rev=++revision;deviceSel.innerHTML='<option value="">No device</option>';deviceSel.disabled=true;
+      try{if(clinicSel.value){const data=await devices.topology(Number(clinicSel.value),'all');if(rev!==revision)return;
+        deviceSel.innerHTML+=[...data.nodes,...data.offsite].map(d=>`<option value="${d.id}" ${String(d.id)===String(t.device_id)?'selected':''}>${esc(d.name)}</option>`).join('');}
+        if(rev===revision)deviceSel.disabled=false;
+      } catch(e){if(rev===revision)showFormError(form,`${e.message} Device selection could not be loaded; reopen this form before saving.`);}
+    };
+    clinicSel.addEventListener('change',loadDevices);await loadDevices();
+  }
   const loadContacts = async () => {
     contactSel.innerHTML = '<option value="">—</option>';
     if (!clinicSel.value) return;
@@ -992,9 +1005,11 @@ export async function openTaskForm({ task = null, clinicId = null, onSaved } = {
   };
   const save = async () => {
     const data = formData(form);
+    if(form.elements.device_id?.disabled){showFormError(form,'Wait for the device list to finish loading.');return;}
     if (!data.title.trim()) { showFormError(form, 'Task title is required.'); return; }
     data.clinic_id = data.clinic_id ? Number(data.clinic_id) : null;
     data.contact_id = data.contact_id ? Number(data.contact_id) : null;
+    if(form.elements.device_id){data.device_id=form.elements.device_id.value?Number(form.elements.device_id.value):null;if(data.device_id)data.visibility='technical';}
     data.reminder_minutes = data.reminder_minutes ? Number(data.reminder_minutes) : null;
     data.rep = isEdit ? (t.rep || getRepName() || null) : (getRepName() || null);
     if (!isEdit) data.done = false;

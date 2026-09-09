@@ -234,6 +234,7 @@ class BulkGeocodeRequest(BaseModel):
 
 
 class TaskIn(BaseModel):
+    device_id: Optional[int] = None
     visibility: Literal['general', 'sales', 'technical'] = 'general'
     clinic_id: Optional[int] = None
     contact_id: Optional[int] = None
@@ -357,6 +358,7 @@ class EdgeOp(BaseModel):
 
 
 class TicketIn(BaseModel):
+    status: Literal['unknown','open','closed']='unknown'
     title: str = Field(min_length=1, max_length=300)
     url: Optional[str] = None
     ticket_date: Optional[str] = None

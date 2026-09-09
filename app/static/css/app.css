@@ -750,6 +750,24 @@ details summary { cursor: pointer; font-weight: 600; }
 .topology-results { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 150px; overflow: auto; }
 .topology-canvas { position: relative; height: clamp(360px, 65vh, 850px); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); touch-action: none; cursor: grab; }
 .topology-canvas:active { cursor: grabbing; }
+.topology-minimap { position:absolute; right:8px; bottom:8px; z-index:2; padding:0; border:1px solid var(--border); border-radius:6px; background:var(--surface); cursor:crosshair; opacity:.92; }
+.topology-minimap svg { display:block; }
+.minimap-node { fill:#7185ab; }
+.minimap-viewport { fill:#547ee822; stroke:#547ee8; stroke-width:2; vector-effect:non-scaling-stroke; }
+.manual-positioning .topology-device { cursor:move; }
+.topology-device.path-dim, .topology-link.path-dim { opacity:.18; }
+.topology-vpn.vpn-recorded-unknown, .topology-vpn-line.vpn-recorded-unknown { opacity:.55; }
+.topology-vpn.vpn-recorded-disabled, .topology-vpn-line.vpn-recorded-disabled { opacity:.35; }
+.topology-vpn.vpn-recorded-down rect { stroke:#dc6262; }
+.topology-vpn-line.vpn-recorded-down { stroke:#dc6262; }
+.topology-vpn-line.vpn-recorded-up { stroke:#2e9e44; }
+.topology-vpn.vpn-recorded-up rect { stroke:#2e9e44; }
+.remote-trace .recorded-unknown, .remote-trace .recorded-down { opacity:.6; }
+.remote-trace { display:grid; gap:12px; padding-left:24px; }
+.remote-trace li { border-left:3px solid var(--border); padding:10px; }
+.remote-trace .direct { border-color:#2e9e44; }
+.remote-trace .transit { border-color:#df8b2e; }
+.remote-trace-chain { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
 .topology-camera { position: absolute; z-index: 2; top: 8px; left: 8px; display: flex; align-items: center; gap: 5px; background: var(--surface); border-radius: 8px; padding: 5px; }
 .topology-empty { position: absolute; top: 45%; left: 10%; width: 80%; text-align: center; color: var(--muted); pointer-events: none; }
 .topology-device > rect { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }

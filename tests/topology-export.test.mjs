@@ -17,3 +17,10 @@ test('filtered export excludes hidden children and never modifies the display gr
   assert.ok(!('hidden' in result.edges[0]));assert.equal(result.nodes.length,2);
   assert.equal(JSON.stringify(graph),before);
 });
+test('view exports carry displayed VPN context and presentation coordinates',()=>{
+  const graph={nodes:[{id:1}],edges:[]};
+  const context={show_vpn:true,vpn:[{vpn_id:2,device_id:1}],positions:{1:{x:50,y:60}}};
+  assert.deepEqual(viewData(graph,context).vpn,context.vpn);
+  assert.deepEqual(viewData(graph,context).positions,context.positions);
+  assert.deepEqual(viewData(graph,{show_vpn:false,vpn:[]}).vpn,[]);
+});

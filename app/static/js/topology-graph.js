@@ -58,10 +58,10 @@ export function linkSpeedClass(edge) {
 }
 
 // Placement groups are documentation, not inferred connectivity or rack elevations.
-export function layoutPhysical(nodes, orientation='horizontal') {
+export function layoutPhysical(nodes, orientation='horizontal',labelFor=null) {
   const buckets=new Map(),positions=new Map(),groups=[];
   for(const n of nodes) {
-    const label=[n.off_site?'Off-site':n.location_name||'Main site',n.rack_room||'Room not recorded',n.rack||'Unracked'].join(' · ');
+    const label=labelFor?labelFor(n):[n.off_site?'Off-site':n.location_name||'Main site',n.rack_room||'Room not recorded',n.rack||'Unracked'].join(' · ');
     if(!buckets.has(label))buckets.set(label,[]);
     buckets.get(label).push(n);
   }
@@ -80,6 +80,14 @@ export function layoutPhysical(nodes, orientation='horizontal') {
     y=rowY+24;
   }
   return {positions,groups};
+}
+
+// Group identical membership sets rather than duplicating multi-subnet devices.
+export function layoutSubnets(nodes,orientation='horizontal') {
+  return layoutPhysical(nodes,orientation,n=>{
+    const networks=[...new Set(n.subnets||[])].sort();
+    return `${n.location_name||'Main site'} [${n.location_id??'main'}] · ${networks.length?networks.join(' + '):'Undocumented subnet'}`;
+  });
 }
 
 // Pack each tier independently; descendants never reserve blank space in higher tiers.

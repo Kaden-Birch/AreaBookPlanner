@@ -11,7 +11,7 @@ from ..schemas import TaskIn, TaskPatch
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-TASK_COLUMNS = ["clinic_id", "contact_id", "title", "notes", "due_date", "due_time", "reminder_minutes", "rep", "priority", "done", "visibility"]
+TASK_COLUMNS = ["clinic_id", "device_id", "contact_id", "title", "notes", "due_date", "due_time", "reminder_minutes", "rep", "priority", "done", "visibility"]
 
 SELECT = """SELECT t.*, cl.name AS clinic_name, c.first_name AS contact_first_name, c.last_name AS contact_last_name
             FROM tasks t LEFT JOIN clinics cl ON cl.id = t.clinic_id
@@ -35,6 +35,11 @@ def _get_or_404(conn: sqlite3.Connection, task_id: int) -> dict:
 
 
 def _validate(conn: sqlite3.Connection, data: dict) -> None:
+    if data.get('device_id') is not None:
+        if conn.user['active_role']!='it' or data.get('visibility')!='technical':
+            raise HTTPException(403,'Device-linked tasks must be technical IT tasks')
+        d=conn.execute('SELECT clinic_id FROM devices WHERE id=?',(data['device_id'],)).fetchone()
+        if not d or d['clinic_id']!=data.get('clinic_id'):raise HTTPException(422,'Device must belong to the task clinic')
     if data.get("clinic_id") is not None:
         if conn.execute("SELECT 1 FROM clinics WHERE id = ?", (data["clinic_id"],)).fetchone() is None:
             raise HTTPException(status_code=422, detail="Clinic does not exist")
@@ -98,6 +103,7 @@ def update_task(task_id: int, payload: TaskIn, conn: sqlite3.Connection = Depend
     data = payload.model_dump()
     if 'visibility' not in payload.model_fields_set:
         data['visibility'] = before['visibility']
+    if 'device_id' not in payload.model_fields_set:data['device_id']=before['device_id']
     _validate(conn, data)
     data["done"] = int(data["done"])
     done_at = before["done_at"] if before["done"] and data["done"] else (now_iso() if data["done"] else None)

@@ -77,9 +77,38 @@ def documentation_issues(nodes,edges,vlans):
     """Evidence-based documentation gaps, not monitoring or reachability claims."""
     issues=[];by_id={n['id']:n for n in nodes}
     def add(kind,id,name,code,message,**extra): issues.append(dict(kind=kind,id=id,name=name,code=code,message=message,**extra))
+    import ipaddress
+    owners={}
+    for n in nodes:
+        if n.get('status')=='retired':continue
+        for raw in [n.get('ip_address'),*(a.get('address') for a in n.get('addresses',[]))]:
+            if not raw:continue
+            try:address=ipaddress.ip_address(raw)
+            except ValueError:continue
+            # Link-local addresses may legitimately repeat on separate interfaces.
+            if address.is_link_local:continue
+            owners.setdefault((n.get('location_id'),str(address)),set()).add(n['id'])
+    for (_,address),ids in owners.items():
+        if len(ids)>1:
+            for id in sorted(ids):add('device',id,by_id[id]['name'],'duplicate_address',f'{address} is documented on multiple devices at this site; verify whether intentionally shared')
+    primary={e['to']:e['from'] for e in edges if e.get('primary') and e['from'] in by_id and e['to'] in by_id}
+    cycle_members=set()
+    for start in primary:
+        path=[];seen={};current=start
+        while current in primary and current not in seen:
+            seen[current]=len(path);path.append(current);current=primary[current]
+        if current in seen:cycle_members.update(path[seen[current]:])
+    for id in sorted(cycle_members):add('device',id,by_id[id]['name'],'uplink','Primary uplinks form a cycle; review the documented relationships')
+    pairs=set()
     for n in nodes:
         if n.get('status')=='retired' or n['device_type'] in ('patch_panel','shelf'): continue
         def gap(code,message): add('device',n['id'],n['name'],code,message)
+        if n.get('ipv6_enabled'):
+            has_ipv6=False
+            for raw in [n.get('ip_address'),*(a.get('address') for a in n.get('addresses',[]))]:
+                try:has_ipv6=has_ipv6 or ipaddress.ip_address(raw).version==6
+                except ValueError:pass
+            if not has_ipv6:gap('ipv6','IPv6 marked enabled, but no IPv6 address is documented')
         if not n.get('addresses') and not n.get('ip_address'): gap('address','No IP address recorded')
         if not n.get('interface_count'): gap('interface','No network interfaces recorded')
         if vlans and not n.get('vlan_memberships'): gap('vlan','No VLAN membership recorded; review whether applicable')
@@ -94,6 +123,9 @@ def documentation_issues(nodes,edges,vlans):
         if not source or not target or target.get('status')=='retired': continue
         detail=e.get('details') or {}
         def gap(code,message): add('connection',e['to'],source['name']+' → '+target['name'],code,message,parent=e['from'],child=e['to'])
+        pair=(e['from'],e['to'])
+        if pair in pairs:gap('duplicate_link','More than one connection uses these endpoints; verify whether this is an intentional parallel link')
+        pairs.add(pair)
         if e.get('link_type')!='virtual' and (not detail.get('source_interface_id') or not detail.get('target_interface_id')):
             gap('ports','Endpoint interfaces are not fully documented')
         if detail.get('vlan_mode')=='trunk':

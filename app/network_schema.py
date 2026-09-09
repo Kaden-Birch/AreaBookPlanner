@@ -59,6 +59,13 @@ END;
 
 def initialize(conn):
     conn.executescript(SCHEMA)
+    for table in ('device_tickets','clinic_tickets'):
+        if 'status' not in {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN status TEXT NOT NULL DEFAULT 'unknown' CHECK(status IN ('unknown','open','closed'))")
+    if 'device_id' not in {r[1] for r in conn.execute('PRAGMA table_info(tasks)')}:
+        conn.execute('ALTER TABLE tasks ADD COLUMN device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL')
+    if 'ipv6_enabled' not in {r[1] for r in conn.execute('PRAGMA table_info(devices)')}:
+        conn.execute('ALTER TABLE devices ADD COLUMN ipv6_enabled INTEGER NOT NULL DEFAULT 0')
     for row in conn.execute('''SELECT id,ip_address,mac_address FROM devices d
         WHERE ip_address IS NOT NULL AND trim(ip_address)<>''
         AND NOT EXISTS(SELECT 1 FROM network_interfaces i WHERE i.device_id=d.id)''').fetchall():

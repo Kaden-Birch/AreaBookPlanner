@@ -35,6 +35,98 @@ def switch(staff, role):
     assert r.status_code==200,r.text
 
 
+def test_device_open_work_is_explicit_and_scoped(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    ticket=staff.post('/api/devices/1/tickets',json={'title':'Legacy-like link'}).json()
+    assert ticket['status']=='unknown'
+    assert staff.patch(f"/api/devices/1/tickets/{ticket['id']}",json={'status':'open'}).status_code==200
+    task=staff.post('/api/tasks',json={'title':'Fix device','clinic_id':1,'device_id':1})
+    assert task.status_code==201,task.text
+    assert task.json()['visibility']=='technical'
+    assert staff.post('/api/tasks',json={'title':'Wrong clinic','clinic_id':2,'device_id':1}).status_code==422
+    node=staff.get('/api/clinics/1/topology').json()['nodes'][0]
+    assert node['open_ticket_count']==1 and node['open_task_count']==1
+    assert staff.patch(f"/api/tasks/{task.json()['id']}",json={'done':True}).status_code==200
+    assert staff.patch(f"/api/devices/1/tickets/{ticket['id']}",json={'status':'closed'}).status_code==200
+    node=staff.get('/api/clinics/1/topology').json()['nodes'][0]
+    assert node['open_ticket_count']==0 and node['open_task_count']==0
+    switch(staff,'sales')
+    assert staff.post('/api/tasks',json={'title':'Not allowed','clinic_id':1,'device_id':1}).status_code==403
+
+
+def test_cross_site_trace_requires_explicit_transit_and_scope(environment):
+    _,staff,areas=environment
+    with database.get_db() as conn:
+        dest=conn.execute("INSERT INTO clinics(name,area_id,relationship) VALUES ('Destination',?,'current_client')",(areas['Lethbridge'],)).lastrowid
+        middle_device=conn.execute("INSERT INTO devices(clinic_id,name,device_type) VALUES (2,'Middle router','router')").lastrowid
+        dest_device=conn.execute("INSERT INTO devices(clinic_id,name,device_type) VALUES (?,'Destination router','router')",(dest,)).lastrowid
+        first=conn.execute("INSERT INTO vpn_links(name,a_clinic_id,b_clinic_id,a_device_id,b_device_id,status) VALUES ('First',1,2,1,?,'up')",(middle_device,)).lastrowid
+        second=conn.execute("INSERT INTO vpn_links(name,a_clinic_id,b_clinic_id,a_device_id,b_device_id,status) VALUES ('Second',2,?,?,?,'unknown')",(dest,middle_device,dest_device)).lastrowid
+    switch(staff,'it')
+    base='/api/clinics/1/topology/trace'
+    query={'source_device_id':1,'destination_clinic_id':dest,'destination_device_id':dest_device}
+    assert staff.get(base,params=query).json()['routes']==[]
+    with database.get_db() as conn:
+        conn.execute('''INSERT INTO vpn_transit_routes(source_clinic_id,entry_vpn_link_id,via_clinic_id,exit_vpn_link_id,dest_clinic_id,rationale)
+          VALUES (1,?,2,?,?,'Approved route')''',(first,second,dest))
+    response=staff.get(base,params=query)
+    assert response.status_code==200,response.text
+    route=response.json()['routes'][0]
+    assert route['relationship']=='via' and route['documentation_complete']
+    assert [s['status'] for s in route['segments'] if s['kind']=='vpn']==['up','unknown']
+    assert staff.get(base,params=query|{'destination_clinic_id':3}).status_code==404
+    reverse=staff.get(f'/api/clinics/{dest}/topology/trace',params={'source_device_id':dest_device,'destination_clinic_id':1,'destination_device_id':1})
+    assert reverse.json()['routes']==[]
+    with database.get_db() as conn:conn.execute("UPDATE vpn_links SET status='disabled' WHERE id=?",(second,))
+    assert staff.get(base,params=query).json()['routes']==[]
+    switch(staff,'sales')
+    assert staff.get(base,params=query).status_code==403
+
+
+def test_logical_groups_scoped_audited_and_non_destructive(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    path='/api/clinics/1/topology/groups'
+    payload={'name':'Core','color':'#123456','device_ids':[1]}
+    created=staff.put(path+'/0',json=payload)
+    assert created.status_code==200,created.text
+    gid=created.json()['id']
+    topo=staff.get('/api/clinics/1/topology').json()
+    assert topo['groups'][0]['device_ids']==[1]
+    assert staff.put(path+f'/{gid}',json=payload|{'device_ids':[999999]}).status_code==422
+    assert staff.put(path+f'/{gid}',json=payload|{'name':'  '}).status_code==422
+    assert staff.put('/api/clinics/3/topology/groups/0',json=payload).status_code in (403,404)
+    with database.get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM topology_audit WHERE changes LIKE '%groups%'").fetchone()[0]>0
+    switch(staff,'sales')
+    assert staff.put(path+f'/{gid}',json=payload).status_code==403
+    switch(staff,'it')
+    assert staff.delete(path+f'/{gid}').status_code==200
+    assert staff.get('/api/devices/1').status_code==200
+    assert staff.get('/api/clinics/1/topology').json()['groups']==[]
+
+
+def test_topology_subnet_membership_ipv4_ipv6(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    network={'interfaces':[{'name':'LAN','addresses':[{'address':'10.20.1.3','prefix_length':24},{'address':'2001:db8:20::1','prefix_length':64}]}]}
+    assert staff.put('/api/devices/1/network',json=network).status_code==200
+    nodes=staff.get('/api/clinics/1/topology').json()['nodes']
+    assert nodes[0]['subnets']==['10.20.1.0/24','2001:db8:20::/64']
+
+
+def test_ipv6_documentation_flag_is_explicit_and_preserved(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    assert staff.put('/api/devices/1/network',json={'ipv6_enabled':True,'interfaces':[]}).status_code==200
+    assert staff.get('/api/devices/1/network').json()['ipv6_enabled'] is True
+    assert any(i['code']=='ipv6' for i in staff.get('/api/clinics/1/topology').json()['documentation'])
+    assert staff.put('/api/devices/1/network',json={'interfaces':[{'name':'LAN','addresses':[{'address':'2001:db8::1'}]}]}).status_code==200
+    assert staff.get('/api/devices/1/network').json()['ipv6_enabled'] is True
+    assert not any(i['code']=='ipv6' for i in staff.get('/api/clinics/1/topology').json()['documentation'])
+
+
 def test_login_and_setup(environment):
     admin,staff,areas=environment
     with TestClient(app) as anonymous:
@@ -301,6 +393,9 @@ def test_it_dashboard_scope_and_attention(environment):
     assert d['summary']=={'current_clients':2,'devices':2,'servers':1,'overdue_tasks':1,'open_tasks':2,'services':1}
     assert {c['name'] for c in d['clinics']}=={'Local client','Missing equipment'}
     assert {a['kind'] for a in d['attention']}=={'task','vpn','documentation','service'}
+    device_alerts=[a for a in d['attention'] if a.get('device_id')]
+    assert {a['title'] for a in device_alerts}=={'Secret device','Local server'}
+    assert all(a['clinic_id']==1 for a in device_alerts)
     assert len(d['upcoming'])==2
     assert all(secret not in r.text for secret in ['Remote','Cross Area VPN','Prospect server','Hidden sales task','Done task'])
     all_data=staff.get('/api/it/dashboard?include_prospects=true').json()

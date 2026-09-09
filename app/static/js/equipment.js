@@ -287,6 +287,11 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
     await devices.remove(d.id); toast('Device deleted'); modal.close();
   };
   const tf = modal.body.querySelector('#ticket-form');
+  const taskHost=document.createElement('div');taskHost.innerHTML='<h3>Open device tasks</h3>';
+  for(const task of d.open_tasks||[]){const button=document.createElement('button');button.className='btn btn-sm';button.textContent=task.title;button.onclick=async()=>{const {openTaskForm}=await import('./forms.js');await openTaskForm({task,onSaved:()=>reopen(d.id)});};taskHost.append(button);}
+  const addTask=document.createElement('button');addTask.className='btn btn-sm';addTask.textContent='Add device task';addTask.onclick=async()=>{const {openTaskForm}=await import('./forms.js');await openTaskForm({clinicId:clinic.id,deviceId:d.id,onSaved:()=>reopen(d.id)});};taskHost.append(addTask);tf.before(taskHost);
+  tf.insertAdjacentHTML('afterbegin','<label>Recorded ticket status<select name="status"><option value="unknown">Unknown</option><option value="open">Open</option><option value="closed">Closed</option></select></label>');
+  modal.body.querySelectorAll('[data-ticket-status]').forEach(s=>s.onchange=async()=>{try{await api.patch(`/api/devices/${d.id}/tickets/${s.dataset.ticketStatus}`,{status:s.value});reopen(d.id);}catch(e){toast(e.message,'error');}});
   tf.onsubmit = async (e) => {
     e.preventDefault();
     const data = formData(tf);
@@ -344,7 +349,7 @@ function ticketRow(t) {
     <span>🎫</span>
     <div class="body">${safeWebUrl(t.url) ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : `<strong>${esc(t.title)}</strong>`}
       <div class="muted small">${t.ticket_date ? esc(fmtDateOnly(t.ticket_date)) : esc(fmtDate(t.created_at))}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
-    <button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>
+    <label>Recorded status<select data-ticket-status="${t.id}">${['unknown','open','closed'].map(s=>`<option value="${s}" ${(t.status||'unknown')===s?'selected':''}>${s}</option>`).join('')}</select></label><button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>
   </div>`;
 }
 
@@ -448,6 +453,7 @@ export async function openServiceDetail({ clinic, serviceId, onChanged }) {
   const renderTickets = () => {
     const host=modal.body.querySelector('#svc-tickets');
     host.innerHTML=s.tickets?.length?s.tickets.map(ticketRow).join(''):'<p class="muted small">No support tickets linked.</p>';
+    host.querySelectorAll('[data-ticket-status]').forEach(el=>el.onchange=async()=>{try{await api.patch(`/api/services/${serviceId}/tickets/${el.dataset.ticketStatus}`,{status:el.value});await reload();}catch(e){toast(e.message,'error');}});
     host.querySelectorAll('[data-del-ticket]').forEach(b=>b.onclick=async()=>{
       if(!await confirmDialog('Remove this ticket link? The external support ticket will not be deleted.')) return;
       try {await api.del(`/api/services/${serviceId}/tickets/${b.dataset.delTicket}`);await reload();}catch(e){toast(e.message,'error');}

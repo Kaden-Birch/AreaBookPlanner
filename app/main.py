@@ -14,6 +14,7 @@ from .routers import appointments, billing, clinics, contacts, devices, extras, 
 from .routers import network
 from .routers import connections
 from .routers import topology_admin
+from .routers import topology_trace
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -101,6 +102,7 @@ app.include_router(devices.router)
 app.include_router(network.router)
 app.include_router(connections.router)
 app.include_router(topology_admin.router)
+app.include_router(topology_trace.router)
 app.include_router(vpn.router)
 app.include_router(quotes.router)
 app.include_router(billing.router)

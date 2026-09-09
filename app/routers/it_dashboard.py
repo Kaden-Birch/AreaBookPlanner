@@ -43,15 +43,20 @@ def dashboard(include_prospects: bool = False, conn=Depends(db_dependency)):
         if c['relationship']=='current_client' and not c['device_count']:
             attention.append(dict(kind='documentation',title='No equipment recorded',clinic_id=c['id'],clinic_name=c['name'],
                                   detail='Documentation gap · add this clinic’s equipment'))
-    gaps = conn.execute('''SELECT d.clinic_id,COUNT(*) AS n FROM devices d
-        WHERE d.status != 'retired' AND d.device_type NOT IN ('patch_panel','shelf')
-        AND NOT EXISTS (SELECT 1 FROM network_interfaces i WHERE i.device_id=d.id)
-        GROUP BY d.clinic_id''')
-    for gap in gaps:
-        cid=gap['clinic_id']
-        if cid in selected:
-            attention.append(dict(kind='documentation',topology=True,title='Network documentation review',clinic_id=cid,
-                                  clinic_name=selected[cid]['name'],detail=f"{gap['n']} devices have no network interfaces recorded · review in topology"))
+    from .devices import topology
+    for c in clinics:
+        if not c['device_count']:continue
+        topo=topology(c['id'],'all',conn)
+        names={n['id']:n['name'] for n in topo['nodes']+topo['offsite']}
+        grouped={}
+        for issue in topo['documentation']:
+            ids=[issue['id']] if issue['kind']=='device' else [issue['parent'],issue['child']] if issue['kind']=='connection' else []
+            for did in ids:
+                if did in names:grouped.setdefault(did,[]).append(issue['message'])
+        for did,messages in grouped.items():
+            messages=list(dict.fromkeys(messages))
+            attention.append(dict(kind='documentation',topology=True,title=names[did],clinic_id=c['id'],device_id=did,
+                                  clinic_name=c['name'],detail=f"{len(messages)} documentation items · "+'; '.join(messages)))
     services = rows_to_list(conn.execute('''SELECT s.id,s.name,d.clinic_id FROM device_services s
         JOIN devices d ON d.id=s.device_id WHERE TRIM(COALESCE(s.support_email,''))=''
         AND TRIM(COALESCE(s.support_url,''))='' ORDER BY s.name COLLATE NOCASE,s.id'''))

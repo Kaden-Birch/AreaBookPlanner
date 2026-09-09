@@ -2,7 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../app/static/js/topology-graph.js', import.meta.url), 'utf8');
-const { displayGraph, layoutGraph, layoutPhysical, linkSpeedClass } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { displayGraph, layoutGraph, layoutPhysical, layoutSubnets, linkSpeedClass } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+
+test('subnet layout separates sites, preserves multi-network nodes and unknowns',()=>{
+  const nodes=[{id:1,name:'A',subnets:['10.0.0.0/24','2001:db8::/64']},{id:2,name:'B',subnets:['2001:db8::/64','10.0.0.0/24']},{id:3,name:'C',location_id:7,subnets:['10.0.0.0/24']},{id:4,name:'D'}];
+  const before=JSON.stringify(nodes);
+  for(const orientation of ['horizontal','vertical']){
+    const layout=layoutSubnets(nodes,orientation);
+    assert.equal(layout.positions.size,4);assert.equal(layout.groups.length,3);
+    assert.ok(layout.groups.some(g=>g.label.includes('Undocumented subnet')));
+    assert.ok(layout.groups.some(g=>g.label.includes('10.0.0.0/24 + 2001:db8::/64')));
+  }
+  assert.equal(JSON.stringify(nodes),before);
+});
 
 const nodes = [
   {id:1,device_type:'switch'}, {id:2,device_type:'voip'},

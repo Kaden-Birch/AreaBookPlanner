@@ -1181,3 +1181,6 @@ tr.row-warn td { background: var(--red-bg); }
   .topology-workspace.tools-open { grid-template-columns:minmax(0,1fr); }
   .topology-toolpanel { position:absolute; inset:0 0 0 auto; width:min(330px,95%); z-index:25; box-shadow:-8px 0 24px #0003; }
 }
+.settings-sections { margin:16px 0; flex-wrap:wrap; }
+.settings-sections [aria-pressed="true"] { background:var(--primary);color:white; }
+#global-settings-content { max-width:1100px; }

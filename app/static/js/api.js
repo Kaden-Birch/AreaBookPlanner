@@ -1,6 +1,10 @@
 // Thin fetch wrapper around the JSON API.
 
 async function request(method, path, { params, body } = {}) {
+  if(['POST','PUT','PATCH','DELETE'].includes(method) && (path==='/api/settings'||/^\/api\/(pricebook|templates)(\/|$)/.test(path))) {
+    const {confirmDialog}=await import('./ui.js');
+    if(!await confirmDialog('This changes shared application settings for all users. Existing quotes keep their saved values. Continue?'))throw new Error('Shared settings were not changed.');
+  }
   let url = path;
   if (params) {
     const qs = new URLSearchParams();

@@ -530,9 +530,10 @@ export async function openClinicForm({ clinic = null, initial = {}, onSaved } = 
       } catch (e) {
         const code = e.data && e.data.detail && e.data.detail.code;
         if (code === 'no_key' || code === 'disabled') {
-          aiInputError.innerHTML = `${esc(code === 'no_key' ? 'AI clinic import requires an OpenAI API key.' : 'AI clinic import is turned off under Settings → AI.')} <button type="button" class="btn btn-sm" data-go="settings">Go to Settings → AI</button>`;
+          const admin=user?.roles.includes('admin');
+          aiInputError.innerHTML = `${esc(code === 'no_key' ? 'A shared OpenAI API key has not been configured.' : 'AI clinic import is turned off in Global settings.')} ${admin?'<button type="button" class="btn btn-sm" data-go="settings">Open Global settings</button>':'Ask your administrator to update Global settings → AI.'}`;
           aiInputError.classList.remove('hidden');
-          aiInputError.querySelector('[data-go]').onclick = () => { modal.close(); navigate('#/settings'); };
+          if(admin)aiInputError.querySelector('[data-go]').onclick = () => { modal.close(); navigate('#/application-settings'); };
         } else { aiInputError.textContent = e.message; aiInputError.classList.remove('hidden'); }
       } finally { gb.disabled = false; gb.textContent = 'Generate clinic draft'; }
     };
@@ -1181,12 +1182,11 @@ export async function openEmailPicker({ contact, clinic, anchor, onSent }) {
 // ---- Business card scanner (OpenAI vision) ----------------------------------------
 
 export async function openCardScanner({ clinicId = null, onSaved } = {}) {
-  const st = await api.get('/api/auth/preferences');
   const modal = openModal({
     title: '📇 Scan a business card',
     size: 'modal-sm',
     body: `
-      ${st.ai_configured ? '' : '<div class="form-warn mb">Using shared AI configuration, if available. You can add your own key under <a href="#/settings">Settings → AI connection</a>.</div>'}
+      <p class="help">Uses the shared AI connection managed by your administrator in Global settings.</p>
       <p class="small">Take a photo of the card (or pick an image). The details are read by AI and dropped into a new contact form for you to check before saving.</p>
       <div class="flex flex-wrap">
         <label class="btn btn-primary" style="margin:0">📷 Take photo <input type="file" id="card-capture" class="hidden" accept="image/*" capture="environment"></label>

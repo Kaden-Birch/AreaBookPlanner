@@ -35,25 +35,28 @@ def switch(staff, role):
     assert r.status_code==200,r.text
 
 
-def test_personal_ai_preferences_are_private_and_do_not_expand_roles(environment):
+def test_personal_preferences_are_private_and_global_ai_is_admin_managed(environment):
     admin, staff, _ = environment
-    assert staff.get('/api/auth/preferences').json() == {'ai_configured': False, 'model': ''}
-    saved=staff.put('/api/auth/preferences',json={'api_key':'test-only-personal-key','model':'test-model'})
-    assert saved.status_code==200 and saved.json()=={'ai_configured':True,'model':'test-model'}
-    assert 'test-only-personal-key' not in staff.get('/api/auth/preferences').text
-    assert admin.get('/api/auth/preferences').json()['ai_configured'] is False
+    assert staff.get('/api/auth/preferences').json() == {'theme': None}
+    saved=staff.put('/api/auth/preferences',json={'theme':'dark'})
+    assert saved.status_code==200 and saved.json()=={'theme':'dark'}
+    assert admin.get('/api/auth/preferences').json() == {'theme': None}
+    assert staff.put('/api/auth/preferences',json={'theme':'dark','api_key':'test-only-personal-key'}).status_code==422
+    assert staff.put('/api/auth/preferences',json={'theme':'invalid'}).status_code==422
     assert staff.put('/api/settings',json={'openai_api_key':'not-allowed'}).status_code==403
+    assert admin.put('/api/settings',json={'openai_api_key':'test-shared-key'}).status_code==200
     switch(staff,'sales')
     assert staff.get('/api/clinics/1/topology').status_code==403
-    assert staff.put('/api/auth/preferences',json={'model':'updated-model'}).json()['ai_configured'] is True
+    assert staff.get('/api/auth/preferences').json()['theme']=='dark'
     with database.get_db() as conn:
         from app.routers.extras import get_setting
         class PersonalConnection:
             user={'id':conn.execute("SELECT id FROM users WHERE username='staff'").fetchone()[0]}
             execute=conn.execute
-        assert get_setting(PersonalConnection(),'openai_api_key')=='test-only-personal-key'
-        assert get_setting(PersonalConnection(),'openai_model')=='updated-model'
-    assert staff.put('/api/auth/preferences',json={'api_key':'','model':''}).json()['ai_configured'] is False
+        conn.execute('INSERT INTO user_ai_settings(user_id,api_key) VALUES (?,?)', (PersonalConnection.user['id'],'obsolete-personal-key'))
+        assert get_setting(PersonalConnection(),'openai_api_key')=='test-shared-key'
+    switch(staff,'manager')
+    assert staff.put('/api/pricebook',json={}).status_code==403
 
 
 def test_device_open_work_is_explicit_and_scoped(environment):
@@ -160,6 +163,41 @@ def test_login_and_setup(environment):
     assert staff.post('/api/auth/workspace',json={'role':'sales','area_id':areas['Calgary']}).status_code==403
 
 
+def test_startup_preferences_validate_scope_and_apply_at_login(environment):
+    _,staff,areas=environment
+    payload={'theme':'dark','default_workspace':'it','default_area_id':areas['Lethbridge'],'startup_page':'map','workspace_shortcut':'w'}
+    assert staff.put('/api/auth/preferences',json=payload).status_code==200
+    assert staff.put('/api/auth/preferences',json=payload|{'default_area_id':areas['Calgary']}).status_code==403
+    assert staff.put('/api/auth/preferences',json=payload|{'default_workspace':'admin'}).status_code==403
+    staff.post('/api/auth/logout')
+    assert staff.post('/api/auth/login',json={'username':'staff','password':PASSWORD}).status_code==200
+    me=staff.get('/api/auth/me').json()
+    assert me['active_role']=='it' and me['area_id']==areas['Lethbridge']
+    assert staff.get('/api/auth/preferences').json()['startup_page']=='map'
+
+
+def test_shared_settings_history_and_connection_test(environment,monkeypatch):
+    admin,staff,_=environment
+    assert staff.get('/api/settings/history').status_code==403
+    assert staff.post('/api/settings/test-ai',json={}).status_code==403
+    assert admin.post('/api/settings/test-ai',json={}).status_code==422
+    assert admin.put('/api/settings',json={'openai_api_key':'secret-fixture-value'}).status_code==200
+    history=admin.get('/api/settings/history')
+    assert history.status_code==200 and history.json()[0]['path']=='/api/settings'
+    assert 'secret-fixture-value' not in history.text
+    from app.routers import extras
+    class Response:
+        status=200
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+    monkeypatch.setattr(extras.urllib.request,'urlopen',lambda *a,**kw:Response())
+    assert admin.post('/api/settings/test-ai',json={}).json()['ok'] is True
+    def fail(*args,**kwargs):raise RuntimeError('secret-fixture-value')
+    monkeypatch.setattr(extras.urllib.request,'urlopen',fail)
+    failed=admin.post('/api/settings/test-ai',json={})
+    assert failed.status_code==502 and 'secret-fixture-value' not in failed.text
+
+
 def test_admin_all_workspaces_areas_and_global_settings(environment):
     admin, staff, areas = environment
     me=admin.get('/api/auth/me').json()
@@ -172,7 +210,7 @@ def test_admin_all_workspaces_areas_and_global_settings(environment):
         assert admin.get('/api/clinics/1/topology').status_code==200
         assert admin.get('/api/clinics/3').status_code==200
     assert admin.put('/api/settings',json={'openai_api_key':'test-shared-key'}).status_code==200
-    assert admin.put('/api/auth/preferences',json={'api_key':'test-personal-key'}).status_code==200
+    assert admin.put('/api/auth/preferences',json={'api_key':'test-personal-key'}).status_code==422
     settings=admin.get('/api/settings')
     assert settings.status_code==200 and settings.json()['ai_configured']
     assert 'test-personal-key' not in settings.text and 'test-shared-key' not in settings.text

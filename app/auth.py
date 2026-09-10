@@ -3,9 +3,11 @@ import hashlib
 import hmac
 import secrets
 import time
+import json
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import Literal
 
 from .database import get_db
 
@@ -16,6 +18,18 @@ COOKIE = "areabook_session"
 SESSION_SECONDS = 8 * 60 * 60
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS user_startup_preferences (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ options TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS global_settings_history (
+ id INTEGER PRIMARY KEY, actor_id INTEGER REFERENCES users(id),
+ path TEXT NOT NULL, method TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS user_preferences (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ theme TEXT CHECK(theme IN ('light','dark'))
+);
 CREATE TABLE IF NOT EXISTS user_ai_settings (
  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
  api_key TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT ''
@@ -126,6 +140,18 @@ def new_session(conn, user_id, response, request):
     role = conn.execute("SELECT role FROM user_roles WHERE user_id=? ORDER BY role='admin', role LIMIT 1", (user_id,)).fetchone()[0]
     area = conn.execute("""SELECT ua.area_id FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
         WHERE ua.user_id=? AND ua.role=? AND a.is_active=1 ORDER BY ua.is_default DESC, a.name LIMIT 1""", (user_id, role)).fetchone()
+    pref=conn.execute('SELECT options FROM user_startup_preferences WHERE user_id=?',(user_id,)).fetchone()
+    pref=json.loads(pref[0]) if pref else {}
+    roles=[r[0] for r in conn.execute('SELECT role FROM user_roles WHERE user_id=?',(user_id,))]
+    chosen=pref.get('default_workspace')
+    if chosen in roles or ('admin' in roles and chosen in ROLES):
+        role=chosen
+        if 'admin' in roles:
+            choices=[r[0] for r in conn.execute('SELECT id FROM areas WHERE is_active=1 ORDER BY name')]
+        else:
+            choices=[r[0] for r in conn.execute('SELECT ua.area_id FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id WHERE ua.user_id=? AND ua.role=? AND a.is_active=1 ORDER BY ua.is_default DESC,a.name',(user_id,role))]
+        selected=pref.get('default_area_id')
+        area=(selected if selected in choices else choices[0],) if choices else None
     token = secrets.token_urlsafe(32)
     conn.execute("INSERT INTO auth_sessions VALUES (?,?,?,?,?)", (token_hash(token), user_id, role, area[0] if area else None, time.time()+SESSION_SECONDS))
     # HTTPS is required for LAN deployments; localhost HTTP remains usable for development.
@@ -181,9 +207,13 @@ def me(request: Request):
         return public_user(conn, session_user(request, conn))
 
 
-class PersonalAISettings(BaseModel):
-    api_key: str | None = Field(default=None, max_length=4096)
-    model: str = Field(default='', max_length=150)
+class UserPreferences(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    theme: Literal['light','dark']
+    default_workspace: Literal['sales','it','manager','client_success','admin'] | None = None
+    default_area_id: int | None = None
+    startup_page: Literal['dashboard','map','last'] = 'dashboard'
+    workspace_shortcut: Literal['','w','j'] = ''
 
 
 @router.get('/preferences')
@@ -191,19 +221,26 @@ def preferences(request: Request):
     with get_db() as conn:
         user = session_user(request, conn)
         if user['must_change_password']: raise HTTPException(403, 'Change your password first')
-        row = conn.execute('SELECT api_key,model FROM user_ai_settings WHERE user_id=?', (user['id'],)).fetchone()
-        return {'ai_configured': bool(row and row['api_key']), 'model': row['model'] if row else ''}
+        row = conn.execute('SELECT theme FROM user_preferences WHERE user_id=?', (user['id'],)).fetchone()
+        options=conn.execute('SELECT options FROM user_startup_preferences WHERE user_id=?',(user['id'],)).fetchone()
+        return {'theme': row['theme'] if row else None} | (json.loads(options[0]) if options else {})
 
 
 @router.put('/preferences')
-def save_preferences(payload: PersonalAISettings, request: Request):
+def save_preferences(payload: UserPreferences, request: Request):
     with get_db() as conn:
         user = session_user(request, conn)
         if user['must_change_password']: raise HTTPException(403, 'Change your password first')
-        conn.execute('INSERT OR IGNORE INTO user_ai_settings(user_id) VALUES (?)', (user['id'],))
-        conn.execute('UPDATE user_ai_settings SET model=? WHERE user_id=?', (payload.model.strip(), user['id']))
-        if payload.api_key is not None:
-            conn.execute('UPDATE user_ai_settings SET api_key=? WHERE user_id=?', (payload.api_key.strip(), user['id']))
+        effective=public_user(conn,user)
+        if payload.default_workspace and payload.default_workspace not in user['roles']:
+            raise HTTPException(403,'Default workspace must be assigned to you')
+        if payload.default_area_id is not None and not any(a['id']==payload.default_area_id and a['role']==payload.default_workspace for a in effective['areas']):
+            raise HTTPException(403,'Default Area must be assigned to the default workspace')
+        conn.execute('INSERT INTO user_preferences(user_id,theme) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET theme=excluded.theme', (user['id'], payload.theme))
+        prior=conn.execute('SELECT options FROM user_startup_preferences WHERE user_id=?',(user['id'],)).fetchone()
+        options=json.loads(prior[0]) if prior else {}
+        options.update(payload.model_dump(exclude={'theme'},exclude_unset=True))
+        conn.execute('INSERT INTO user_startup_preferences(user_id,options) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET options=excluded.options',(user['id'],json.dumps(options)))
     return preferences(request)
 
 

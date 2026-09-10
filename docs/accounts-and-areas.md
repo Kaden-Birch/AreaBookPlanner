@@ -1,5 +1,13 @@
 # Authentication, role workspaces and Areas
 
+## Global settings and personal preferences
+
+Global settings (`#/application-settings`) are administrator-only and contain the shared OpenAI key/models, AI import options, quote price book for services/equipment, company quote defaults and templates. An admin has a direct **Global settings** link in the account menu. Other users can use these shared defaults in their permitted workflows, but cannot change the global price book or configuration. Existing quotes retain their saved values.
+
+My settings (`#/settings`) contains personal appearance and browser-notification preferences. The default light/dark choice is saved per account and applied at sign-in; the top-bar toggle remains a temporary override. The preferences API rejects API-key/model fields.
+
+This policy supersedes the earlier personal-AI-key behaviour described below. All AI requests now use shared settings only. Old personal-key records remain inactive in the database for non-destructive compatibility; they are not automatically promoted into shared settings or used by AI requests. Administrators should confirm the shared key in Global settings after upgrading, particularly if they previously configured only a personal key. Protect database backups, which may still contain historical credentials.
+
 ## Administrator access — updated September 9, 2026
 
 Admin now grants full application access, superseding the original administration-only policy below. Existing admin accounts automatically receive all workspace choices and all active Areas without additional assignments. Area selection sets workspace context; it does not restrict an administrator's data access. Non-admin users retain their existing role and Area restrictions.
@@ -139,6 +147,29 @@ Admin uses `/api/admin/users`, `/api/admin/users/{id}`, `/api/admin/areas`,
 User PUT includes the full role/Area assignments; it also handles reset-password,
 require-change and activation flags. Manager transfers use
 `PATCH /api/clinics/{id}/area` with `{"area_id": ...}`.
+
+### Settings and workspace navigation
+
+My settings stores account appearance, default workspace/Area, startup page and
+an optional Ctrl+Alt+W or Ctrl+Alt+J workspace shortcut. Ctrl/Cmd+K also exposes
+the workspace switcher and its previous-workspace action. Shortcuts ignore typing.
+Saved defaults are checked against current assignments; they never grant access.
+Last-page history is browser-local. Workspace switching preserves supported URLs
+and their query parameters, not arbitrary in-memory filters or editor drafts.
+IT-only clinic views fall back to the same clinic overview; unavailable clinics
+fall back to the scoped clinic list. Edited form fields trigger a discard warning.
+
+Global settings groups AI/integrations, quote pricing, templates, application
+defaults and change history. Shared settings, price-book and template writes
+require confirmation. History records actor, time, method and resource path,
+never submitted values or secrets. It is not a general-purpose application audit.
+The saved AI connection test checks authentication only, not generation, model
+availability or billing; it sends no clinic data. Role assignment forms summarize
+effective access before saving, including unrestricted administrator access.
+
+Verification: 87 Python tests and 27 JavaScript tests pass. Local synthetic-data
+browser checks cover personal/global settings, price-book visibility and staying
+on the same clinic when switching from IT to Manager. No live AI key was tested.
 
 Deferred: custom permission editors, MFA, email invitations/reset delivery, client
 portals, territory polygons, multi-Area clinic ownership and cross-Area VPN disclosure.

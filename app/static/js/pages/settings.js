@@ -2,40 +2,49 @@
 import { api, getMeta, clinics, settings as settingsApi, pricebook } from '../api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, setTitle, getRepName, setRepName, options } from '../ui.js';
 import * as notif from '../notifications.js';
-import { user } from '../auth.js';
+import { user, roleNames } from '../auth.js';
+import { getTheme, setTheme } from '../ui.js';
+import { organizeGlobalSettings } from '../settings-navigation.js';
 
 export async function render(container) {
   setTitle('My settings');
   const saved=await api.get('/api/auth/preferences');
   container.innerHTML=`<div class="page-header"><h1>My settings</h1></div><form class="card" id="personal-settings" style="max-width:680px">
-    <h2>AI connection</h2><p>Your personal API key is used for AI actions you are permitted to perform. It does not grant additional role or Area access.</p>
-    <p class="help">Stored on this server, not in browser storage. Your key is never returned to the browser. Server administrators and database backups may have access; protect the server accordingly.</p>
-    <label class="field">OpenAI API key<input name="api_key" type="password" autocomplete="new-password" placeholder="${saved.ai_configured?'A personal key is saved; leave blank to keep it':'Paste your API key'}"></label>
-    <label class="field">Model (optional)<input name="model" value="${attr(saved.model)}" placeholder="Use the application default"></label>
-    <p class="help">Without a personal key, the existing shared application configuration is used, if available. AI clinic import must also be enabled in the application.</p>
-    <button class="btn btn-primary" type="submit">Save AI settings</button>${saved.ai_configured?'<button class="btn" type="button" id="remove-personal-key">Remove personal key</button>':''}
-    <p role="status" aria-live="polite"></p></form><div class="card" style="max-width:680px"><h2>Appearance and account</h2><p>Use the theme button in the top bar to change appearance. Use Password to change your sign-in password. Your workspace and Area choices remain in the account menu.</p></div>`;
+    <h2>Appearance</h2><label class="field">Default appearance<select name="theme"><option value="light" ${(saved.theme||getTheme())==='light'?'selected':''}>Light</option><option value="dark" ${(saved.theme||getTheme())==='dark'?'selected':''}>Dark</option></select></label>
+    <p class="help">Saved to your account and applied when you sign in on any browser. The top-bar theme button changes appearance temporarily for the current visit.</p>
+    <h2>Start where you work</h2>
+    <label class="field">Default workspace<select name="default_workspace"><option value="">Use assigned default</option>${user.roles.map(r=>`<option value="${r}" ${saved.default_workspace===r?'selected':''}>${esc(roleNames[r])}</option>`).join('')}</select></label>
+    <label class="field">Default Area<select name="default_area_id"></select></label>
+    <label class="field">Start page<select name="startup_page">${[['dashboard','Dashboard'],['map','Map'],['last','Last accessible page in this browser']].map(([v,l])=>`<option value="${v}" ${(saved.startup_page||'dashboard')===v?'selected':''}>${l}</option>`).join('')}</select></label>
+    <h2>Workspace shortcut</h2><label class="field">Open workspace switcher<select name="workspace_shortcut">${[['','Off — use the account menu or Ctrl/⌘ K'],['w','Ctrl + Alt + W'],['j','Ctrl + Alt + J']].map(([v,l])=>`<option value="${v}" ${(saved.workspace_shortcut||'')===v?'selected':''}>${l}</option>`).join('')}</select></label><p class="help">Shortcuts do not activate while typing in a field. Use the switcher to return to your previous workspace.</p>
+    <button class="btn btn-primary" type="submit">Save preferences</button><p role="status" aria-live="polite"></p></form>
+    <div class="card" style="max-width:680px"><h2>Desktop notifications</h2><p>Permission: ${esc(notifLabel(notif.permission()))}. Browser permission applies only on this device.</p><button class="btn" id="personal-notifications">Enable notifications</button><button class="btn" id="personal-notification-test">Send a test</button></div>
+    <div class="card" style="max-width:680px"><h2>Managed by your administrator</h2><p>AI connections, quote pricing for services and equipment, and company templates are shared across the application. Ask your administrator to change them in Global settings.</p></div>`;
   const form=container.querySelector('form');
+  const areas=()=>{const r=form.elements.default_workspace.value;form.elements.default_area_id.innerHTML='<option value="">Use workspace default</option>'+user.areas.filter(a=>a.role===r).map(a=>`<option value="${a.id}" ${saved.default_workspace===r&&saved.default_area_id===a.id?'selected':''}>${esc(a.name)}</option>`).join('');};
+  form.elements.default_workspace.onchange=areas;areas();
   if(user?.roles.includes('admin')) {
     const link=document.createElement('a');link.href='#/application-settings';link.className='btn btn-primary';link.textContent='Global application settings';
     container.querySelector('.page-header').append(link);
   }
   form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
-    try{await api.put('/api/auth/preferences',{api_key:form.elements.api_key.value.trim()||null,model:form.elements.model.value});await render(container);container.querySelector('[role=status]').textContent='AI settings saved.';}
+    try{const theme=form.elements.theme.value;const preferences=await api.put('/api/auth/preferences',{theme,default_workspace:form.elements.default_workspace.value||null,default_area_id:Number(form.elements.default_area_id.value)||null,startup_page:form.elements.startup_page.value,workspace_shortcut:form.elements.workspace_shortcut.value});setTheme(theme);document.dispatchEvent(new CustomEvent('preferenceschange',{detail:preferences}));await render(container);container.querySelector('[role=status]').textContent='Preferences saved. Startup choices apply at your next sign-in.';}
     catch(err){showFormError(form,err.message);}finally{button.disabled=false;}};
-  const remove=container.querySelector('#remove-personal-key');if(remove)remove.onclick=async()=>{if(!await confirmDialog('Remove your personal key and use shared configuration, if available?'))return;try{await api.put('/api/auth/preferences',{api_key:'',model:''});await render(container);}catch(err){showFormError(form,err.message);}};
+  container.querySelector('#personal-notifications').onclick=async()=>{try{await notif.requestPermission();await render(container);}catch(err){toast(err.message,'error');}};
+  container.querySelector('#personal-notification-test').onclick=()=>{if(!notif.sendTest())toast('Notifications are not enabled','error');};
 }
 
-// Retained for a future, separately authorized application-administration screen.
+// Shared configuration: the server authorizes administrators only.
 export async function renderLegacySettings(container) {
-  setTitle('Settings');
+  setTitle('Global settings');
   const [templates, groups, views, geo, ai, pb] = await Promise.all([
     api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(), pricebook.get(),
   ]);
   const perm = notif.permission();
   const onbText = (ai.onboarding_template || []).map(i => `${i.title} | ${i.offset_days} | ${i.priority}`).join('\n');
   container.innerHTML = `
-    <div class="page-header"><h1>Settings</h1></div>
+    <div class="page-header"><h1>Global settings</h1><a class="btn" href="#/settings">My preferences</a></div>
+    <p>Administrator-managed configuration shared by all users. Quote prices and templates pre-fill new quotes; existing quotes are not rewritten.</p>
     <div class="card mb">
       <div class="card-header"><h3>Quote price book</h3><span class="muted small">Monthly prices used to pre-fill every new quote. Blank = $0. Prices can still be changed on each quote.</span>
         <div class="actions"><button class="btn btn-sm" id="pb-add">+ Custom item</button><button class="btn btn-sm btn-primary" id="pb-save">Save prices</button></div></div>
@@ -231,6 +240,9 @@ export async function renderLegacySettings(container) {
     catch (e) { toast(e.message, 'error'); }
   };
   container.querySelector('#notif-test').onclick = () => { if (!notif.sendTest()) toast('Notifications are not enabled', 'error'); };
+  // Personal controls belong on My settings, not shared configuration.
+  container.querySelector('#notif-enable').closest('.card').remove();
+  container.querySelector('#save-rep').closest('.card').remove();
 
   // Templates
   container.querySelector('#add-tpl').onclick = () => openTemplateForm({ onSaved: reload });
@@ -258,6 +270,7 @@ export async function renderLegacySettings(container) {
   container.querySelector('#geo-start').onclick = () => startGeocode(container);
   if (geo.running) pollGeocode(container);
   if (geo.failed && geo.failed.length) showGeoFailed(container, geo);
+  organizeGlobalSettings(container);
 }
 
 function notifLabel(p) {

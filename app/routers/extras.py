@@ -532,11 +532,6 @@ def bulk_geocode_status():
 # ---- Settings (server-side key/value; used for the OpenAI key) --------------
 
 def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    if key in ('openai_api_key', 'openai_model', 'ai_clinic_model') and getattr(conn, 'personal_ai', True) and getattr(conn, 'user', {}).get('id'):
-        personal = conn.execute('SELECT api_key,model FROM user_ai_settings WHERE user_id=?', (conn.user['id'],)).fetchone()
-        if personal and personal['api_key']:
-            if key == 'openai_api_key': return personal['api_key']
-            if personal['model']: return personal['model']
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
 
@@ -555,6 +550,26 @@ def _mask(key: str | None) -> str | None:
     if not key:
         return None
     return key[:3] + "…" + key[-4:] if len(key) > 8 else "…"
+
+
+@router.get('/settings/history')
+def settings_history(conn=Depends(db_dependency)):
+    return [dict(r) for r in conn.execute('SELECT h.id,h.path,h.method,h.created_at,u.display_name AS actor FROM global_settings_history h LEFT JOIN users u ON u.id=h.actor_id ORDER BY h.id DESC LIMIT 100')]
+
+
+@router.post('/settings/test-ai')
+def test_ai_connection(conn=Depends(db_dependency)):
+    key=get_setting(conn,'openai_api_key')
+    if not key: raise HTTPException(422,'Save a shared API key before testing the connection')
+    request=urllib.request.Request('https://api.openai.com/v1/models',headers={'Authorization':'Bearer '+key})
+    try:
+        with urllib.request.urlopen(request,timeout=10) as response:
+            if response.status!=200: raise HTTPException(502,'AI connection could not be verified')
+    except HTTPException: raise
+    except Exception:
+        # Upstream exceptions can contain sensitive headers or request details.
+        raise HTTPException(502,'AI connection failed. Check the shared key, provider access and server network connection.')
+    return {'ok':True,'message':'Connected to OpenAI. Authentication verified; model access, generation and billing limits were not tested.'}
 
 
 @router.get("/settings")

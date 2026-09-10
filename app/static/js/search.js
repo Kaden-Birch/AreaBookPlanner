@@ -1,6 +1,7 @@
 // Global search palette (Ctrl/⌘+K) across clinics, contacts, notes, tasks and locations.
 import { api } from './api.js';
 import { esc, dot, fmtDate, navigate, debounce } from './ui.js';
+import { openWorkspaceSwitcher } from './auth.js';
 
 let overlay = null;
 let items = [];
@@ -22,10 +23,12 @@ export function open() {
   overlay.innerHTML = `
     <div class="palette" role="dialog" aria-label="Search">
       <input type="search" id="palette-input" placeholder="Search clinics, shorthand, contacts, notes, tasks…" autocomplete="off">
+      <button class="btn" id="palette-workspace">Switch workspace / return to previous</button>
       <div class="palette-results" id="palette-results"><div class="palette-hint">Type to search · ↑↓ to move · Enter to open · Esc to close</div></div>
     </div>`;
   document.body.appendChild(overlay);
   const input = overlay.querySelector('#palette-input');
+  overlay.querySelector('#palette-workspace').onclick=()=>{close();openWorkspaceSwitcher();};
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
   input.addEventListener('input', debounce(() => run(input.value), 150));
   input.addEventListener('keydown', (e) => {

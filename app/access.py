@@ -35,7 +35,7 @@ def permission_for(path, method):
         return BUSINESS
     if "/quotes" in path or path.endswith("/quote-defaults") or path.startswith("/api/pricebook"):
         if path.startswith("/api/pricebook") and not read:
-            return {"manager"}
+            return set()  # Global price-book edits are administrator-only.
         return WORKSPACES if read else {"sales", "manager"}
     if path in ("/api/revenue",):
         return BUSINESS
@@ -212,7 +212,6 @@ def scoped_db(request: Request):
         if not area and not is_admin:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
         scoped = ScopedConnection(conn, user)
-        scoped.personal_ai = not request.url.path.startswith('/api/settings')
         technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path)
         audit = ((user['active_role']=='it' or is_admin) and request.method in ('POST','PUT','PATCH','DELETE') and technical
                  and not request.url.path.endswith(('/import/preview','/versions')))
@@ -220,6 +219,10 @@ def scoped_db(request: Request):
             from .topology_history import capture, record_changes
             before = capture(scoped)
         yield scoped
+        if is_admin and request.method in ('POST','PUT','PATCH','DELETE') and (
+            request.url.path=='/api/settings' or request.url.path.startswith(('/api/pricebook','/api/templates'))):
+            # Metadata only: never persist request bodies, keys or template text.
+            conn.execute('INSERT INTO global_settings_history(actor_id,path,method) VALUES (?,?,?)',(user['id'],request.url.path,request.method))
         if audit:
             record_changes(scoped,before,user,request.url.path,request.method)
         conn.commit()

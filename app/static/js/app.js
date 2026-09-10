@@ -21,7 +21,7 @@ import { initNotifications } from './notifications.js';
 import { initSearch } from './search.js';
 import { openClinicForm, openAppointmentForm } from './forms.js';
 import { navigate, toast, toggleTheme, getTheme, esc } from './ui.js';
-import { boot, role, allowedPage, renderAdmin, renderItHome, pruneWorkspaceUI } from './auth.js';
+import { boot, user, role, allowedPage, renderAdmin, renderItHome, pruneWorkspaceUI } from './auth.js';
 
 const ready = boot();
 
@@ -71,6 +71,7 @@ async function route() {
     else if(match.nav==='' && role()==='client_success') await clientsPage.render(app,params,routeParams);
     else await match.page.render(app, params, routeParams);
     pruneWorkspaceUI(app);
+    try {localStorage.setItem(`last-page:${user.id}`,location.hash||'#/');}catch{}
   } catch (e) {
     console.error(e);
     app.innerHTML = `<div class="card empty">Something went wrong: ${esc(e.message)}</div>`;
@@ -89,10 +90,11 @@ document.getElementById('global-add-appointment').onclick = () =>
 // Dark mode toggle (theme itself is applied before first paint in index.html).
 const themeBtn = document.getElementById('theme-toggle');
 const syncThemeBtn = () => { themeBtn.textContent = getTheme() === 'dark' ? '☀' : '☾'; };
+document.addEventListener('themechange',syncThemeBtn);
 themeBtn.onclick = () => { toggleTheme(); syncThemeBtn(); };
 syncThemeBtn();
 
-ready.then(ok => { if(ok && role() !== 'admin') { initNotifications(); initSearch(); } });
+ready.then(ok => { if(ok) { initSearch(); if(role()!=='admin')initNotifications(); } });
 new MutationObserver(() => { if(role()) pruneWorkspaceUI(document.body); }).observe(document.body, {childList:true, subtree:true});
 
 // Surface API failures that escape page code.

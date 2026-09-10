@@ -7,7 +7,20 @@ import {connectPort} from './port-connect.js';
 
 export const speedColour=s=>!s?'#8a8f98':s<1000?'#d9342b':s<2500?'#547ee8':s<10000?'#22a06b':'#ed8b23';
 export const speedLabel=s=>s?(s>=1000?`${s/1000} Gb`:`${s} Mb`):'Unknown speed';
-const parseSpeeds=text=>{const values=text.trim()?text.split(',').map(x=>Number(x.trim())):[];if(values.some(n=>!Number.isInteger(n)||n<1||n>10000000))throw Error('Use comma-separated positive Mbps values.');return [...new Set(values)].sort((a,b)=>a-b);};
+export function parseSpeeds(text,field='Supported speeds') {
+  const input=String(text??'').normalize('NFKC').trim();
+  if(!input)return [];
+  const tokens=input.split(/[,;\n\r]+/).map(s=>s.trim()).filter(Boolean);
+  const values=tokens.map(token=>{
+    const match=token.match(/^(\d+(?:\.\d+)?)\s*(k|m|g|t)?\s*(?:b(?:it)?\s*(?:ps|\/s)?|be)?$/i)||token.match(/^(\d+(?:\.\d+)?)\s*(k|m|g|t)?$/i);
+    if(!match)throw Error(`${field}: “${token}” is not a speed. Enter 1000, 2500, 10000 (Mbps), or 1 Gbps, 2.5 Gbps, 10 Gbps.`);
+    const value=Number(match[1])*({k:0.001,m:1,g:1000,t:1000000}[(match[2]||'m').toLowerCase()]);
+    if(!Number.isInteger(value)||value<1||value>10000000)throw Error(`${field}: “${token}” must represent a whole Mbps value between 1 and 10000000.`);
+    return value;
+  });
+  if(!values.length)throw Error(`${field}: enter a speed such as 1000, or leave the field empty for unknown.`);
+  return [...new Set(values)].sort((a,b)=>a-b);
+}
 const connectors=['unknown','rj45','sfp','sfp+','qsfp','virtual','other'];
 
 export async function openPorts({clinic,deviceId,onChanged}) {
@@ -54,7 +67,8 @@ export async function openPorts({clinic,deviceId,onChanged}) {
   const capabilities=adding=>{
     const single=!adding&&selected.size===1?data.interfaces.find(i=>selected.has(i.id)):null;
     const editor=openModal({title:adding?'Add port group':'Set selected port capabilities',body:`<form>${adding?'<label>Group name<input name="group" required placeholder="24 × GbE"></label><label>Number of ports<input name="count" type="number" min="1" max="96" value="24" required></label><label>Numbering<select name="numbering"><option value="rows">Sequential across rows</option><option value="pairs">Odd/even pairs</option></select></label>':''}<label>Connector<select name="connector">${connectors.map(c=>`<option ${single?.connector===c?'selected':''}>${c}</option>`).join('')}</select></label><label>Supported speeds (Mbps, comma-separated)<input name="speeds" value="${attr(single?.supported_speeds?.join(',')??(adding?'10,100,1000':''))}" placeholder="1000,2500,5000,10000"></label><label>Installed module speeds (SFP/SFP+/QSFP)<input name="module" value="${attr(single?.module_speeds?.join(',')||'')}" placeholder="Blank = module unknown"></label><p class="help">These are capabilities, not a measured link speed. Empty supported speeds means unknown. Bulk editing replaces capabilities on every selected port.</p></form>`,footer:'<button class="btn" data-cancel>Cancel</button><button class="btn btn-primary" data-save>Save</button>'});
-    editor.root.querySelector('[data-cancel]').onclick=()=>editor.close();editor.root.querySelector('[data-save]').onclick=async()=>{const f=editor.body.querySelector('form');if(!f.reportValidity())return;try{const fields=Object.fromEntries(new FormData(f)),speeds=parseSpeeds(fields.speeds),module=fields.module.trim()?parseSpeeds(fields.module):null;let rows=structuredClone(data.interfaces);
+    const speedHint=document.createElement('p');speedHint.className='help';speedHint.textContent='Examples: 1000 or 1000, 2500, 10000. Units also work: 1 Gbps, 2.5 Gbps, 10 Gbps. Leave module speeds blank if no module is documented.';editor.body.querySelector('form').prepend(speedHint);
+    editor.root.querySelector('[data-cancel]').onclick=()=>editor.close();editor.root.querySelector('[data-save]').onclick=async()=>{const f=editor.body.querySelector('form');if(!f.reportValidity())return;try{const fields=Object.fromEntries(new FormData(f)),speeds=parseSpeeds(fields.speeds),module=fields.module.trim()?parseSpeeds(fields.module,'Installed module speeds'):null;let rows=structuredClone(data.interfaces);
       if(adding){const count=Number(fields.count),group=fields.group.trim();if(!group||rows.some(i=>i.port_group===group))throw Error('Use a new, nonempty group name.');if(rows.length+count>100)throw Error('A device supports up to 100 documented interfaces.');for(let index=0;index<count;index++){const number=fields.numbering==='pairs'?(index<Math.ceil(count/2)?index*2+1:(index-Math.ceil(count/2))*2+2):index+1;rows.push({name:`${group} ${number}`,port_group:group,port_order:index,connector:fields.connector,supported_speeds:speeds,module_speeds:module,addresses:[],memberships:[]});}}
       else rows=rows.map(i=>selected.has(i.id)?{...i,connector:fields.connector,supported_speeds:speeds,module_speeds:module}:i);
       if(await save(rows))editor.close();}catch(e){toast(e.message,'error');}};

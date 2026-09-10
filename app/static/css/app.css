@@ -1184,3 +1184,6 @@ tr.row-warn td { background: var(--red-bg); }
 .settings-sections { margin:16px 0; flex-wrap:wrap; }
 .settings-sections [aria-pressed="true"] { background:var(--primary);color:white; }
 #global-settings-content { max-width:1100px; }
+.vlan-assignment-banner { padding: .55rem .8rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+.vlan-assignment-banner[hidden] { display:none; }
+.topology-stage .topology-scene .topology-device.vlan-assigned > rect:first-child { stroke: #22a06b; stroke-width: 4px; stroke-dasharray: 8 3; }

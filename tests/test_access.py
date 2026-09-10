@@ -781,6 +781,32 @@ def test_network_validation_gateway_and_site_boundaries(environment):
     assert staff.get('/api/devices/1/network').json()['interfaces'][0]['id']==iid
 
 
+def test_vlan_subnet_checks_and_assignment_conflicts(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    vlan=staff.post('/api/clinics/1/vlans',json={'tag':25,'name':'Staff','subnets':['10.25.0.0/24','2001:db8:25::/64']}).json()['id']
+    payload={'interfaces':[{'name':'Port 1','memberships':[{'vlan_id':vlan}], 'addresses':[{'address':'10.25.0.5'},{'address':'2001:db8:25::5'},{'address':'fe80::5'}]}]}
+    checks=staff.post('/api/devices/1/network/validate',json=payload)
+    assert checks.status_code==200,checks.text
+    assert not any(c['warning'] for c in checks.json()['checks'])
+    payload['interfaces'][0]['addresses'][0]['address']='10.26.0.5'
+    assert staff.post('/api/devices/1/network/validate',json=payload).json()['checks'][0]['warning']
+    before=staff.get('/api/devices/1/network').json()['interfaces']
+    assert staff.put('/api/devices/1/network',json=payload).status_code==409
+    assert staff.get('/api/devices/1/network').json()['interfaces']==before
+    payload['confirm_subnet_warnings']=True
+    saved=staff.put('/api/devices/1/network',json=payload)
+    assert saved.status_code==200,saved.text
+    payload['expected_interfaces']=before
+    assert staff.put('/api/devices/1/network',json=payload).status_code==409
+    payload['expected_interfaces']=saved.json()['interfaces']
+    assert staff.put('/api/devices/1/network',json=payload).status_code==200
+    payload['interfaces'][0]['addresses'][0]['address']='bad address'
+    assert staff.post('/api/devices/1/network/validate',json=payload).status_code==422
+    switch(staff,'sales')
+    assert staff.post('/api/devices/1/network/validate',json={'interfaces':[]}).status_code==403
+
+
 def test_network_roles_and_remote_records(environment):
     _,staff,_=environment
     switch(staff,'it')

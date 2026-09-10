@@ -3,6 +3,13 @@ import { esc, attr, openModal, toast, showFormError, confirmDialog } from './ui.
 
 const option=(value,label,selected)=>`<option value="${attr(value)}" ${String(value)===String(selected)?'selected':''}>${esc(label)}</option>`;
 
+export async function saveNetwork(deviceId,payload) {
+  const {checks}=await api.post(`/api/devices/${deviceId}/network/validate`,payload);
+  const warnings=checks.filter(c=>c.warning);
+  if(warnings.length&&!await confirmDialog(warnings.map(c=>c.message).join('\n')+'\nSave this documented configuration anyway?',{title:'Address outside VLAN subnet',okLabel:'Save anyway',danger:false}))return null;
+  return api.put(`/api/devices/${deviceId}/network`,{...payload,confirm_subnet_warnings:!!warnings.length});
+}
+
 export async function openNetwork({clinic,deviceId,onChanged}) {
   let data, catalog;
   try { [data,catalog]=await Promise.all([api.get(`/api/devices/${deviceId}/network`),api.get(`/api/clinics/${clinic.id}/vlans`)]); }
@@ -50,10 +57,22 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
   const save=async()=>{
     if(!form.reportValidity())return;
     const button=modal.root.querySelector('[data-save]');button.disabled=true;
-    try{await api.put(`/api/devices/${deviceId}/network`,{interfaces:capture(),ipv6_enabled:form.elements.ipv6_enabled.checked});toast('Network saved','success');modal.close();onChanged?.();}
+    try{if(!await saveNetwork(deviceId,{interfaces:capture(),ipv6_enabled:form.elements.ipv6_enabled.checked}))return;toast('Network saved','success');modal.close();onChanged?.();}
     catch(e){showFormError(form,e.message);}finally{button.disabled=false;}
   };
-  modal.root.querySelector('[data-save]').onclick=save;form.onsubmit=e=>{e.preventDefault();save();};draw();
+  let validationTimer,revision=0;
+  const validate=async()=>{
+    const current=++revision;
+    try {
+      const {checks}=await api.post(`/api/devices/${deviceId}/network/validate`,{interfaces:capture()});
+      if(current!==revision||!host.isConnected)return;
+      host.querySelectorAll('[data-subnet-check]').forEach(el=>el.remove());
+      for(const check of checks){const address=host.querySelectorAll('[data-interface]')[check.interface]?.querySelectorAll('[data-address]')[check.address];if(!address)continue;const p=document.createElement('p');p.dataset.subnetCheck='';p.setAttribute('role','status');p.className=check.warning?'help text-danger':'help';p.textContent=check.message;address.append(p);}
+    }catch(e){if(current!==revision||!host.isConnected)return;host.querySelectorAll('[data-subnet-check]').forEach(el=>el.remove());}
+  };
+  const schedule=()=>{revision++;clearTimeout(validationTimer);validationTimer=setTimeout(validate,300);};
+  form.addEventListener('input',schedule);form.addEventListener('change',schedule);form.addEventListener('click',schedule);
+  modal.root.querySelector('[data-save]').onclick=save;form.onsubmit=e=>{e.preventDefault();save();};draw();schedule();
 }
 
 export async function openVlans({clinic,site,onChanged}) {

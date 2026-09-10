@@ -34,7 +34,7 @@ export function organizeTopology(body) {
   const move=(section,selectors)=>selectors.forEach(selector=>{const el=body.querySelector(selector);if(el)sections[section].append(el.matches('input,select')?el.closest('label'):el);});
   move('Filters',['#topology-search-only','#topology-quick-filter','#topology-subnet','.topology-types','#topology-reset']);
   move('Layout',['#topology-perspective','#topology-orientation','#topology-manual','#topology-auto-layout','#topology-collapse','#topology-expand','#topology-edit']);
-  move('Networks',['#topology-show-vpn','#topology-vpn-up','#topology-manage-vlans','.topology-vlan-bar','#topology-vlan-details']);
+  move('Networks',['#topology-show-vpn','#topology-vpn-up','#topology-manage-vlans','#topology-assign-controls','.topology-vlan-bar','#topology-vlan-details']);
   move('Trace',['#topology-routing','#topology-remote-trace']);
   move('Reports',['.topology-report-menu']);
   for(const detail of [...controls.querySelectorAll(':scope > details')]) {

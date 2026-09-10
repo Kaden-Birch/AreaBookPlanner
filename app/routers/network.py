@@ -125,6 +125,8 @@ class Interface(BaseModel):
         return ':'.join(raw[i:i+2] for i in range(0,12,2)).upper()
 
 class DeviceNetwork(BaseModel):
+    expected_interfaces: list[dict] | None=None
+    confirm_subnet_warnings: bool=False
     ipv6_enabled: bool | None=None
     interfaces: list[Interface]=Field(default_factory=list,max_length=100)
 
@@ -173,9 +175,42 @@ def get_network(did:int,conn=Depends(db_dependency)):
     d=device(conn,did)
     return read_network(conn,did)|{'legacy_ip':d['ip_address'],'legacy_mac':d['mac_address'],'location_id':d['location_id'],'ipv6_enabled':bool(d['ipv6_enabled'])}
 
+def subnet_checks(conn,d,payload):
+    catalog={v['id']:v for v in vlan_list(conn,d['clinic_id']) if v['location_id']==d['location_id']}
+    checks=[]
+    for index,i in enumerate(payload.interfaces):
+        for ai,a in enumerate(i.addresses):
+            vid=a.vlan_id
+            if vid is None and len(i.memberships)==1: vid=i.memberships[0].vlan_id
+            v=catalog.get(vid)
+            ip=ipaddress.ip_address(a.address)
+            warning=False
+            if ip.version==6 and ip.is_link_local:
+                message='IPv6 link-local address — not checked against routed VLAN subnets.'
+            elif not v:
+                message='Select an address VLAN to validate this address.'
+            elif not v['subnets']:
+                message='No subnet configured — address not validated.'
+            else:
+                networks=[ipaddress.ip_network(s) for s in v['subnets'] if ipaddress.ip_network(s).version==ip.version]
+                match=next((n for n in networks if ip in n),None)
+                warning=match is None
+                message=f'Within {v["name"]} — {match}' if match else f'{a.address} is outside {v["name"]} VLAN {v["tag"]} configured IPv{ip.version} subnets.'
+            checks.append({'interface':index,'address':ai,'warning':warning,'message':message})
+    return checks
+
+@router.post('/devices/{did}/network/validate')
+def validate_network(did:int,payload:DeviceNetwork,conn=Depends(db_dependency)):
+    return {'checks':subnet_checks(conn,device(conn,did),payload)}
+
 @router.put('/devices/{did}/network')
 def put_network(did:int,payload:DeviceNetwork,conn=Depends(db_dependency)):
     d=device(conn,did)
+    if payload.expected_interfaces is not None and payload.expected_interfaces!=read_network(conn,did)['interfaces']:
+        raise HTTPException(409,'Interfaces changed while you were assigning VLANs. Close and select the device again.')
+    warnings=[c['message'] for c in subnet_checks(conn,d,payload) if c['warning']]
+    if warnings and not payload.confirm_subnet_warnings:
+        raise HTTPException(409,'Confirm subnet warnings before saving: '+'; '.join(warnings))
     if payload.ipv6_enabled is not None:
         conn.execute('UPDATE devices SET ipv6_enabled=? WHERE id=?',(payload.ipv6_enabled,did))
     existing={r['id'] for r in conn.execute('SELECT id FROM network_interfaces WHERE device_id=?',(did,))}
@@ -228,7 +263,7 @@ def vlan_list(conn,cid,site=None):
         try: location=int(site)
         except ValueError: raise HTTPException(422,'Invalid site')
         clause=' AND v.location_id=?';args.append(location)
-    rows=[dict(r) for r in conn.execute('''SELECT v.*,l.name AS location_name,i.name AS gateway_interface_name,d.name AS gateway_device_name
+    rows=[dict(r) for r in conn.execute('''SELECT v.*,l.name AS location_name,i.name AS gateway_interface_name,d.name AS gateway_device_name,d.id AS gateway_device_id
         FROM vlans v LEFT JOIN clinic_locations l ON l.id=v.location_id
         LEFT JOIN network_interfaces i ON i.id=v.gateway_interface_id LEFT JOIN devices d ON d.id=i.device_id
         WHERE v.clinic_id=?'''+clause+' ORDER BY v.tag,v.id',args)]

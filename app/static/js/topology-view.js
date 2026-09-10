@@ -1,7 +1,7 @@
 import { esc, attr, toast, confirmDialog } from './ui.js';
 import { api } from './api.js';
 import { editTopologyGroup } from './topology-groups.js';
-import { traceDestination, traceVpn, edgeOnPath } from './topology-path.js';
+import { traceDestination, traceVpn, edgeOnPath, destinationDevices } from './topology-path.js';
 import { displayedVpns, vpnDisplayClass } from './topology-vpn-display.js';
 import { openRemoteTrace } from './topology-remote-trace.js';
 import { displayGraph, layoutGraph, layoutPhysical, layoutSubnets, nodeHeight, linkSpeedClass } from './topology-graph.js';
@@ -10,6 +10,7 @@ import { exportTopology } from './topology-reporting.js';
 import { matchesTopologySearch, matchesTopologyFilter } from './topology-search.js';
 import { validPositions, sceneBounds, viewportRect } from './topology-navigation.js';
 import { organizeTopology } from './topology-workspace.js';
+import {assignDeviceVlan} from './vlan-assignment.js';
 
 export function mountTopology(body, topo, meta, key, actions) {
   let prefs;
@@ -28,6 +29,7 @@ export function mountTopology(body, topo, meta, key, actions) {
   let savedPositions=loadPositions();
   const savePositions=()=>{try{localStorage.setItem(positionKey(),JSON.stringify(savedPositions));}catch{ /* Session positions still work without storage. */ }};
   const vlanCatalog=topo.vlans||[];
+  let assigning=false,assignmentBusy=false;
   let selectedVlans=new Set((Array.isArray(prefs?.vlans)?prefs.vlans:[]).filter(id=>vlanCatalog.some(v=>v.id===id)));
   let vlanOnly=!!prefs?.vlanOnly;
   let showVpn=prefs?.showVpn===true, quickFilter='', searchOnly=false;
@@ -61,6 +63,7 @@ export function mountTopology(body, topo, meta, key, actions) {
       <label>Layout<select id="topology-orientation"><option value="horizontal" ${orientation==='horizontal'?'selected':''}>Horizontal →</option><option value="vertical" ${orientation==='vertical'?'selected':''}>Vertical ↓</option></select></label>
       <label><input type="checkbox" id="topology-manual"> Move devices</label><button class="btn btn-sm" id="topology-auto-layout">Reset positions</button>
       <button class="btn btn-sm" id="topology-manage-vlans">Manage VLANs</button>
+      <div id="topology-assign-controls"><button class="btn btn-sm" id="topology-assign" ${vlanCatalog.length?'':'disabled'}>Assign VLANs</button><label>VLAN to assign<select id="topology-assign-vlan">${vlanCatalog.map(v=>`<option value="${v.id}">${esc(v.location_name||'Main site')} · ${v.tag} · ${esc(v.name)}</option>`).join('')}</select></label><p class="help">Click devices consecutively to assign interfaces. Documentation only; no physical configuration changes.</p></div>
       <button class="btn btn-sm" id="topology-routing">VPN IP path review</button>
       <button class="btn btn-sm" id="topology-remote-trace">Cross-site path</button>
       <details class="topology-report-menu"><summary>Administration & reports</summary><div class="actions"><button class="btn btn-sm" id="topology-import">Import CSV</button><button class="btn btn-sm" id="topology-history">Versions & audit</button><button class="btn btn-sm" data-export="json">JSON</button><button class="btn btn-sm" data-export="csv">CSV</button><button class="btn btn-sm" data-export="svg">SVG</button><button class="btn btn-sm" data-export="png">PNG</button><button class="btn btn-sm" data-export="print">Print / PDF</button></div><p class="help">Exports use visible devices. Versions capture complete local documentation for this site.</p></details>
@@ -90,6 +93,29 @@ export function mountTopology(body, topo, meta, key, actions) {
   ${topo.vpn?.length ? `<details class="card"><summary>VPN links (${topo.vpn.length})</summary><div class="actions">${topo.vpn.map(v=>`<button class="btn btn-sm" data-vpn-link="${v.vpn_id}">${esc(v.remote.kind==='endpoint'?v.remote.name:v.remote.clinic_name+' · '+v.remote.site_name)}</button>`).join('')}</div></details>`:''}`;
   organizeTopology(body);
   const canvas = body.querySelector('.topology-canvas'), scene = body.querySelector('.topology-scene');
+  const assignmentBanner=document.createElement('div');assignmentBanner.className='vlan-assignment-banner';assignmentBanner.hidden=true;canvas.before(assignmentBanner);
+  const assignmentVlan=()=>vlanCatalog.find(v=>v.id===Number(body.querySelector('#topology-assign-vlan').value));
+  const assignmentHighlight=()=>scene.querySelectorAll('[data-device]').forEach(el=>el.classList.toggle('vlan-assigned',assigning&&(byId.get(Number(el.dataset.device))?.vlan_memberships||[]).some(m=>m.vlan_id===assignmentVlan()?.id)));
+  const assignmentState=()=>{
+    assignmentBanner.hidden=!assigning;
+    body.querySelector('#topology-assign').textContent=assigning?'Done assigning':'Assign VLANs';
+    body.querySelector('#topology-assign').setAttribute('aria-pressed',String(assigning));
+    const v=assignmentVlan();assignmentBanner.innerHTML=assigning?`<span>Assigning ${esc(v?.name)} · VLAN ${v?.tag} — click devices. Outlined devices already have this VLAN.</span> <button class="btn btn-sm">Done</button>`:'';
+    assignmentBanner.querySelector('button')?.addEventListener('click',()=>{assigning=false;assignmentState();});assignmentHighlight();
+  };
+  body.querySelector('#topology-assign').onclick=()=>{assigning=!assigning;assignmentState();};
+  body.querySelector('#topology-assign-vlan').onchange=assignmentState;
+  body.addEventListener('keydown',e=>{if(e.key==='Escape'&&assigning){assigning=false;assignmentState();}},true);
+  const assignClick=async(id)=>{
+    if(assignmentBusy)return;assignmentBusy=true;
+    const vlan=assignmentVlan();
+    try{const result=await assignDeviceVlan(id,vlan,vlanCatalog);if(result){const n=byId.get(id);n.vlan_memberships=result.interfaces.flatMap(i=>i.memberships);n.addresses=result.interfaces.flatMap(i=>i.addresses);n.interface_count=result.interfaces.length;
+      try{const fresh=await api.get(`/api/clinics/${actions.reportContext.clinic_id}/topology`,{site:actions.reportContext.site});const updated=[...(fresh.nodes||[]),...(fresh.offsite||[]),...(fresh.physical_nodes||[])].find(node=>node.id===id);if(updated)Object.assign(n,updated);topo.documentation=fresh.documentation;}catch{toast('Assignment saved. Refresh to update documentation review.');}
+      if(body.isConnected)draw(false);toast(`VLAN ${vlan.tag} assigned to ${n.name}`,'success');}}
+    catch(e){toast(e.message,'error');}finally{assignmentBusy=false;}
+  };
+  canvas.addEventListener('click',e=>{const device=e.target.closest('[data-device]');if(assigning&&device){e.preventDefault();e.stopImmediatePropagation();if(!suppressClick)assignClick(Number(device.dataset.device));}},true);
+  canvas.addEventListener('keydown',e=>{const device=e.target.closest('[data-device]');if(assigning&&device&&['Enter',' '].includes(e.key)){e.preventDefault();e.stopImmediatePropagation();assignClick(Number(device.dataset.device));}},true);
   for(const [value,label] of [['open-work','Open tickets or tasks'],['open-tickets','Open tickets'],['open-tasks','Open tasks']]){const option=document.createElement('option');option.value=value;option.textContent=label;body.querySelector('#topology-quick-filter').append(option);}
   const inspector = body.querySelector('#topology-inspector'), search = body.querySelector('#topology-search');
   const minimap=body.querySelector('.topology-minimap'), miniSvg=minimap.querySelector('svg');
@@ -181,6 +207,7 @@ export function mountTopology(body, topo, meta, key, actions) {
     scene.querySelectorAll('[role=button]').forEach(el=>el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();el.onclick?.(e);}});
     if(refit)fit();else camera();
     highlight();
+    assignmentHighlight();
     vlanDetails();
     results();
     scene.querySelectorAll('[data-device]').forEach(el=>el.classList.toggle('path-dim',!!tracedPath&&!tracedPath.includes(Number(el.dataset.device))));
@@ -229,17 +256,25 @@ export function mountTopology(body, topo, meta, key, actions) {
   const vpnOptions=document.createElement('optgroup');vpnOptions.label='VPN remote endpoints (documented tunnel)';
   for(const v of topo.vpn||[]){const option=document.createElement('option');option.value=`vpn:${v.vpn_id}`;option.textContent=(v.remote.kind==='endpoint'?v.remote.name:v.remote.clinic_name+' · '+v.remote.site_name)+` · ${v.name||'VPN'} (${v.status||'unknown'})`;vpnOptions.append(option);}
   body.querySelector('#topology-path-target').append(vpnOptions);
+  for(const side of ['source','target']) {
+    const endpoint=body.querySelector(`#topology-path-${side}`),label=document.createElement('label');
+    label.textContent=side==='source'?'Source VLAN':'Destination VLAN';
+    const select=document.createElement('select');select.id=`topology-path-${side}-vlan`;label.append(select);endpoint.closest('label').after(label);
+    const update=()=>{const nodes=side==='source'?all.filter(n=>String(n.id)===endpoint.value):destinationDevices(all,endpoint.value);const ids=new Set(nodes.flatMap(n=>(n.vlan_memberships||[]).map(m=>m.vlan_id)));select.innerHTML='<option value="">Automatic (single VLAN only)</option>'+vlanCatalog.filter(v=>ids.has(v.id)).map(v=>`<option value="${v.id}">${v.tag} · ${esc(v.name)}</option>`).join('');label.hidden=ids.size<=1;};
+    endpoint.addEventListener('change',update);update();
+  }
   body.querySelector('#topology-trace').onclick=()=>{
     const source=Number(body.querySelector('#topology-path-source').value),target=body.querySelector('#topology-path-target').value;
     const vpn=target.startsWith('vpn:')?(topo.vpn||[]).find(v=>String(v.vpn_id)===target.slice(4)):null;
     tracedVpn=vpn?.vpn_id??null;
     if(vpn){showVpn=true;vpnOnlyUp=false;body.querySelector('#topology-vpn-up').checked=false;body.querySelector('#topology-show-vpn').checked=true;save();}
-    const result=vpn?traceVpn(all,edges,source,vpn):traceDestination(all,edges,source,target);
+    const result=vpn?traceVpn(all,edges,source,vpn):traceDestination(all,edges,source,target,vlanCatalog,{sourceVlan:body.querySelector('#topology-path-source-vlan').value,targetVlan:body.querySelector('#topology-path-target-vlan').value});
     tracedPath=result.path;draw();
     const host=body.querySelector('#topology-path-result');
-    const explanation=target.startsWith('subnet:')?`Subnet destination: showing the nearest documented member, not a gateway or routed path. ${result.connectedCount} of ${result.candidateCount} members have a documented chain.`:target.startsWith('service:')?'Service destination: showing its host device, not verification that the service or its ports are reachable.':'';
+    const explanation=target.startsWith('subnet:')?`Subnet destination: nearest member with a documented path, respecting configured VLAN gateways. ${result.connectedCount} of ${result.candidateCount} members have a documented chain.`:target.startsWith('service:')?'Service destination: showing its host device, not verification that the service or its ports are reachable.':'';
     host.innerHTML=`<p>${esc(explanation)}</p>`+(tracedPath?'<p>Documented adjacency only — reachability unverified.</p>'+tracedPath.map(id=>`<button class="btn btn-sm" data-path-device="${id}">${esc(byId.get(id).name)}</button>`).join(' → '):'<p>No documented connection chain found in this view. This does not prove the devices cannot communicate.</p>');
     host.querySelectorAll('[data-path-device]').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.pathDevice);if(positions.has(id))focus(id);else actions.device(id);});
+    if(!vpn&&result.warning){const note=document.createElement('p');note.textContent=result.warning;host.append(note);}
     if(vpn){const note=document.createElement('p');note.textContent=result.warning;host.append(note);const button=document.createElement('button');button.className='btn btn-sm';button.textContent='Inspect VPN tunnel and remote endpoint';button.onclick=()=>actions.vpn(vpn.vpn_id);host.append(button);}
     if(tracedPath?.length>1){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Documented VLAN memberships along this chain';details.append(summary);
       const note=document.createElement('p');note.textContent='Memberships are device-level documentation, not proof of carried VLANs or inter-VLAN routing. Use connection details to inspect ports and trunks.';details.append(note);
@@ -298,7 +333,7 @@ export function mountTopology(body, topo, meta, key, actions) {
   canvas.addEventListener('wheel',e=>{e.preventDefault();const r=canvas.getBoundingClientRect();zoom(e.deltaY<0?1.1:1/1.1,e.clientX-r.left,e.clientY-r.top);},{passive:false});
   canvas.addEventListener('pointerdown',e=>{
     const device=e.target.closest('[data-device]');
-    if(e.button===0&&manualMode&&device){const id=Number(device.dataset.device);drag={id,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);e.preventDefault();return;}
+    if(e.button===0&&manualMode&&device&&!assigning){const id=Number(device.dataset.device);drag={id,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);e.preventDefault();return;}
     if(e.button!==0||e.target.closest('[role=button],button'))return;
     drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);
   });

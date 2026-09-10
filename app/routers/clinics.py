@@ -592,7 +592,7 @@ def update_clinic(clinic_id: int, payload: ClinicIn, conn: sqlite3.Connection = 
     before = _get_clinic_or_404(conn, clinic_id)
     data = payload.model_dump()
     data['area_id'] = before['area_id']
-    if conn.user['active_role'] == 'client_success':
+    if conn.user['active_role'] == 'client_success' and 'admin' not in conn.user.get('roles', []):
         editable = {'phone','fax','email','website','hours','notes','next_follow_up','display_address','name'}
         for key in data:
             if key not in editable:
@@ -634,6 +634,12 @@ def update_location(
 def assign_area(clinic_id: int, body: dict, conn=Depends(db_dependency)):
     _get_clinic_or_404(conn, clinic_id)
     aid = body.get('area_id')
+    if 'admin' in conn.user.get('roles', []):
+        if not conn.execute('SELECT id FROM areas WHERE id=? AND is_active=1', (aid,)).fetchone():
+            raise HTTPException(422, 'Choose an active Area')
+        conn.execute('UPDATE clinics SET area_id=? WHERE id=?', (aid, clinic_id))
+        conn.execute('INSERT INTO account_audit(actor_id,action,target_id) VALUES (?,?,?)', (conn.user['id'],'assign_clinic_area',clinic_id))
+        return {'id': clinic_id, 'area_id': aid}
     if not conn.raw.execute('''SELECT 1 FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
         WHERE user_id=? AND role='manager' AND ua.area_id=? AND a.is_active=1''', (conn.user['id'],aid)).fetchone():
         raise HTTPException(403,'Destination Area is not assigned to your Manager role')

@@ -532,7 +532,7 @@ def bulk_geocode_status():
 # ---- Settings (server-side key/value; used for the OpenAI key) --------------
 
 def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    if key in ('openai_api_key', 'openai_model', 'ai_clinic_model') and getattr(conn, 'user', {}).get('id'):
+    if key in ('openai_api_key', 'openai_model', 'ai_clinic_model') and getattr(conn, 'personal_ai', True) and getattr(conn, 'user', {}).get('id'):
         personal = conn.execute('SELECT api_key,model FROM user_ai_settings WHERE user_id=?', (conn.user['id'],)).fetchone()
         if personal and personal['api_key']:
             if key == 'openai_api_key': return personal['api_key']

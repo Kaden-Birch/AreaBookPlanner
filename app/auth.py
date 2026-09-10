@@ -1,4 +1,4 @@
-"""Local accounts and server-owned workspace sessions. No operational admin bypass."""
+"""Local accounts and server-owned sessions; administrators have full application access."""
 import hashlib
 import hmac
 import secrets
@@ -101,6 +101,8 @@ def session_user(request, conn):
         raise HTTPException(401, "Please sign in")
     user = dict(row)
     user["roles"] = [r[0] for r in conn.execute("SELECT role FROM user_roles WHERE user_id=?", (user["id"],))]
+    if 'admin' in user['roles']:
+        user['roles'] = list(ROLES)
     if user["active_role"] and user["active_role"] not in user["roles"]:
         raise HTTPException(401, "Your access changed. Please sign in again")
     return user
@@ -111,6 +113,10 @@ def public_user(conn, user):
     result["areas"] = [dict(r) for r in conn.execute("""SELECT a.*, ua.role, ua.is_default
         FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
         WHERE ua.user_id=? AND a.is_active=1 ORDER BY a.name""", (user["id"],))]
+    if 'admin' in user['roles']:
+        result['areas'] = [dict(a) | {'role': role, 'is_default': 0}
+                           for a in conn.execute('SELECT * FROM areas WHERE is_active=1 ORDER BY name')
+                           for role in ROLES if role != 'admin']
     return result
 
 
@@ -241,6 +247,8 @@ def workspace(data: Workspace, request: Request):
             raise HTTPException(403, "Role is not assigned")
         areas = conn.execute("""SELECT ua.area_id FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
             WHERE user_id=? AND role=? AND a.is_active=1 ORDER BY is_default DESC, a.name""", (user["id"], data.role)).fetchall()
+        if 'admin' in user['roles']:
+            areas = conn.execute('SELECT id FROM areas WHERE is_active=1 ORDER BY name').fetchall()
         area_id = data.area_id if data.area_id is not None else (areas[0][0] if areas else None)
         if area_id is not None and area_id not in [r[0] for r in areas]:
             raise HTTPException(403, "Area is not assigned to this role")

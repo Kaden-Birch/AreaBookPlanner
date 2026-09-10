@@ -2,6 +2,7 @@
 import { api, getMeta, clinics, settings as settingsApi, pricebook } from '../api.js';
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, setTitle, getRepName, setRepName, options } from '../ui.js';
 import * as notif from '../notifications.js';
+import { user } from '../auth.js';
 
 export async function render(container) {
   setTitle('My settings');
@@ -15,6 +16,10 @@ export async function render(container) {
     <button class="btn btn-primary" type="submit">Save AI settings</button>${saved.ai_configured?'<button class="btn" type="button" id="remove-personal-key">Remove personal key</button>':''}
     <p role="status" aria-live="polite"></p></form><div class="card" style="max-width:680px"><h2>Appearance and account</h2><p>Use the theme button in the top bar to change appearance. Use Password to change your sign-in password. Your workspace and Area choices remain in the account menu.</p></div>`;
   const form=container.querySelector('form');
+  if(user?.roles.includes('admin')) {
+    const link=document.createElement('a');link.href='#/application-settings';link.className='btn btn-primary';link.textContent='Global application settings';
+    container.querySelector('.page-header').append(link);
+  }
   form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
     try{await api.put('/api/auth/preferences',{api_key:form.elements.api_key.value.trim()||null,model:form.elements.model.value});await render(container);container.querySelector('[role=status]').textContent='AI settings saved.';}
     catch(err){showFormError(form,err.message);}finally{button.disabled=false;}};
@@ -22,7 +27,7 @@ export async function render(container) {
 }
 
 // Retained for a future, separately authorized application-administration screen.
-async function renderLegacySettings(container) {
+export async function renderLegacySettings(container) {
   setTitle('Settings');
   const [templates, groups, views, geo, ai, pb] = await Promise.all([
     api.get('/api/templates'), api.get('/api/groups'), api.get('/api/views'), api.get('/api/geocode/bulk'), settingsApi.get(), pricebook.get(),
@@ -161,7 +166,7 @@ async function renderLegacySettings(container) {
       </div>
     </div>`;
 
-  const reload = () => render(container);
+  const reload = () => renderLegacySettings(container);
   // Price book
   const collectPb = () => [...container.querySelectorAll('#pb-table tbody tr')].map(tr => {
     const it = pb.items[Number(tr.dataset.i)] || {};

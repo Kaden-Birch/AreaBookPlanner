@@ -1,5 +1,13 @@
 # Authentication, role workspaces and Areas
 
+## Administrator access — updated September 9, 2026
+
+Admin now grants full application access, superseding the original administration-only policy below. Existing admin accounts automatically receive all workspace choices and all active Areas without additional assignments. Area selection sets workspace context; it does not restrict an administrator's data access. Non-admin users retain their existing role and Area restrictions.
+
+Use the top-right workspace selector to enter IT, Sales, Manager or Client Success. Administration remains a separate screen for managing accounts and Areas. Global application settings are available from Administration or My settings at `#/application-settings`; personal API-key preferences remain at `#/settings`. Global settings read and update the shared key, not the administrator's personal override. Password-change requirements, authentication and cross-origin protections still apply to admins.
+
+Grant Admin only to fully trusted operators: it permits cross-Area records, global configuration, and the legacy backup/import/export functions. No production accounts or data need to be migrated manually for this policy change.
+
 ## Deployment / migration checklist
 
 1. Back up the database and attachment directory before upgrading. For a consistent

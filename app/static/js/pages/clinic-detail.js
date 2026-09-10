@@ -336,7 +336,7 @@ export async function render(container, params, routeParams) {
   if(role()==='manager') {
     const areaControl=document.createElement('label');
     areaControl.innerHTML=`Service Area <select>${user.areas.filter(a=>a.role==='manager').map(a=>`<option value="${a.id}" ${a.id===clinic.area_id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>`;
-    container.querySelector('.page-header').append(areaControl);
+    container.querySelector('.clinic-header').append(areaControl);
     areaControl.querySelector('select').onchange=async e=>{
       try {await api.patch(`/api/clinics/${clinic.id}/area`,{area_id:Number(e.target.value)});await api.post('/api/auth/workspace',{role:'manager',area_id:Number(e.target.value)});location.reload();}
       catch(err){toast(err.message,'error');e.target.value=String(clinic.area_id);}

@@ -117,6 +117,9 @@ class ScopedConnection:
     def __init__(self, conn, user):
         self.raw = conn
         self.user = user
+        if 'admin' in user.get('roles', []):
+            self.rules = {}; self.columns = {}; self.allowed = {}; self.prefix = ''
+            return
         self.rules = scope_rules(user["active_role"], user["area_id"])
         self.columns = {table: [r[1] for r in conn.execute(f"PRAGMA table_info({table})")] for table in self.rules}
         ctes = []
@@ -201,15 +204,17 @@ def scoped_db(request: Request):
         user = session_user(request, conn)
         if user["must_change_password"]:
             raise HTTPException(403, "Change your password first")
-        if user["active_role"] not in permission_for(request.url.path, request.method):
+        is_admin = 'admin' in user['roles']
+        if not is_admin and user["active_role"] not in permission_for(request.url.path, request.method):
             raise HTTPException(403, "This action is unavailable in your workspace")
         area = conn.execute("""SELECT 1 FROM user_role_areas ua JOIN areas a ON a.id=ua.area_id
             WHERE user_id=? AND role=? AND ua.area_id=? AND a.is_active=1""", (user["id"],user["active_role"],user["area_id"])).fetchone()
-        if not area:
+        if not area and not is_admin:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
         scoped = ScopedConnection(conn, user)
+        scoped.personal_ai = not request.url.path.startswith('/api/settings')
         technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path)
-        audit = (user['active_role']=='it' and request.method in ('POST','PUT','PATCH','DELETE') and technical
+        audit = ((user['active_role']=='it' or is_admin) and request.method in ('POST','PUT','PATCH','DELETE') and technical
                  and not request.url.path.endswith(('/import/preview','/versions')))
         if audit:
             from .topology_history import capture, record_changes

@@ -44,6 +44,7 @@ const routes = [
   { pattern: /^\/tasks$/, page: tasksPage, nav: 'tasks' },
   { pattern: /^\/analytics$/, page: analyticsPage, nav: 'analytics' },
   { pattern: /^\/settings$/, page: settingsPage, nav: 'settings' },
+  { pattern: /^\/application-settings$/, page: {render: settingsPage.renderLegacySettings}, nav: 'application-settings' },
   { pattern: /^\/call-sheet$/, page: callSheetPage, nav: 'calendar' },
 ];
 
@@ -52,7 +53,7 @@ const app = document.getElementById('app');
 
 async function route() {
   if (!(await ready)) return;
-  if (role() === 'admin' && location.hash !== '#/settings') { await renderAdmin(app); return; }
+  if (role() === 'admin' && !['#/settings','#/application-settings'].includes(location.hash)) { await renderAdmin(app); return; }
   const hash = window.location.hash.replace(/^#/, '') || '/';
   const [path, query = ''] = hash.split('?');
   const params = new URLSearchParams(query);

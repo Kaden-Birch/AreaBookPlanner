@@ -86,6 +86,7 @@ function accountMenu() {
 }
 
 export function allowedPage(nav) {
+  if(nav==='application-settings') return !!user?.roles.includes('admin');
   if(nav==='settings') return true;
   if(role()==='admin') return false;
   if(['settings'].includes(nav)) return false;
@@ -95,6 +96,7 @@ export function allowedPage(nav) {
 }
 
 export function pruneWorkspaceUI(root) {
+  if(user?.roles.includes('admin') && location.hash==='#/application-settings') return;
   if(role()==='admin') return;
   const hide=selector=>root.querySelectorAll(selector).forEach(el=>{el.hidden=true;});
   if(!technical()) {
@@ -139,11 +141,13 @@ export async function renderItHome(container) {
 
 export async function renderAdmin(container) {
   const [users,areas,clinics]=await Promise.all([api.get('/api/admin/users'),api.get('/api/admin/areas'),api.get('/api/admin/clinic-areas')]);
+  const adminIntro='<p>Administrators have access to every workspace and all Areas. Choose a workspace in the top-right menu to open its interface.</p><p><a class="btn btn-primary" href="#/application-settings">Global application settings</a> <a class="btn" href="#/settings">My settings</a></p>';
   container.innerHTML=`<h1>Administration</h1><div class="card"><h2>Users</h2><button class="btn" id="add-user">+ Add user</button>
     ${users.map(u=>`<p><strong>${esc(u.display_name)}</strong> · ${esc(u.username)} · ${u.assignments.map(a=>roleNames[a.role]).join(', ')} · ${u.is_active?'Active':'Inactive'} <button class="btn btn-sm" data-user="${u.id}">Edit / reset password</button></p>`).join('')}</div>
     <div class="card"><h2>Areas</h2><button class="btn" id="add-area">+ Add Area</button>${areas.map(a=>`<p>${esc(a.name)} · ${a.is_active?'Active':'Inactive'} <button class="btn btn-sm" data-area="${a.id}">Edit</button></p>`).join('')}</div>
     <div class="card"><h2>Clinic Area assignments</h2><p>Assign existing clinics explicitly. Unassigned clinics are hidden from staff. Only provisioning metadata is shown here.</p>
     ${clinics.map(c=>`<p>${esc(c.name)} · ${esc(c.city||'')} <select aria-label="Service Area for ${attr(c.name)}" data-clinic="${c.id}"><option value="" disabled ${!c.area_id?'selected':''}>Unassigned</option>${areas.map(a=>`<option value="${a.id}" ${c.area_id===a.id?'selected':''} ${!a.is_active?'disabled':''}>${esc(a.name)}${!a.is_active?' (inactive)':''}</option>`).join('')}</select></p>`).join('')}</div><div id="admin-editor"></div>`;
+  container.querySelector('h1').insertAdjacentHTML('afterend',adminIntro);
   container.querySelectorAll('[data-clinic]').forEach(el=>el.onchange=async()=>{if(el.value) await api.put(`/api/admin/clinic-areas/${el.dataset.clinic}`,{area_id:Number(el.value)});});
   const areaForm=(a={})=>{
     const editor=container.querySelector('#admin-editor');
@@ -163,7 +167,7 @@ export async function renderAdmin(container) {
       <label><input type="checkbox" name="is_active" ${u.is_active!==0?'checked':''}> Active</label>
       <label><input type="checkbox" name="must_change_password" ${u.must_change_password!==0?'checked':''}> Require password change</label>
       ${Object.entries(roleNames).map(([r,label])=>{const as=u.assignments.find(a=>a.role===r);return `<fieldset data-role="${r}"><legend><label><input type="checkbox" name="enabled" ${as?'checked':''}> ${label}</label></legend>
-      ${r==='admin'?'User and Area administration only':`${areas.filter(a=>a.is_active).map(a=>`<label style="margin-right:12px"><input type="checkbox" name="area" value="${a.id}" ${as?.area_ids.includes(a.id)?'checked':''}> ${esc(a.name)}</label>`).join('')}
+      ${r==='admin'?'Full access to every workspace, all Areas and global settings':`${areas.filter(a=>a.is_active).map(a=>`<label style="margin-right:12px"><input type="checkbox" name="area" value="${a.id}" ${as?.area_ids.includes(a.id)?'checked':''}> ${esc(a.name)}</label>`).join('')}
       <label>Default <select name="default_area_id"><option value="">Choose Area</option>${areas.filter(a=>a.is_active).map(a=>`<option value="${a.id}" ${as?.default_area_id===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></label>`}</fieldset>`;}).join('')}
       <p role="alert"></p><button class="btn btn-primary">Save user</button><p>Changing an account signs that user out of existing sessions.</p></form>`;
     editor.scrollIntoView();editor.querySelector('form').onsubmit=async e=>{e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f));

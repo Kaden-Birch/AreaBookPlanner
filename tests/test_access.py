@@ -154,10 +154,31 @@ def test_login_and_setup(environment):
         assert anonymous.get('/api/clinics').status_code==401
         assert anonymous.get('/api/search?q=secret').status_code==401
         assert anonymous.post('/api/auth/setup',json={'username':'other','password':PASSWORD}).status_code==409
-    assert admin.get('/api/clinics').status_code==403
+    assert admin.get('/api/clinics').status_code==200
     assert staff.get('/api/admin/users').status_code==403
     assert staff.post('/api/auth/workspace',json={'role':'admin'}).status_code==403
     assert staff.post('/api/auth/workspace',json={'role':'sales','area_id':areas['Calgary']}).status_code==403
+
+
+def test_admin_all_workspaces_areas_and_global_settings(environment):
+    admin, staff, areas = environment
+    me=admin.get('/api/auth/me').json()
+    assert set(me['roles']) == {'admin','it','sales','manager','client_success'}
+    assert {a['id'] for a in me['areas']} == set(areas.values())
+    assert len(admin.get('/api/clinics').json()) == 3
+    for workspace in ('it','sales','manager','client_success'):
+        response=admin.post('/api/auth/workspace',json={'role':workspace,'area_id':areas['Calgary']})
+        assert response.status_code==200, response.text
+        assert admin.get('/api/clinics/1/topology').status_code==200
+        assert admin.get('/api/clinics/3').status_code==200
+    assert admin.put('/api/settings',json={'openai_api_key':'test-shared-key'}).status_code==200
+    assert admin.put('/api/auth/preferences',json={'api_key':'test-personal-key'}).status_code==200
+    settings=admin.get('/api/settings')
+    assert settings.status_code==200 and settings.json()['ai_configured']
+    assert 'test-personal-key' not in settings.text and 'test-shared-key' not in settings.text
+    assert admin.patch('/api/clinics/1/area',json={'area_id':areas['Calgary']}).status_code==200
+    assert staff.get('/api/settings').status_code==403
+    assert staff.post('/api/auth/workspace',json={'role':'admin'}).status_code==403
 
 
 def test_client_scope_lists_search_and_direct_ids(environment):

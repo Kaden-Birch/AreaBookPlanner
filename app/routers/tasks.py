@@ -36,7 +36,7 @@ def _get_or_404(conn: sqlite3.Connection, task_id: int) -> dict:
 
 def _validate(conn: sqlite3.Connection, data: dict) -> None:
     if data.get('device_id') is not None:
-        if conn.user['active_role']!='it' or data.get('visibility')!='technical':
+        if (conn.user['active_role']!='it' and 'admin' not in conn.user.get('roles', [])) or data.get('visibility')!='technical':
             raise HTTPException(403,'Device-linked tasks must be technical IT tasks')
         d=conn.execute('SELECT clinic_id FROM devices WHERE id=?',(data['device_id'],)).fetchone()
         if not d or d['clinic_id']!=data.get('clinic_id'):raise HTTPException(422,'Device must belong to the task clinic')

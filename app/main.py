@@ -77,7 +77,7 @@ async def access_gate(request: Request, call_next):
                     user = session_user(request, conn)
                     if user["must_change_password"]:
                         raise HTTPException(403, "Change your password first")
-                    if not path.startswith("/api/admin/") and user["active_role"] not in permission_for(path, request.method):
+                    if 'admin' not in user['roles'] and not path.startswith("/api/admin/") and user["active_role"] not in permission_for(path, request.method):
                         raise HTTPException(403, "This action is unavailable in your workspace")
             except HTTPException as exc:
                 return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)

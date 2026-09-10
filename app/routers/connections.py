@@ -1,11 +1,27 @@
 """Documentation for actual device links; never accepts derived display shortcuts."""
 from typing import Literal
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from ..database import db_dependency
 from .network import read_network, vlan_list
 
 router=APIRouter(prefix='/api/clinics/{cid}/connections',tags=['connections'])
+
+def effective_speeds(interface):
+    if not interface:return set()
+    speeds=set(interface.get('supported_speeds') or [])
+    if interface.get('connector') in ('sfp','sfp+','qsfp'):
+        return speeds & set(interface.get('module_speeds') or [])
+    return speeds
+
+def inferred_speed(source,target):
+    return max(effective_speeds(source)&effective_speeds(target),default=None)
+
+def ensure_port_available(conn,iid,parent,child):
+    row=conn.execute('''SELECT id FROM connection_details WHERE (source_interface_id=? OR target_interface_id=?)
+        AND NOT (uplink_id=? AND device_id=?) AND media NOT IN ('virtual','wireless')''',(iid,iid,parent,child)).fetchone()
+    if row:raise HTTPException(409,'This physical port is already connected. Disconnect or change the existing connection first.')
 
 class Details(BaseModel):
     source_interface_id: int | None=None
@@ -19,6 +35,30 @@ class Details(BaseModel):
     admin_status: Literal['unknown','enabled','disabled']='unknown'
     notes: str | None=Field(default=None,max_length=10000)
 
+class PortAttachment(BaseModel):
+    parent: int
+    child: int
+    source_interface_id: int | None=None
+    target_interface_id: int | None=None
+
+@router.post('/attach')
+def attach_ports(cid:int,payload:PortAttachment,conn=Depends(db_dependency)):
+    from .devices import _check_uplink
+    parent,child=payload.parent,payload.child
+    d=conn.execute('SELECT * FROM devices WHERE id=? AND clinic_id=?',(child,cid)).fetchone()
+    if not d:raise HTTPException(404,'Device not found')
+    _check_uplink(conn,cid,child,parent)
+    if conn.execute('SELECT id FROM device_links WHERE device_id=? AND uplink_id=?',(parent,child)).fetchone():raise HTTPException(409,'These devices already have a reverse connection. Edit that connection instead.')
+    if d['uplink_id'] is None:conn.execute("UPDATE devices SET uplink_id=?,link_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(parent,'virtual' if d['device_type']=='vm' else 'ethernet',child))
+    elif d['uplink_id']!=parent and not conn.execute('SELECT id FROM device_links WHERE device_id=? AND uplink_id=?',(child,parent)).fetchone():
+        conn.execute("INSERT INTO device_links(device_id,uplink_id,link_type) VALUES (?,?,'ethernet')",(child,parent))
+    old=conn.execute('SELECT * FROM connection_details WHERE device_id=? AND uplink_id=?',(child,parent)).fetchone()
+    fields=dict(old) if old else {}
+    if old:fields['tagged_vlans']=[r['vlan_id'] for r in conn.execute('SELECT vlan_id FROM connection_vlans WHERE connection_id=?',(old['id'],))]
+    fields.update(source_interface_id=payload.source_interface_id,target_interface_id=payload.target_interface_id)
+    if d['device_type']=='vm':fields['media']='virtual'
+    return put_details(cid,parent,child,Details(**fields),conn)
+
 def actual_link(conn,cid,parent,child):
     rows={r['id']:dict(r) for r in conn.execute('SELECT * FROM devices WHERE clinic_id=? AND id IN (?,?)',(cid,parent,child))}
     if len(rows)!=2: raise HTTPException(404,'Connection not found')
@@ -29,11 +69,25 @@ def actual_link(conn,cid,parent,child):
 
 def link_details(conn,cid):
     items={}
-    for r in conn.execute('''SELECT c.*,s.name AS source_interface_name,t.name AS target_interface_name
-        FROM connection_details c JOIN devices d ON d.id=c.device_id
+    for r in conn.execute('''SELECT c.*,s.name AS source_interface_name,t.name AS target_interface_name,u.name AS source_device_name,d.name AS target_device_name
+        FROM connection_details c JOIN devices d ON d.id=c.device_id JOIN devices u ON u.id=c.uplink_id
         LEFT JOIN network_interfaces s ON s.id=c.source_interface_id
         LEFT JOIN network_interfaces t ON t.id=c.target_interface_id WHERE d.clinic_id=?''',(cid,)):
-        data=dict(r);data['tagged_vlans']=[];items[(r['uplink_id'],r['device_id'])]=data
+        data=dict(r);data['tagged_vlans']=[]
+        endpoints=[]
+        for iid in (r['source_interface_id'],r['target_interface_id']):
+            interface=conn.execute('SELECT * FROM network_interfaces WHERE id=?',(iid,)).fetchone()
+            interface=dict(interface) if interface else None
+            if interface:
+                interface['supported_speeds']=json.loads(interface['supported_speeds'])
+                interface['module_speeds']=json.loads(interface['module_speeds']) if interface['module_speeds'] else None
+            endpoints.append(interface)
+        inferred=inferred_speed(*endpoints) if data['media'] not in ('virtual','wireless') else None
+        data['speed_override_mbps']=data['speed_mbps'];data['inferred_speed_mbps']=inferred
+        data['speed_source']='override' if data['speed_mbps'] is not None else 'inferred' if inferred else 'unknown'
+        data['speed_mbps']=data['speed_mbps'] if data['speed_mbps'] is not None else inferred
+        data['speed_warning']='Override differs from documented endpoint capabilities.' if data['speed_override_mbps'] and all(effective_speeds(i) for i in endpoints) and any(data['speed_override_mbps'] not in effective_speeds(i) for i in endpoints) else None
+        items[(r['uplink_id'],r['device_id'])]=data
     by_id={d['id']:d for d in items.values()}
     for r in conn.execute('''SELECT cv.* FROM connection_vlans cv JOIN connection_details c ON c.id=cv.connection_id
         JOIN devices d ON d.id=c.device_id WHERE d.clinic_id=?''',(cid,)):
@@ -54,6 +108,7 @@ def put_details(cid:int,parent:int,child:int,payload:Details,conn=Depends(db_dep
     for iid,did in [(payload.source_interface_id,parent),(payload.target_interface_id,child)]:
         if iid is not None and not conn.execute('SELECT id FROM network_interfaces WHERE id=? AND device_id=?',(iid,did)).fetchone():
             raise HTTPException(422,'Choose an interface belonging to the indicated device')
+        if iid is not None and payload.media not in ('virtual','wireless'):ensure_port_available(conn,iid,parent,child)
     if len(set(payload.tagged_vlans))!=len(payload.tagged_vlans): raise HTTPException(422,'Repeated tagged VLAN')
     if payload.tagged_vlans and payload.vlan_mode!='trunk': raise HTTPException(422,'Tagged VLANs require trunk mode')
     if payload.native_vlan_id in payload.tagged_vlans: raise HTTPException(422,'The native VLAN must not also be tagged')

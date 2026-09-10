@@ -103,6 +103,17 @@ class Address(BaseModel):
         return self
 
 class Interface(BaseModel):
+    port_group: str | None=Field(default=None,max_length=100)
+    port_order: int | None=Field(default=None,ge=0,le=10000)
+    connector: Literal['unknown','rj45','sfp','sfp+','qsfp','virtual','other'] | None=None
+    supported_speeds: list[int] | None=Field(default=None,max_length=32)
+    module_speeds: list[int] | None=Field(default=None,max_length=32)
+
+    @field_validator('supported_speeds','module_speeds')
+    @classmethod
+    def valid_speeds(cls,v):
+        if v is not None and (len(set(v))!=len(v) or any(s<1 or s>10000000 for s in v)): raise ValueError('Speeds must be unique positive Mbps values')
+        return sorted(v) if v is not None else None
     id: int | None=None
     name: str=Field(min_length=1,max_length=100)
     mac_address: str | None=None
@@ -166,6 +177,8 @@ def device(conn,did):
 def read_network(conn,did):
     interfaces=[dict(r) for r in conn.execute('SELECT * FROM network_interfaces WHERE device_id=? ORDER BY id',(did,))]
     for i in interfaces:
+        i['supported_speeds']=json.loads(i['supported_speeds'])
+        i['module_speeds']=json.loads(i['module_speeds']) if i['module_speeds'] is not None else None
         i['addresses']=[dict(r) for r in conn.execute('SELECT * FROM network_addresses WHERE interface_id=? ORDER BY is_primary DESC,id',(i['id'],))]
         i['memberships']=[dict(r) for r in conn.execute('SELECT * FROM interface_vlans WHERE interface_id=? ORDER BY vlan_id',(i['id'],))]
     return {'interfaces':interfaces}
@@ -173,7 +186,9 @@ def read_network(conn,did):
 @router.get('/devices/{did}/network')
 def get_network(did:int,conn=Depends(db_dependency)):
     d=device(conn,did)
-    return read_network(conn,did)|{'legacy_ip':d['ip_address'],'legacy_mac':d['mac_address'],'location_id':d['location_id'],'ipv6_enabled':bool(d['ipv6_enabled'])}
+    from .connections import link_details
+    links=[v for (parent,child),v in link_details(conn,d['clinic_id']).items() if did in (parent,child)]
+    return read_network(conn,did)|{'connections':links,'legacy_ip':d['ip_address'],'legacy_mac':d['mac_address'],'location_id':d['location_id'],'ipv6_enabled':bool(d['ipv6_enabled'])}
 
 def subnet_checks(conn,d,payload):
     catalog={v['id']:v for v in vlan_list(conn,d['clinic_id']) if v['location_id']==d['location_id']}
@@ -245,6 +260,11 @@ def put_network(did:int,payload:DeviceNetwork,conn=Depends(db_dependency)):
         else:
             iid=i.id
             conn.execute('UPDATE network_interfaces SET name=?,mac_address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(i.name,i.mac_address,i.notes,iid))
+        for key in ('port_group','port_order','connector','supported_speeds','module_speeds'):
+            if key in i.model_fields_set:
+                value=getattr(i,key)
+                if key in ('supported_speeds','module_speeds'): value=json.dumps(value) if value is not None else ('[]' if key=='supported_speeds' else None)
+                if value is not None or key=='module_speeds':conn.execute(f'UPDATE network_interfaces SET {key}=? WHERE id=?',(value,iid))
         conn.execute('DELETE FROM network_addresses WHERE interface_id=?',(iid,))
         conn.execute('DELETE FROM interface_vlans WHERE interface_id=?',(iid,))
         for m in i.memberships:

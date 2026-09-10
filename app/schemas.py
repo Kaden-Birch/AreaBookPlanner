@@ -298,6 +298,8 @@ DeviceStatus = Literal["active", "spare", "retired"]
 
 
 class DeviceIn(BaseModel):
+    uplink_port_id: Optional[int] = None
+    device_port_id: Optional[int] = None
     device_type: str
     name: Optional[str] = None  # blank = auto-generate from the template
     location_id: Optional[int] = None

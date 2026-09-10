@@ -3,6 +3,8 @@ import { api, devices, services as servicesApi, clinics as clinicsApi, attachmen
 import { esc, attr, openModal, confirmDialog, toast, formData, showFormError, options, fmtDate, fmtDateOnly, fmtDateTime, navigate, toDateInput, getRepName, renderNoteBody } from './ui.js';
 import { attachMentionAutocomplete } from './notes.js';
 import { openNetwork } from './network.js';
+import {openPorts} from './ports.js';
+import {attachUplinkPorts} from './uplink-ports.js';
 
 const SECRETS_NOTICE = 'Do not store passwords, credentials, API keys, private keys, recovery codes, or other secrets here. Store them in the approved password manager.';
 const safeWebUrl = url => /^https?:\/\//i.test(url || '');
@@ -103,6 +105,7 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     footer: `${isEdit ? '<button class="btn btn-danger left" data-act="delete">Delete</button>' : ''}<button class="btn" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">${isEdit ? 'Save changes' : 'Add'}</button>`,
   });
   const form = modal.body.querySelector('#device-form');
+  const portsReady=attachUplinkPorts(form,clinic,device);
   const typeSel = form.querySelector('#dev-type');
   const nameEl = form.querySelector('#dev-name');
   const syncType = async () => {
@@ -172,7 +175,9 @@ export async function openDeviceForm({ clinic, device = null, initial = null, on
     await devices.remove(device.id); toast('Device deleted'); modal.close(); onSaved && onSaved(null);
   };
   const save = async () => {
+    if(!portsReady()){toast('Wait for the port choices to load before saving.','error');return;}
     const data = formData(form);
+    for(const key of ['uplink_port_id','device_port_id'])if(key in data)data[key]=data[key]?Number(data[key]):null;
     data.uplink_id = data.uplink_id ? Number(data.uplink_id) : null;
     data.location_id = data.location_id ? Number(data.location_id) : null;
     data.link_type = typeSel.value === 'vm' ? 'virtual' : form.querySelector('[name=link_type]:checked').value;
@@ -229,7 +234,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
           <dl class="kv">
             ${d.user_name ? `<dt>User</dt><dd>${esc(d.user_name)}</dd>` : ''}
             <dt>IP address</dt><dd class="mono">${esc(d.ip_address || '—')}</dd>
-            <dt>Network</dt><dd><button class="btn btn-sm" id="device-network">Network interfaces &amp; addresses</button></dd>
+            <dt>Network</dt><dd><button class="btn btn-sm" id="device-network">Network interfaces &amp; addresses</button> <button class="btn btn-sm" id="device-ports">Ports &amp; connections</button></dd>
             ${d.mac_address ? `<dt>MAC</dt><dd class="mono">${esc(d.mac_address)}</dd>` : ''}
             ${d.os ? `<dt>OS</dt><dd>${esc(d.os)}</dd>` : ''}
             <dt>Hardware</dt><dd>${esc([d.manufacturer, d.model].filter(Boolean).join(' ') || '—')}</dd>
@@ -274,6 +279,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
   });
   const reopen = (id) => { modal.close(); openDeviceDetail({ deviceId: id, clinic, onChanged }); };
   modal.body.querySelector('#device-network').onclick=()=>openNetwork({clinic,deviceId:d.id,onChanged:()=>reopen(d.id)});
+  modal.body.querySelector('#device-ports').onclick=()=>openPorts({clinic,deviceId:d.id,onChanged:()=>reopen(d.id)});
   modal.body.querySelectorAll('[data-open]').forEach(el => { el.onclick = () => reopen(Number(el.dataset.open)); });
   modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
   modal.root.querySelector('[data-act=edit]').onclick = () => { modal.close(); openDeviceForm({ clinic, device: d, onSaved: (saved) => { if (saved) openDeviceDetail({ deviceId: d.id, clinic, onChanged }); else onChanged && onChanged(); } }); };

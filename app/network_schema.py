@@ -59,6 +59,9 @@ END;
 
 def initialize(conn):
     conn.executescript(SCHEMA)
+    columns={r[1] for r in conn.execute('PRAGMA table_info(network_interfaces)')}
+    for name,definition in {'port_group':"TEXT NOT NULL DEFAULT 'Ports'",'port_order':'INTEGER NOT NULL DEFAULT 0','connector':"TEXT NOT NULL DEFAULT 'unknown'",'supported_speeds':"TEXT NOT NULL DEFAULT '[]'",'module_speeds':'TEXT'}.items():
+        if name not in columns: conn.execute(f'ALTER TABLE network_interfaces ADD COLUMN {name} {definition}')
     for table in ('device_tickets','clinic_tickets'):
         if 'status' not in {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN status TEXT NOT NULL DEFAULT 'unknown' CHECK(status IN ('unknown','open','closed'))")

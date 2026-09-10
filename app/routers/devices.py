@@ -19,6 +19,20 @@ from ..schemas import ConnectionIn, DeviceIn, EdgeOp, ServiceIn, TicketIn
 
 router = APIRouter(prefix="/api", tags=["devices"])
 
+def save_uplink_ports(conn,cid,did,payload):
+    if not ({'uplink_port_id','device_port_id'} & payload.model_fields_set):return
+    if not payload.uplink_id:
+        if payload.uplink_port_id or payload.device_port_id:raise HTTPException(422,'Choose an uplink before assigning ports')
+        return
+    from .connections import Details,put_details
+    row=conn.execute('SELECT * FROM connection_details WHERE device_id=? AND uplink_id=?',(did,payload.uplink_id)).fetchone()
+    data=dict(row) if row else {}
+    if row:data['tagged_vlans']=[r['vlan_id'] for r in conn.execute('SELECT vlan_id FROM connection_vlans WHERE connection_id=?',(row['id'],))]
+    data.update(source_interface_id=payload.uplink_port_id,target_interface_id=payload.device_port_id)
+    if payload.device_type=='vm':data['media']='virtual'
+    elif payload.link_type=='wireless':data['media']='wireless'
+    put_details(cid,payload.uplink_id,did,Details(**data),conn)
+
 DEVICE_COLUMNS = [
     "location_id", "device_type", "name", "number", "designation", "manufacturer", "model", "serial", "ip_address",
     "mac_address", "os", "user_name", "uplink_id", "link_type", "status", "off_site", "rack", "rack_room",
@@ -278,6 +292,7 @@ def create_device(clinic_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
         for name in svc_names:
             conn.execute("INSERT INTO device_services (device_id, name) VALUES (?, ?)", (cur.lastrowid, name))
         dev = _get_or_404(conn, cur.lastrowid)
+        save_uplink_ports(conn,clinic_id,cur.lastrowid,payload)
         dev["services"] = _load_services(conn, cur.lastrowid)
         created.append(dev)
     label = DEVICE_TYPES[data["device_type"]]["label"]
@@ -648,6 +663,7 @@ def update_device(device_id: int, payload: DeviceIn, conn: sqlite3.Connection = 
     data["services"] = before.get("legacy_services")
     sets = ", ".join(f"{c} = ?" for c in DEVICE_COLUMNS)
     conn.execute(f"UPDATE devices SET {sets}, updated_at = ? WHERE id = ?", [data.get(c) for c in DEVICE_COLUMNS] + [now_iso(), device_id])
+    save_uplink_ports(conn,before['clinic_id'],device_id,payload)
     return get_device(device_id, conn)
 
 

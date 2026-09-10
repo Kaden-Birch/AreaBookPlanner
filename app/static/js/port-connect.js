@@ -1,0 +1,11 @@
+import {api,devices} from './api.js';
+import {esc,openModal,toast,confirmDialog} from './ui.js';
+
+export async function connectPort({clinic,deviceId,portId,onChanged}) {
+  const list=(await devices.list(clinic.id)).devices;
+  const modal=openModal({title:'Connect port to device',body:`<p>Use this port as the upstream endpoint. A device with no uplink gains a primary connection; otherwise a new relationship is recorded as an extra connection. Existing relationships are not removed.</p><label>Downstream device<select id="port-target"><option value="">Choose device</option>${list.filter(d=>d.id!==deviceId).map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></label><label>Downstream interface<select id="port-target-interface"><option value="">Unknown port</option></select></label>`,footer:'<button class="btn" data-cancel>Cancel</button><button class="btn btn-primary" data-save disabled>Connect</button>'});
+  const target=modal.body.querySelector('#port-target'),ports=modal.body.querySelector('#port-target-interface'),button=modal.root.querySelector('[data-save]');let version=0;
+  target.onchange=async()=>{const current=++version;button.disabled=true;ports.innerHTML='<option value="">Unknown port</option>';if(!target.value)return;try{const data=await api.get(`/api/devices/${target.value}/network`);if(current!==version)return;ports.innerHTML+data.interfaces.map(i=>`<option value="${i.id}" ${data.connections.some(c=>(c.source_interface_id===i.id||c.target_interface_id===i.id)&&!(c.uplink_id===deviceId&&c.device_id===Number(target.value))&&!['virtual','wireless'].includes(c.media))?'disabled':''}>${esc(i.name)}</option>`).join('');button.disabled=false;}catch(e){toast(e.message,'error');}};
+  button.onclick=async()=>{if(!await confirmDialog('Save this documented port-to-device connection?',{okLabel:'Connect',danger:false}))return;button.disabled=true;try{await api.post(`/api/clinics/${clinic.id}/connections/attach`,{parent:deviceId,child:Number(target.value),source_interface_id:portId,target_interface_id:ports.value?Number(ports.value):null});modal.close();toast('Connection saved','success');onChanged?.();}catch(e){toast(e.message,'error');}finally{button.disabled=false;}};
+  modal.root.querySelector('[data-cancel]').onclick=()=>modal.close();
+}

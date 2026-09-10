@@ -807,6 +807,55 @@ def test_vlan_subnet_checks_and_assignment_conflicts(environment):
     assert staff.post('/api/devices/1/network/validate',json={'interfaces':[]}).status_code==403
 
 
+def test_port_capabilities_connections_and_conflicts(environment):
+    _,staff,_=environment
+    switch(staff,'it')
+    parent=staff.post('/api/clinics/1/devices',json={'device_type':'switch','name':'Port switch'}).json()['id']
+    child=staff.post('/api/clinics/1/devices',json={'device_type':'workstation','name':'Port workstation'}).json()['id']
+    other=staff.post('/api/clinics/1/devices',json={'device_type':'workstation','name':'Other workstation'}).json()['id']
+    def ports(did,speeds,**extra):
+        r=staff.put(f'/api/devices/{did}/network',json={'interfaces':[{'name':'Port 1','port_group':'GbE','connector':'rj45','supported_speeds':speeds,**extra}]})
+        assert r.status_code==200,r.text
+        return r.json()['interfaces'][0]
+    a=ports(parent,[1000,10000]);b=ports(child,[100,1000,2500])
+    link={'parent':parent,'child':child,'source_interface_id':a['id'],'target_interface_id':b['id']}
+    r=staff.post('/api/clinics/1/connections/attach',json=link)
+    assert r.status_code==200,r.text
+    assert r.json()['details']['speed_mbps']==1000
+    assert r.json()['details']['speed_source']=='inferred'
+    assert staff.get(f'/api/devices/{child}').json()['uplink_id']==parent
+    rejected=staff.post('/api/clinics/1/connections/attach',json={**link,'child':other,'target_interface_id':None})
+    assert rejected.status_code==409,rejected.text
+    assert staff.get(f'/api/devices/{other}').json()['uplink_id'] is None
+    url=f'/api/clinics/1/connections/{parent}/{child}'
+    assert staff.put(url,json={'source_interface_id':a['id'],'target_interface_id':b['id'],'speed_mbps':100}).status_code==200
+    d=staff.get(url).json()['details'];assert d['speed_mbps']==100 and d['speed_source']=='override' and d['speed_warning']
+    # A legacy editor update retains metadata; changing endpoint selection to unknown
+    # clears inference but not the explicitly recorded override.
+    assert staff.put(f'/api/devices/{parent}/network',json={'interfaces':[{'id':a['id'],'name':'Port 1'}]}).status_code==200
+    saved=staff.get(f'/api/devices/{parent}/network').json()['interfaces'][0]
+    assert saved['supported_speeds']==[1000,10000] and saved['port_group']=='GbE'
+    assert staff.put(url,json={'speed_mbps':100}).json()['details']['speed_source']=='override'
+    assert staff.put(url,json={}).json()['details']['speed_mbps'] is None
+    # Device form writes endpoint selection and the uplink atomically.
+    r=staff.put(f'/api/devices/{other}',json={'device_type':'workstation','uplink_id':parent,'uplink_port_id':a['id'],'device_port_id':None})
+    assert r.status_code==200,r.text
+    assert staff.get(f'/api/clinics/1/connections/{parent}/{other}').json()['details']['source_interface_id']==a['id']
+    bad=staff.put(f'/api/devices/{child}',json={'device_type':'workstation','uplink_id':parent,'uplink_port_id':a['id']})
+    assert bad.status_code==409
+    assert staff.put(f'/api/devices/{parent}/network',json={'interfaces':[{'id':a['id'],'name':'Port 1','supported_speeds':[-1]}]}).status_code==422
+    switch(staff,'sales')
+    assert staff.post('/api/clinics/1/connections/attach',json=link).status_code==403
+
+
+def test_port_speed_inference_is_conservative():
+    from app.routers.connections import inferred_speed
+    assert inferred_speed({'supported_speeds':[1000,10000]},{'supported_speeds':[2500,5000]}) is None
+    assert inferred_speed({'connector':'sfp+','supported_speeds':[1000,10000]}, {'supported_speeds':[1000,10000]}) is None
+    assert inferred_speed({'connector':'sfp+','supported_speeds':[1000,10000],'module_speeds':[1000]}, {'supported_speeds':[1000,10000]})==1000
+    assert inferred_speed(None,{'supported_speeds':[1000]}) is None
+
+
 def test_network_roles_and_remote_records(environment):
     _,staff,_=environment
     switch(staff,'it')

@@ -1,6 +1,6 @@
 # Area Book Planner
 
-A self-hosted, map-first planner for keeping track of the clinics ChinookIT has visited,
+A self-hosted, map-first planner for keeping track of the clients your MSP has visited,
 wants to visit, or is currently serving. Everything runs locally in one Docker container
 and is stored in a single SQLite file.
 

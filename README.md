@@ -18,7 +18,7 @@ and is stored in a single SQLite file.
   address lookup (OpenStreetMap geocoding), by clicking the map, or by dragging a pin.
   Filter by colour and search from the sidebar; click a pin for a quick summary,
   directions, or to book an appointment.
-- **Colour coding by relationship to ChinookIT**
+- **Colour coding by relationship**
 
   | Colour | Meaning |
   |--------|---------|

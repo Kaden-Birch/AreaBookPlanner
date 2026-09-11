@@ -11,6 +11,7 @@ import { matchesTopologySearch, matchesTopologyFilter } from './topology-search.
 import { validPositions, sceneBounds, viewportRect } from './topology-navigation.js';
 import { organizeTopology } from './topology-workspace.js';
 import {assignDeviceVlan} from './vlan-assignment.js';
+import {mountWireMode} from './topology-wire.js';
 
 export function mountTopology(body, topo, meta, key, actions) {
   let prefs;
@@ -103,7 +104,8 @@ export function mountTopology(body, topo, meta, key, actions) {
     const v=assignmentVlan();assignmentBanner.innerHTML=assigning?`<span>Assigning ${esc(v?.name)} · VLAN ${v?.tag} — click devices. Outlined devices already have this VLAN.</span> <button class="btn btn-sm">Done</button>`:'';
     assignmentBanner.querySelector('button')?.addEventListener('click',()=>{assigning=false;assignmentState();});assignmentHighlight();
   };
-  body.querySelector('#topology-assign').onclick=()=>{assigning=!assigning;assignmentState();};
+  const wireMode=mountWireMode({body,canvas,byId,clinic:actions.reportContext.clinic_id,onStart:()=>{assigning=false;assignmentState();},onSaved:()=>actions.refresh?.()});
+  body.querySelector('#topology-assign').onclick=()=>{wireMode.stop();assigning=!assigning;assignmentState();};
   body.querySelector('#topology-assign-vlan').onchange=assignmentState;
   body.addEventListener('keydown',e=>{if(e.key==='Escape'&&assigning){assigning=false;assignmentState();}},true);
   const assignClick=async(id)=>{
@@ -333,7 +335,7 @@ export function mountTopology(body, topo, meta, key, actions) {
   canvas.addEventListener('wheel',e=>{e.preventDefault();const r=canvas.getBoundingClientRect();zoom(e.deltaY<0?1.1:1/1.1,e.clientX-r.left,e.clientY-r.top);},{passive:false});
   canvas.addEventListener('pointerdown',e=>{
     const device=e.target.closest('[data-device]');
-    if(e.button===0&&manualMode&&device&&!assigning){const id=Number(device.dataset.device);drag={id,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);e.preventDefault();return;}
+    if(e.button===0&&manualMode&&device&&!assigning&&!wireMode.active){const id=Number(device.dataset.device);drag={id,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);e.preventDefault();return;}
     if(e.button!==0||e.target.closest('[role=button],button'))return;
     drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};canvas.setPointerCapture(e.pointerId);
   });

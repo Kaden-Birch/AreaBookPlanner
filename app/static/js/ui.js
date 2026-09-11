@@ -133,7 +133,7 @@ export function toast(message, type = 'info', ms = 3000) {
 }
 
 // ---- Modals ------------------------------------------------------------
-export function openModal({ title, body, footer, size = '', onMount, onClose }) {
+export function openModal({ title, body, footer, size = '', onMount, onClose, autofocus = true }) {
   const root = document.getElementById('modal-root');
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
@@ -163,7 +163,8 @@ export function openModal({ title, body, footer, size = '', onMount, onClose }) 
   const modal = { root: backdrop, body: bodyEl, close };
   onMount && onMount(modal);
   const first = bodyEl.querySelector('input:not([type=hidden]), select, textarea');
-  if (first) setTimeout(() => first.focus(), 30);
+  if (first && autofocus) setTimeout(() => { if(first.isConnected)first.focus(); }, 30);
+  if (!autofocus) backdrop.querySelector('.close').focus({preventScroll:true});
   return modal;
 }
 

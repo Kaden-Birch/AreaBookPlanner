@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const code=(await readFile(new URL('../app/static/js/ports.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'');
-const {speedColour,speedLabel,parseSpeeds}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const {speedColour,speedLabel,parseSpeeds,portGroupNames}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+test('port groups retain creation order, not alphabetical order',()=>{
+  const interfaces=[{id:20,port_group:'SFP'},{id:1,port_group:'GbE'},{id:17,port_group:'WAN'},{id:2,port_group:'GbE'}];
+  assert.deepEqual(portGroupNames(interfaces),['GbE','WAN','SFP']);
+  assert.equal(interfaces[0].id,20);
+});
 test('speed input accepts single values, lists, units and pasted separators',()=>{
   assert.deepEqual(parseSpeeds('1000'),[1000]);
   assert.deepEqual(parseSpeeds('10,100,1000'),[10,100,1000]);

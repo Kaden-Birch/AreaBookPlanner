@@ -6,6 +6,7 @@ import { openVpnPanel, openLinkForm, openConnectivityCheck } from '../vpn.js';
 import { mountTopology } from '../topology-view.js';
 import { user } from '../auth.js';
 import { openNetwork, openVlans } from '../network.js';
+import { openPorts } from '../ports.js';
 import { openConnection } from '../connections.js';
 import { openRoutingReview } from '../routing-review.js';
 import { linkSpeedClass } from '../topology-graph.js';
@@ -179,7 +180,7 @@ async function renderTopology(body) {
   mountTopology(body, topo, meta, `topology-v1:${user?.id}:${clinic.id}:${state.site}`, {
     device: id => openDeviceDetail({ deviceId: id, clinic, onChanged: load }),
     service: id => openServiceDetail({ clinic, serviceId: id, onChanged: load }),
-    network: id => openNetwork({clinic,deviceId:id,onChanged:load}),
+    network: id => openPorts({clinic,deviceId:id,onChanged:load}),
     connection: (parent,child) => openConnection({clinic,parent,child,onChanged:load}),
     refresh: () => renderTopology(body),
     routing: () => openRoutingReview({clinic,site:siteParam()}),

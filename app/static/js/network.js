@@ -10,7 +10,7 @@ export async function saveNetwork(deviceId,payload) {
   return api.put(`/api/devices/${deviceId}/network`,{...payload,confirm_subnet_warnings:!!warnings.length});
 }
 
-export async function openNetwork({clinic,deviceId,onChanged}) {
+export async function openNetwork({clinic,deviceId,onChanged,interfaceId=null}) {
   let data, catalog;
   try { [data,catalog]=await Promise.all([api.get(`/api/devices/${deviceId}/network`),api.get(`/api/clinics/${clinic.id}/vlans`)]); }
   catch(e){toast(e.message,'error');return;}
@@ -19,6 +19,12 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
   const vlans=catalog.vlans.filter(v=>v.location_id===data.location_id);
   const modal=openModal({title:'Network interfaces & addresses',size:'modal-lg',body:`<p>Record each interface, its IPv4/IPv6 addresses, and VLAN memberships. Choose one primary address for the device.</p>${data.legacy_ip?`<p class="muted small">Previously recorded address: ${esc(data.legacy_ip)}</p>`:''}<form id="network-form"><div id="network-interfaces"></div><button type="button" class="btn" id="network-add">+ Add interface</button><p class="help">Changes, including removals, apply when you save.</p></form>`,footer:'<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save network</button>'});
   const form=modal.body.querySelector('form'),host=form.querySelector('#network-interfaces');
+  if(interfaceId!==null){
+    modal.root.querySelector('h2').textContent='Port details';
+    modal.root.querySelector('[data-save]').textContent='Save port';
+    modal.body.querySelector('p').textContent='Edit this port’s MAC address, VLAN memberships, IPv4/IPv6 addresses and notes. The primary address is shared across the device.';
+    form.querySelector('#network-add').hidden=true;
+  }
   const ipv6Label=document.createElement('label');
   ipv6Label.innerHTML=`<input type="checkbox" name="ipv6_enabled" ${data.ipv6_enabled?'checked':''}> IPv6 is enabled on this device (documentation only)`;
   form.prepend(ipv6Label);
@@ -44,6 +50,7 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
       <div class="actions"><button type="button" class="btn btn-sm" data-add-address>+ Add address</button><button type="button" class="btn btn-sm" data-remove-interface>Remove interface</button></div></fieldset>`).join('')||'<p class="muted">No interfaces recorded.</p>';
     host.querySelectorAll('[data-interface]').forEach(el=>{
       const index=Number(el.dataset.interface);
+      if(interfaceId!==null)el.hidden=Number(el.dataset.id)!==interfaceId;
       const change=fn=>{rows=capture();fn(rows[index]);draw();};
       el.querySelector('[data-add-address]').onclick=()=>change(i=>i.addresses.push({address:'',kind:'static',is_primary:false}));
       el.querySelector('[data-add-membership]').onclick=()=>change(i=>i.memberships.push({vlan_id:vlans[0]?.id,mode:'tagged'}));
@@ -57,7 +64,7 @@ export async function openNetwork({clinic,deviceId,onChanged}) {
   const save=async()=>{
     if(!form.reportValidity())return;
     const button=modal.root.querySelector('[data-save]');button.disabled=true;
-    try{if(!await saveNetwork(deviceId,{interfaces:capture(),ipv6_enabled:form.elements.ipv6_enabled.checked}))return;toast('Network saved','success');modal.close();onChanged?.();}
+    try{if(!await saveNetwork(deviceId,{interfaces:capture(),expected_interfaces:data.interfaces,ipv6_enabled:form.elements.ipv6_enabled.checked}))return;toast('Network saved','success');modal.close();onChanged?.();}
     catch(e){showFormError(form,e.message);}finally{button.disabled=false;}
   };
   let validationTimer,revision=0;

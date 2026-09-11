@@ -36,6 +36,7 @@ class Details(BaseModel):
     notes: str | None=Field(default=None,max_length=10000)
 
 class PortAttachment(BaseModel):
+    physical: bool=False
     parent: int
     child: int
     source_interface_id: int | None=None
@@ -48,12 +49,19 @@ def attach_ports(cid:int,payload:PortAttachment,conn=Depends(db_dependency)):
     d=conn.execute('SELECT * FROM devices WHERE id=? AND clinic_id=?',(child,cid)).fetchone()
     if not d:raise HTTPException(404,'Device not found')
     _check_uplink(conn,cid,child,parent)
+    if payload.physical:
+        source=conn.execute('SELECT device_type FROM devices WHERE id=?',(parent,)).fetchone()
+        if d['device_type']=='vm' or source['device_type']=='vm':raise HTTPException(422,'Physical wires cannot connect virtual machines')
+        for iid in (payload.source_interface_id,payload.target_interface_id):
+            port=conn.execute('SELECT connector FROM network_interfaces WHERE id=?',(iid,)).fetchone()
+            if port and port['connector']=='virtual':raise HTTPException(422,'Choose a physical port')
     if conn.execute('SELECT id FROM device_links WHERE device_id=? AND uplink_id=?',(parent,child)).fetchone():raise HTTPException(409,'These devices already have a reverse connection. Edit that connection instead.')
     if d['uplink_id'] is None:conn.execute("UPDATE devices SET uplink_id=?,link_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(parent,'virtual' if d['device_type']=='vm' else 'ethernet',child))
     elif d['uplink_id']!=parent and not conn.execute('SELECT id FROM device_links WHERE device_id=? AND uplink_id=?',(child,parent)).fetchone():
         conn.execute("INSERT INTO device_links(device_id,uplink_id,link_type) VALUES (?,?,'ethernet')",(child,parent))
     old=conn.execute('SELECT * FROM connection_details WHERE device_id=? AND uplink_id=?',(child,parent)).fetchone()
     fields=dict(old) if old else {}
+    if payload.physical and fields.get('media') in ('virtual','wireless'):raise HTTPException(409,'This relationship is not physical. Edit the existing connection instead.')
     if old:fields['tagged_vlans']=[r['vlan_id'] for r in conn.execute('SELECT vlan_id FROM connection_vlans WHERE connection_id=?',(old['id'],))]
     fields.update(source_interface_id=payload.source_interface_id,target_interface_id=payload.target_interface_id)
     if d['device_type']=='vm':fields['media']='virtual'

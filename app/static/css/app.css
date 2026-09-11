@@ -1193,3 +1193,8 @@ tr.row-warn td { background: var(--red-bg); }
 .port-square[aria-pressed="true"] { outline:3px solid var(--text); outline-offset:2px; }
 .port-square:focus-visible { outline:3px solid #547ee8; outline-offset:2px; }
 .port-square small { font-size:10px; }
+.port-group-rail { display:flex; flex-wrap:nowrap; align-items:flex-start; gap:22px; overflow-x:auto; padding:4px 4px 12px; max-width:100%; }
+.port-group { flex:0 0 auto; min-width:0; }
+.port-group h3 { margin:0 0 8px; }
+.port-group .port-scroll { overflow:visible; padding:4px 2px; }
+.device-inline-ports { margin:16px 0; border-bottom:1px solid var(--border); padding-bottom:16px; min-width:0; }

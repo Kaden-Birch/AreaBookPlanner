@@ -212,6 +212,7 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
   const warrantyOver = d.warranty_until && d.warranty_until < toDateInput(new Date());
   const modal = openModal({
     title: `${d.icon} ${d.name}`,
+    autofocus: false,
     size: 'modal-lg',
     body: `
       <div class="device-head">
@@ -278,8 +279,18 @@ export async function openDeviceDetail({ deviceId, clinic, onChanged }) {
     onClose: () => onChanged && onChanged(),
   });
   const reopen = (id) => { modal.close(); openDeviceDetail({ deviceId: id, clinic, onChanged }); };
-  modal.body.querySelector('#device-network').onclick=()=>openNetwork({clinic,deviceId:d.id,onChanged:()=>reopen(d.id)});
+  modal.body.querySelector('#device-network').remove();
   modal.body.querySelector('#device-ports').onclick=()=>openPorts({clinic,deviceId:d.id,onChanged:()=>reopen(d.id)});
+  // Embed the existing editor rather than opening another modal over the device.
+  api.get(`/api/devices/${d.id}/network`).then(network=>{
+    if(!modal.body.isConnected)return;
+    const section=document.createElement('section');section.className='device-inline-ports';
+    const title=document.createElement('h3');title.textContent='Ports & connections';
+    const host=document.createElement('div');host.textContent='Loading ports…';section.append(title,host);
+    modal.body.querySelector('.device-head').after(section);
+    modal.body.querySelector('#device-ports').hidden=true;
+    openPorts({clinic,deviceId:d.id,container:host}).catch(e=>{host.textContent=e.message;});
+  }).catch(()=>{/* Keep the explicit Ports button available if loading fails. */});
   modal.body.querySelectorAll('[data-open]').forEach(el => { el.onclick = () => reopen(Number(el.dataset.open)); });
   modal.root.querySelector('[data-act=close]').onclick = () => modal.close();
   modal.root.querySelector('[data-act=edit]').onclick = () => { modal.close(); openDeviceForm({ clinic, device: d, onSaved: (saved) => { if (saved) openDeviceDetail({ deviceId: d.id, clinic, onChanged }); else onChanged && onChanged(); } }); };

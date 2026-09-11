@@ -818,7 +818,12 @@ def test_port_capabilities_connections_and_conflicts(environment):
         assert r.status_code==200,r.text
         return r.json()['interfaces'][0]
     a=ports(parent,[1000,10000]);b=ports(child,[100,1000,2500])
-    link={'parent':parent,'child':child,'source_interface_id':a['id'],'target_interface_id':b['id']}
+    link={'physical':True,'parent':parent,'child':child,'source_interface_id':a['id'],'target_interface_id':b['id']}
+    vm=staff.post('/api/clinics/1/devices',json={'device_type':'vm','name':'Virtual endpoint'}).json()['id']
+    for source,target in ((parent,vm),(vm,child)):
+        rejected=staff.post('/api/clinics/1/connections/attach',json={'physical':True,'parent':source,'child':target})
+        assert rejected.status_code==422,rejected.text
+        assert staff.get(f'/api/devices/{target}').json()['uplink_id'] is None
     r=staff.post('/api/clinics/1/connections/attach',json=link)
     assert r.status_code==200,r.text
     assert r.json()['details']['speed_mbps']==1000

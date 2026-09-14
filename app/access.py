@@ -20,6 +20,8 @@ WORKSPACES = BUSINESS | {"it"}
 
 def permission_for(path, method):
     read = method in ("GET", "HEAD")
+    if path.startswith('/api/syncro'):
+        return WORKSPACES if read and re.fullmatch(r'/api/syncro/clinics/\d+',path) else set()
     if path == '/api/it/dashboard':
         return {'it'} if read else set()
     if path.endswith('/area'):
@@ -70,6 +72,8 @@ def scope_rules(role, area):
     owned = "clinic_id IN (SELECT id FROM clinics)"
     visibility = "visibility IN ('general','technical')" if role == "it" else "visibility IN ('general','sales')"
     rules = {"clinics": clinics}
+    rules['syncro_links']=owned
+    rules['syncro_records']=owned+ (" AND kind IN ('contacts','assets','tickets')" if role=='it' else " AND kind IN ('contacts','invoices')")
     for table in ("contacts", "clinic_locations", "clinic_events", "quotes", "invoices", "orders", "devices", "clinic_tickets", "site_network_ranges"):
         rules[table] = owned
     for table in ("clinic_notes", "tasks", "appointments"):

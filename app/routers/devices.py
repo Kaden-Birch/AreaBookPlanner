@@ -607,6 +607,8 @@ def get_device(device_id: int, conn: sqlite3.Connection = Depends(db_dependency)
     d = _get_or_404(conn, device_id)
     d["services"] = _load_services(conn, device_id)
     d["tickets"] = rows_to_list(conn.execute("SELECT * FROM device_tickets WHERE device_id = ? ORDER BY ticket_date DESC, id DESC", (device_id,)))
+    # Imported clinic tickets can also explicitly reference this machine.
+    d['tickets'] += [dict(r)|{'ticket_date':r['ticket_at'],'clinic_ticket':True} for r in conn.execute('SELECT * FROM clinic_tickets WHERE device_id=? ORDER BY ticket_at DESC,id DESC',(device_id,))]
     d['open_tasks']=rows_to_list(conn.execute('SELECT * FROM tasks WHERE device_id=? AND done=0 ORDER BY due_date,id',(device_id,)))
     d["downlinks"] = [_decorate(r) for r in rows_to_list(conn.execute(f"{SELECT} WHERE d.uplink_id = ? ORDER BY d.device_type, d.number", (device_id,)))]
     chain = []

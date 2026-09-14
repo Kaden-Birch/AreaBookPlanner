@@ -366,7 +366,7 @@ function ticketRow(t) {
     <span>🎫</span>
     <div class="body">${safeWebUrl(t.url) ? `<a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>` : `<strong>${esc(t.title)}</strong>`}
       <div class="muted small">${t.ticket_date ? esc(fmtDateOnly(t.ticket_date)) : esc(fmtDate(t.created_at))}${t.notes ? ` · ${esc(t.notes)}` : ''}</div></div>
-    <label>Recorded status<select data-ticket-status="${t.id}">${['unknown','open','closed'].map(s=>`<option value="${s}" ${(t.status||'unknown')===s?'selected':''}>${s}</option>`).join('')}</select></label><button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>
+    ${t.clinic_ticket?`<span>Clinic ticket · ${esc(t.status||'unknown')}</span>`:`<label>Recorded status<select data-ticket-status="${t.id}">${['unknown','open','closed'].map(s=>`<option value="${s}" ${(t.status||'unknown')===s?'selected':''}>${s}</option>`).join('')}</select></label><button class="btn btn-link btn-sm" data-del-ticket="${t.id}">Remove</button>`}
   </div>`;
 }
 

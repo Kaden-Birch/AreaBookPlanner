@@ -1,0 +1,19 @@
+# Syncro read-only import
+
+Global settings → Syncro accepts the account subdomain (not a full URL) and a dedicated read-only API key. The application uses server-side HTTPS GET requests with a Bearer header, refuses redirects, caps response size/pagination and throttles calls. The key is never returned to browsers. It is stored in the application's settings database: protect the database, backups and Docker volume like credentials. This is not an encrypted secret vault.
+
+Required reads: Customers List/Search and View Detail, Assets List/Search, Tickets List/Search, and Invoices List/Search if invoices are selected. Test connection verifies customer access only. Individual category errors are displayed in the preview, never silently interpreted as no records. Review Syncro's API license before enabling: https://api-docs.syncromsp.com/.
+
+Administrators can use Clinics → Import from Syncro to search customers, select categories, review normalized records, choose an Area and match an existing clinic or create a current client. Import previews expire in 30 minutes and are single-use. Explicitly match existing clinics before importing; there is no fuzzy automatic merge. Clinics with no source coordinates need geocoding before they can appear correctly on the map.
+
+Imports are additive and transactional. Tenant/external IDs prevent duplicates. Reimporting refreshes read-only source snapshots but preserves existing local contacts, machines, interfaces, VLANs and uplinks. Imported ticket status refreshes only when its local value still matches the previous source value. Missing/deleted source records are not automatically deleted locally. Deleted local records are not silently recreated. Refresh is manual through a new reviewed import, not a background live feed.
+
+Assets are created without uplinks at the clinic's main site. Device type requires review; unrecognized types initially use workstation. Supported scalar asset/property fields include serial, manufacturer, model, OS, IP/IPv4/IPv6 and MAC. Reported addresses are grouped in an explicitly unverified interface, not asserted to be a physical adapter. VLANs, cables, port relationships, installed services and VM hosts are not inferred. Real-world RMM field variations may require additional mappings after a redacted sample is inspected.
+
+Contacts, ticket summaries and explicit ticket/asset associations are imported. Invoice number/date/total/balance/payment snapshots remain separate from AreaBook billing and never create billable invoices. Source URLs link to authenticated Syncro pages; portal/PDF access tokens are not imported. Arbitrary notes, comments, custom properties, attachments and credentials are excluded. This is intentionally not a full Syncro backup.
+
+Syncro customer discovery/import is admin-only because a shared key can access customers outside an employee's assigned Areas. Saved clinic snapshots enforce Area and role scope: IT receives assets/tickets, business workspaces receive invoice summaries, and contacts are shared. Admin can read all categories.
+
+Pagination uses documented metadata and otherwise continues until an empty page. Invoice results are filtered on the server by customer because the documented invoice endpoint has no customer filter. Collections exceeding 100 pages, 45 seconds or response limits fail visibly rather than import a truncated category. The throttle is per application process; deployments with multiple workers share Syncro's per-IP rate limit and may receive a retryable API error.
+
+Verification uses official-schema-shaped synthetic API responses, not a live customer account. Before first production import, test the real read-only key and review the preview carefully.

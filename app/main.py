@@ -15,6 +15,7 @@ from .routers import network
 from .routers import connections
 from .routers import topology_admin
 from .routers import topology_trace
+from .routers import syncro
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -33,6 +34,7 @@ from .access import permission_for
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(it_dashboard.router)
+app.include_router(syncro.router)
 
 
 def _origin_key(value: str):

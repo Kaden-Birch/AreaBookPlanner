@@ -33,6 +33,12 @@ def dashboard(include_prospects: bool = False, conn=Depends(db_dependency)):
     overdue = [t for t in tasks if t['due_date'] and t['due_date'] < today.isoformat()]
     attention = [dict(kind='task', title=t['title'], clinic_id=t['clinic_id'], clinic_name=t['clinic_name'],
                       detail='Task overdue · ' + t['due_date'], task_id=t['id']) for t in overdue]
+    import json
+    from .syncro import ticket_status
+    for record in conn.execute("SELECT clinic_id,data,updated_at FROM syncro_records WHERE kind='tickets'"):
+        ticket=json.loads(record['data'])
+        if record['clinic_id'] in selected and ticket_status(ticket)=='open':
+            attention.append(dict(kind='ticket',title=ticket['title'],clinic_id=record['clinic_id'],clinic_name=selected[record['clinic_id']]['name'],detail='Syncro ticket · '+ticket['status']+' · imported '+record['updated_at']+' UTC (not live)'))
     vpns = rows_to_list(conn.execute("SELECT id,name,a_clinic_id,b_clinic_id FROM vpn_links WHERE status='down' ORDER BY id"))
     for v in vpns:
         cid = next((cid for cid in (v['a_clinic_id'],v['b_clinic_id']) if cid in selected), None)

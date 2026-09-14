@@ -630,6 +630,8 @@ def init_db() -> None:
         initialize_topology_history(conn)
         from .auth import SCHEMA as AUTH_SCHEMA
         conn.executescript(AUTH_SCHEMA)
+        from .routers.syncro import SCHEMA as SYNCRO_SCHEMA
+        conn.executescript(SYNCRO_SCHEMA)
         for table, column, ddl in [
             ("clinics", "area_id", "INTEGER REFERENCES areas(id)"),
             ("tasks", "area_id", "INTEGER REFERENCES areas(id)"),

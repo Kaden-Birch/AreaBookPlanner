@@ -632,6 +632,8 @@ def init_db() -> None:
         conn.executescript(AUTH_SCHEMA)
         from .routers.syncro import SCHEMA as SYNCRO_SCHEMA
         conn.executescript(SYNCRO_SCHEMA)
+        from .routers.unifi import SCHEMA as UNIFI_SCHEMA
+        conn.executescript(UNIFI_SCHEMA)
         for table, column, ddl in [
             ("clinics", "area_id", "INTEGER REFERENCES areas(id)"),
             ("tasks", "area_id", "INTEGER REFERENCES areas(id)"),

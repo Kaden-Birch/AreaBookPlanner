@@ -66,6 +66,7 @@ export async function render(container, params, routeParams) {
   const reload = () => render(container, params, routeParams);
   // Run after this render's synchronous markup and event handlers are installed.
   setTimeout(()=>import('../syncro.js').then(m=>m.syncroClinic(container,id)).catch(()=>{}),0);
+  setTimeout(()=>import('../unifi.js').then(m=>m.unifiClinic(container,id)).catch(()=>{}),0);
 
   const upcoming = clinic.appointments.filter(a => a.status === 'scheduled' && !isPast(a.start_time)).sort((a, b) => a.start_time.localeCompare(b.start_time));
   const past = clinic.appointments.filter(a => !(a.status === 'scheduled' && !isPast(a.start_time)));

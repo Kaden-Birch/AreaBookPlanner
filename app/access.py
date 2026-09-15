@@ -20,6 +20,8 @@ WORKSPACES = BUSINESS | {"it"}
 
 def permission_for(path, method):
     read = method in ("GET", "HEAD")
+    if path.startswith('/api/unifi'):
+        return {'it'} if read and re.fullmatch(r'/api/unifi/clinics/\d+', path) else set()
     if path.startswith('/api/syncro'):
         return WORKSPACES if read and re.fullmatch(r'/api/syncro/clinics/\d+',path) else set()
     if path == '/api/it/dashboard':
@@ -73,6 +75,8 @@ def scope_rules(role, area):
     visibility = "visibility IN ('general','technical')" if role == "it" else "visibility IN ('general','sales')"
     rules = {"clinics": clinics}
     rules['syncro_links']=owned
+    rules['unifi_sites']=owned if role=='it' else '0'
+    rules['unifi_records']=owned if role=='it' else '0'
     rules['syncro_records']=owned+ (" AND kind IN ('contacts','assets','tickets')" if role=='it' else " AND kind IN ('contacts','invoices')")
     for table in ("contacts", "clinic_locations", "clinic_events", "quotes", "invoices", "orders", "devices", "clinic_tickets", "site_network_ranges"):
         rules[table] = owned
@@ -216,7 +220,7 @@ def scoped_db(request: Request):
         if not area and not is_admin:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
         scoped = ScopedConnection(conn, user)
-        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path)
+        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path) or request.url.path=='/api/unifi/import'
         audit = ((user['active_role']=='it' or is_admin) and request.method in ('POST','PUT','PATCH','DELETE') and technical
                  and not request.url.path.endswith(('/import/preview','/versions')))
         if audit:
@@ -224,7 +228,7 @@ def scoped_db(request: Request):
             before = capture(scoped)
         yield scoped
         if is_admin and request.method in ('POST','PUT','PATCH','DELETE') and (
-            request.url.path=='/api/settings' or request.url.path.startswith(('/api/pricebook','/api/templates'))):
+            request.url.path in ('/api/settings','/api/unifi/settings') or request.url.path.startswith(('/api/pricebook','/api/templates'))):
             # Metadata only: never persist request bodies, keys or template text.
             conn.execute('INSERT INTO global_settings_history(actor_id,path,method) VALUES (?,?,?)',(user['id'],request.url.path,request.method))
         if audit:

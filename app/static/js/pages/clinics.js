@@ -4,6 +4,7 @@ import { esc, attr, dot, fmtDate, fmtDateOnly, fmtMoney, relativeDays, badge, op
 import { openClinicForm } from '../forms.js';
 import {api} from '../api.js';
 import {importSyncro} from '../syncro.js';
+import {importUnifi} from '../unifi.js';
 
 let state = { q: '', relationship: '', color: '', stage: '', sort: 'name' };
 
@@ -40,6 +41,7 @@ export async function render(container, params) {
   container.querySelector('#add-clinic').onclick = () => openClinicForm({ onSaved: (c) => navigate(`#/clinics/${c.id}`) });
   const user=await api.get('/api/auth/me');
   if(user.roles.includes('admin')){const button=document.createElement('button');button.className='btn';button.textContent='Import from Syncro';button.onclick=()=>importSyncro();container.querySelector('#add-clinic').before(button);}
+  if(user.roles.includes('admin')){const button=document.createElement('button');button.className='btn';button.textContent='Import from UniFi';button.onclick=()=>importUnifi();container.querySelector('#add-clinic').before(button);}
   const q = container.querySelector('#q');
   q.addEventListener('input', debounce(() => { state.q = q.value; load(); }, 200));
   ['relationship', 'color', 'stage', 'sort'].forEach(k => {

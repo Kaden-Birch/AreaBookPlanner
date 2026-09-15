@@ -16,6 +16,7 @@ from .routers import connections
 from .routers import topology_admin
 from .routers import topology_trace
 from .routers import syncro
+from .routers import unifi
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -35,6 +36,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(it_dashboard.router)
 app.include_router(syncro.router)
+app.include_router(unifi.router)
 
 
 def _origin_key(value: str):

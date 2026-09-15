@@ -266,6 +266,8 @@ def import_site(payload: Import, conn=Depends(db_dependency)):
                      (data['host_id'], data['site_id'], r['kind'], r['id'], cid, local_id, json.dumps(r)))
     conn.execute('INSERT INTO unifi_sites(host_id,site_id,clinic_id,location_id,name,warnings) VALUES (?,?,?,?,?,?) ON CONFLICT(host_id,site_id) DO UPDATE SET warnings=excluded.warnings,updated_at=CURRENT_TIMESTAMP', (data['host_id'], data['site_id'], cid, location, data['site_name'], json.dumps(warnings)))
     conn.execute('DELETE FROM unifi_previews WHERE token=?', (payload.token,))
+    from ..integration_sync import discover
+    discover(conn)
     return counts | {'clinic_id': cid, 'warnings': warnings}
 
 @router.get('/clinics/{cid}')

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from ..database import db_dependency
 from .extras import get_setting, set_setting
 from ..syncro_network import adapters, fill_missing
+from ..integration_rate import wait_turn, backoff
 
 router=APIRouter(prefix='/api/syncro',tags=['Syncro'])
 SCHEMA='''
@@ -66,9 +67,7 @@ class Client:
     def get(self,path,params=None):
         global _last
         if not re.fullmatch(r'/(customers(?:/\d+)?|contacts|customer_assets(?:/\d+)?|tickets|invoices)',path):raise ValueError('Unsupported Syncro read')
-        with _lock:
-            time.sleep(max(0,0.5-(time.monotonic()-_last)))
-            _last=time.monotonic()
+        wait_turn('syncro', .7)
         req=URLRequest(self.base+'/api/v1'+path+'?'+urlencode(params or {}),headers={'Authorization':'Bearer '+self.key,'Accept':'application/json'},method='GET')
         try:
             with build_opener(NoRedirect()).open(req,timeout=15) as response:
@@ -77,7 +76,9 @@ class Client:
                 value=json.loads(raw)
                 if not isinstance(value,dict):raise ValueError()
                 return value
-        except HTTPError as e:raise HTTPException(502,f'Syncro returned HTTP {e.code}. Check read permissions or retry later.') from None
+        except HTTPError as e:
+            if e.code==429:raise HTTPException(429,'Syncro rate limit reached; waiting for provider cooldown',headers={'Retry-After':backoff('syncro',e.headers.get('Retry-After'))}) from None
+            raise HTTPException(502,f'Syncro returned HTTP {e.code}. Check read permissions or retry later.') from None
         except (URLError,TimeoutError,ValueError):raise HTTPException(502,'Syncro could not be read. Check connectivity and credentials.') from None
     def collection(self,path,key,customer=None):
         result=[];started=time.monotonic()
@@ -251,6 +252,8 @@ def import_customer(payload:ImportIn,conn=Depends(db_dependency)):
                 counts['interfaces_added']+=fill_missing(conn,local,record.get('interfaces',legacy))
             conn.execute('INSERT INTO syncro_records(tenant,kind,external_id,clinic_id,local_id,data) VALUES (?,?,?,?,?,?) ON CONFLICT(tenant,kind,external_id) DO UPDATE SET data=excluded.data,updated_at=CURRENT_TIMESTAMP',(tenant,kind,record['id'],cid,local,json.dumps(record)))
     conn.execute('DELETE FROM syncro_previews WHERE token=?',(payload.token,))
+    from ..integration_sync import discover
+    discover(conn)
     return {'clinic_id':cid,**counts,'warnings':data['warnings']}
 
 @router.get('/clinics/{cid}')

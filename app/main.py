@@ -17,6 +17,7 @@ from .routers import topology_admin
 from .routers import topology_trace
 from .routers import syncro
 from .routers import unifi
+from .routers import integration_sync
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -24,7 +25,13 @@ STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    yield
+    from .integration_sync import start
+    stop,threads=start()
+    try:
+        yield
+    finally:
+        stop.set()
+        for thread in threads:thread.join(timeout=1)
 
 
 app = FastAPI(title="Area Book Planner", version="1.0.0", lifespan=lifespan)
@@ -37,6 +44,7 @@ app.include_router(admin_router)
 app.include_router(it_dashboard.router)
 app.include_router(syncro.router)
 app.include_router(unifi.router)
+app.include_router(integration_sync.router)
 
 
 def _origin_key(value: str):

@@ -50,7 +50,9 @@ The optional uplink import uses explicit source device IDs only, fills empty rel
 
 ## Safety and verification
 
-Requests go only to `https://api.ui.com` using an allowlist of GET paths; redirects are refused, TLS verification remains enabled, and credentials stay out of URLs and response bodies. Collection limits: 100 pages, 10,000 records, 8 MB per response, 90-second operation budget and per-process throttling below 100 requests/minute. Rate-limit failures are explicit; no automatic mutations or retries against write endpoints exist. A failed device/client collection aborts the preview; optional network/VPN failures and device-detail fallbacks are visible warnings.
+Requests go only to `https://api.ui.com` using an allowlist of GET paths; redirects are refused, TLS verification remains enabled, and credentials stay out of URLs and response bodies. Collection limits: 100 pages, 10,000 records, 8 MB per response, 90-second operation budget and shared request pacing below 100 requests/minute. Rate-limit cooldowns are persisted across application workers. Rate-limit failures are explicit; no automatic mutations or retries against write endpoints exist. A failed device/client collection aborts the preview; optional network/VPN failures and device-detail fallbacks are visible warnings.
+
+Optional [automatic synchronization](integration-sync.md) refreshes linked sites on a staggered schedule, preserving manual overrides. New devices, VLAN/VPN changes and wiring changes remain review items rather than automatic topology edits.
 
 Previews expire after 30 minutes, belong to the requesting admin, and are single-use. Rotating/removing the key invalidates previews. A changed local topology requires a new preview before committing. Imports are transactional and topology changes enter the existing audit trail. No source deletion removes local devices.
 

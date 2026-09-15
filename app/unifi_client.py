@@ -7,6 +7,7 @@ from urllib.parse import urlencode, quote
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 from fastapi import HTTPException
+from .integration_rate import wait_turn, backoff
 
 ID = r'[A-Za-z0-9_-]{1,128}'
 HOST = r'[A-Za-z0-9_:-]{1,200}'
@@ -35,9 +36,7 @@ class Client:
             if not re.fullmatch(HOST, host) or not READ_PATH.fullmatch(path):
                 raise ValueError('Unsupported UniFi Network read')
             target = '/v1/connector/consoles/' + quote(host, safe=':') + '/proxy/network/integration' + path
-        with _lock:
-            time.sleep(max(0, .65 - (time.monotonic() - _last)))
-            _last = time.monotonic()
+        wait_turn('unifi', .7)
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise HTTPException(502, 'UniFi read time limit reached; try a smaller site or retry')
@@ -53,6 +52,8 @@ class Client:
                     raise ValueError()
                 return data
         except HTTPError as e:
+            if e.code == 429:
+                raise HTTPException(429, 'UniFi rate limit reached; retry is queued after the provider cooldown', headers={'Retry-After':backoff('unifi', e.headers.get('Retry-After'))}) from None
             raise HTTPException(502, f'UniFi returned HTTP {e.code}. Check key access, console connectivity and firmware (cloud connector requires 5.0.3+). For 429, wait before retrying.') from None
         except (URLError, TimeoutError, ValueError):
             raise HTTPException(502, 'Unable to read UniFi. Check connectivity and saved credentials.') from None

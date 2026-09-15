@@ -178,6 +178,7 @@ export async function renderLegacySettings(container) {
   const reload = () => renderLegacySettings(container);
   import('../syncro.js').then(m=>m.syncroSettings(container)).catch(e=>toast(e.message,'error'));
   import('../unifi.js').then(m=>m.unifiSettings(container)).catch(e=>toast(e.message,'error'));
+  import('../integration-sync.js').then(m=>m.syncSettings(container)).catch(e=>toast(e.message,'error'));
   // Price book
   const collectPb = () => [...container.querySelectorAll('#pb-table tbody tr')].map(tr => {
     const it = pb.items[Number(tr.dataset.i)] || {};

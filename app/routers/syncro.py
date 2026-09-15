@@ -183,6 +183,25 @@ class ImportIn(BaseModel):
     clinic_id:int | None=None
     name:str=Field(min_length=1,max_length=300)
 
+class DiagnosticIn(BaseModel):
+    token:str=Field(max_length=200)
+    asset_id:int=Field(gt=0)
+
+@router.post('/network-diagnostics')
+def diagnostics(payload:DiagnosticIn,conn=Depends(db_dependency)):
+    admin(conn)
+    saved=conn.execute('SELECT * FROM syncro_previews WHERE token=? AND actor_id=? AND expires>?',(payload.token,conn.user['id'],time.time())).fetchone()
+    if not saved:raise HTTPException(409,'Preview expired; build a new preview')
+    data=json.loads(saved['data'])
+    if not any(r['id']==payload.asset_id for r in data['records'].get('assets',[])):raise HTTPException(404,'Asset not in this preview')
+    client=Client(conn)
+    if client.tenant!=saved['tenant']:raise HTTPException(409,'Syncro account changed; preview again')
+    asset=client.get('/customer_assets/'+str(payload.asset_id)).get('asset')
+    if not isinstance(asset,dict) or asset.get('id')!=payload.asset_id or str(asset.get('customer_id'))!=str(saved['customer_id']):raise HTTPException(502,'Asset detail identity mismatch')
+    from ..syncro_diagnostics import network_diagnostics
+    from fastapi.responses import JSONResponse
+    return JSONResponse(network_diagnostics(asset),headers={'Cache-Control':'no-store'})
+
 @router.post('/import')
 def import_customer(payload:ImportIn,conn=Depends(db_dependency)):
     admin(conn)

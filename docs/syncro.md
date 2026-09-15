@@ -1,5 +1,9 @@
 # Syncro read-only import
 
+## Network diagnostics
+
+Build an import preview with Machines selected, expand **assets**, and click **Download network diagnostics** beneath one machine. No import confirmation is needed. The admin-only action verifies the preview owner, expiry, account and asset/customer association, then performs a read-only asset-detail request. The downloaded JSON contains filtered field paths/types and validated IP/MAC literals, including those found in nested JSON. It excludes arbitrary source text, customer/contact data and credential fields. Review the file before sharing: IP/MAC identifiers remain intentionally visible. This diagnostic does not correct or delete adapters.
+
 ## Detailed network import and repairing earlier imports
 
 Asset imports now also GET `/customer_assets/{id}` (requires **Assets - View Details**). Nested adapter lists and JSON-encoded network fields are normalized into separate interfaces with MACs, IPv4 and IPv6 addresses. MAC colon, hyphen, dotted and compact formats are supported. Scalar subnet masks/prefixes are applied only where the association is unambiguous. Explicit public/WAN-IP fields are not treated as local adapters. Unrecognized/absent fields and detail permission failures are reported in the preview; list data remains available as a fallback.

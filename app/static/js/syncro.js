@@ -40,6 +40,20 @@ export async function importSyncro(){
           const content=key==='interfaces'?value.map(i=>`${i.name} · ${i.mac_address||'MAC not reported'} · ${i.addresses.map(a=>a.address+(a.prefix===null?'':'/'+a.prefix)).join(', ')||'IP not reported'}`).join(' | '):key==='addresses'?value.map(a=>a.address+(a.prefix===null?'':'/'+a.prefix)).join(', '):Array.isArray(value)?value.join(', '):String(value);
           return `<dt>${esc(label)}</dt><dd>${esc(content||'Not recorded')}</dd>`;
         }).join('');pre.replaceWith(details);
+        if(record.interfaces){
+          const button=document.createElement('button');button.className='btn btn-sm';button.textContent='Download network diagnostics';details.after(button);
+          button.onclick=async()=>{
+            const {confirmDialog}=await import('./ui.js');
+            if(!await confirmDialog('Download filtered network field names and IP/MAC addresses for this asset? The file excludes raw text and credentials, but contains network identifiers. Review it before sharing. This does not import or change anything.',{danger:false,okLabel:'Download'}))return;
+            button.disabled=true;
+            try{
+              const report=await api.post('/api/syncro/network-diagnostics',{token:data.token,asset_id:record.id});
+              const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+              const link=document.createElement('a');link.href=url;link.download=`syncro-network-${record.id}.json`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+              status.textContent='Diagnostics downloaded. Review the JSON file before sharing it. No records were imported.';
+            }catch(error){status.textContent=error.message;}finally{button.disabled=false;}
+          };
+        }
       });
       preview.querySelector('[data-confirm]').onclick=async e=>{e.target.disabled=true;try{const result=await api.post('/api/syncro/import',{token:data.token,fill_missing_network:preview.querySelector('[name=fill-network]').checked,name:preview.querySelector('[name=name]').value,area_id:Number(preview.querySelector('[name=area]').value),clinic_id:Number(preview.querySelector('[name=clinic]').value)||null});modal.close();toast(`Syncro: ${result.created} new records, ${result.preserved} local records preserved, ${result.interfaces_added||0} interfaces added.`,'success');navigate('#/clinics/'+result.clinic_id);}catch(error){status.textContent=error.message;e.target.disabled=false;}};
     }

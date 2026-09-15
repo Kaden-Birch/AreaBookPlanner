@@ -158,3 +158,24 @@ def test_backfill_preserves_legacy_values_and_manual_interface(environment):
         conn.execute("INSERT INTO network_interfaces(device_id,name,notes) VALUES (?,'Port 1','Do not overwrite')",(did,))
         assert fill_missing(conn,did,reported)==0
         assert conn.execute('SELECT notes FROM network_interfaces WHERE device_id=?',(did,)).fetchone()[0]=='Do not overwrite'
+
+def test_network_diagnostic_redaction():
+    from app.syncro_diagnostics import network_diagnostics
+    report=network_diagnostics({'customer':{'email':'private@example.invalid'},'rmm_store':{'unknown_network_section':json.dumps({'LAN Addresses':'192.0.2.5, 2001:db8::5','MAC Address':'00-11-22-33-44-55','Description':'PRIVATE MACHINE','password':'192.0.2.99','notes':'SECRET'})},'properties':{'API key':'SECRET'}})
+    encoded=json.dumps(report)
+    assert '192.0.2.5' in encoded and '2001:db8::5' in encoded
+    assert '00:11:22:33:44:55' in encoded
+    assert all(s not in encoded for s in ('PRIVATE MACHINE','SECRET','192.0.2.99','private@example.invalid'))
+    assert any('unknownnetworksection' in r['path'] for r in report['fields'])
+
+def test_network_diagnostic_preview_authorization(environment,source):
+    admin,staff,_=environment;setup(admin)
+    draft=admin.post('/api/syncro/preview',json={'customer_id':42,'categories':['assets']}).json()
+    payload={'token':draft['token'],'asset_id':2}
+    result=admin.post('/api/syncro/network-diagnostics',json=payload)
+    assert result.status_code==200,result.text
+    assert result.headers['cache-control']=='no-store'
+    assert '192.0.2.1' in result.text and 'TEST-SECRET' not in result.text
+    assert staff.post('/api/syncro/network-diagnostics',json=payload).status_code==403
+    assert admin.post('/api/syncro/network-diagnostics',json={**payload,'asset_id':999}).status_code==404
+    assert admin.post('/api/syncro/network-diagnostics',json={**payload,'token':'expired'}).status_code==409

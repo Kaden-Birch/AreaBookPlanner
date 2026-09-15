@@ -14,7 +14,7 @@ def source(monkeypatch):
         if (params or {}).get('page',1)>1:return {'assets':[],'meta':{'total_pages':2}}
         rows={
           '/contacts':('contacts',[{'id':1,'customer_id':42,'name':'Test Contact','email':'test@example.invalid','properties':{'password':'SECRET'}}]),
-          '/customer_assets':('assets',[{'id':2,'customer_id':42,'name':'Test machine','asset_type':'server','asset_serial':'S123','properties':{'IPv4':'192.0.2.1/24','IPv6':'2001:db8::1/64','MAC':'00:11:22:33:44:55','password':'SECRET'}}]),
+          '/customer_assets':('assets',[{'id':2,'customer_id':42,'name':'Test machine','asset_type':'server','asset_serial':'S123','properties':{'IPv4':'192.168.2.1/24','IPv6':'2001:db8::1/64','MAC':'00:11:22:33:44:55','password':'SECRET'}}]),
           '/tickets':('tickets',[{'id':3,'customer_id':42,'subject':'A ticket','status':'New','assets':[{'id':2}]}]),
           '/invoices':('invoices',[{'id':4,'customer_id':42,'number':'INV1','total':'25.00'},{'id':5,'customer_id':999,'number':'PRIVATE'}])}
         key,value=rows[path];return {key:value,'meta':{'total_pages':1}}
@@ -108,8 +108,8 @@ def test_nested_adapters_and_safe_backfill(environment,source,monkeypatch):
     def get(self,path,params=None):
         if path=='/customer_assets/2':
             return {'asset':{'id':2,'customer_id':42,'rmm_store':{'network_adapters':[
-                {'Name':'Ethernet','MACAddress':'0011.2233.4455','IPAddresses':['192.0.2.20/24','2001:db8::20/64']},
-                {'Name':'Wi-Fi','MACAddress':'AA-BB-CC-DD-EE-FF','IPAddress':'192.0.2.21'}] if detailed else []},'properties':{}}}
+                {'Name':'Ethernet','MACAddress':'0011.2233.4455','IPAddresses':['192.168.2.20/24','2001:db8::20/64']},
+                {'Name':'Wi-Fi','MACAddress':'AA-BB-CC-DD-EE-FF','IPAddress':'192.168.2.21'}] if detailed else []},'properties':{}}}
         result=original(self,path,params)
         if path=='/customer_assets':result['assets'][0]['properties']={}
         return result
@@ -138,6 +138,34 @@ def test_network_extractor_ignores_public_ip_and_secrets():
     assert [a['address'] for a in rows[0]['addresses']]==['10.0.0.1']
     assert 'secret' not in json.dumps(rows)
 
+def test_kabuto_adapter_mapping_and_lan_filter():
+    from app.syncro_network import adapters
+    detail={'general':{'ip':'8.8.8.8','mac':['001122334455','001122334466']},
+            'network_adapters':[
+                {'name':'Secondary','physical_address':'001122334466','ipv4':'169.254.2.3'},
+                {'name':'Ethernet','physical_address':'001122334455','ipv4':'172.16.2.3','subnet':'255.255.255.0','ipv6':'fd00::3/64'}],
+            'primary_adapter':{'ipv4':'172.16.2.3','subnet':'255.255.255.0'}}
+    rows=adapters({'properties':{'mac':['001122334466','001122334455'],'kabuto_information':detail},'rmm_store':{'general':{'info':json.dumps(detail)}}})
+    assert len(rows)==2
+    assert rows[0]['name']=='Ethernet'
+    assert rows[0]['addresses']==[{'address':'172.16.2.3','version':4,'prefix':24},{'address':'fd00::3','version':6,'prefix':64}]
+    assert rows[1]['addresses']==[] and rows[1]['name']=='Secondary'
+    addresses=adapters({'IPAddress':['10.0.0.1','192.168.1.1','172.31.255.254','172.32.0.1','169.254.1.1','8.8.8.8','100.64.0.1','127.0.0.1','fe80::1','ff02::1','::ffff:8.8.8.8','2001:db8::1']})[0]['addresses']
+    assert [a['address'] for a in addresses]==['10.0.0.1','192.168.1.1','172.31.255.254','2001:db8::1']
+
+def test_repair_mac_only_syncro_adapters(environment):
+    from app.database import get_db
+    from app.syncro_network import fill_missing,SOURCE_NOTE
+    with get_db() as conn:
+        did=conn.execute("INSERT INTO devices(clinic_id,device_type,name,mac_address) VALUES (1,'workstation','Imported','00:11:22:33:44:55')").lastrowid
+        iid=conn.execute('INSERT INTO network_interfaces(device_id,name,mac_address,notes) VALUES (?,?,?,?)',(did,'Reported adapter','00:11:22:33:44:55',SOURCE_NOTE)).lastrowid
+        rows=[{'name':'Ethernet','mac_address':'00:11:22:33:44:55','addresses':[{'address':'10.0.0.3','version':4,'prefix':24},{'address':'fd00::3','version':6,'prefix':64}]}]
+        assert fill_missing(conn,did,rows)==1
+        assert fill_missing(conn,did,rows)==0
+        assert conn.execute('SELECT COUNT(*) FROM network_interfaces WHERE device_id=?',(did,)).fetchone()[0]==1
+        assert conn.execute('SELECT COUNT(*) FROM network_addresses WHERE interface_id=?',(iid,)).fetchone()[0]==2
+        assert conn.execute('SELECT ip_address FROM devices WHERE id=?',(did,)).fetchone()[0]=='10.0.0.3'
+
 def test_detail_permission_failure_preserves_list_data(environment,source,monkeypatch):
     admin,_,_=environment;setup(admin);original=syncro.Client.get
     def get(self,path,params=None):
@@ -151,7 +179,7 @@ def test_backfill_preserves_legacy_values_and_manual_interface(environment):
     from app.database import get_db
     from app.syncro_network import fill_missing
     _,_,_=environment
-    reported=[{'name':'Ethernet','mac_address':'00:11:22:33:44:55','addresses':[{'address':'192.0.2.1','version':4,'prefix':24}]}]
+    reported=[{'name':'Ethernet','mac_address':'00:11:22:33:44:55','addresses':[{'address':'192.168.2.1','version':4,'prefix':24}]}]
     with get_db() as conn:
         assert fill_missing(conn,1,reported)==0  # fixture has a manually recorded IP
         did=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (1,'workstation','Manual ports')").lastrowid
@@ -161,11 +189,11 @@ def test_backfill_preserves_legacy_values_and_manual_interface(environment):
 
 def test_network_diagnostic_redaction():
     from app.syncro_diagnostics import network_diagnostics
-    report=network_diagnostics({'customer':{'email':'private@example.invalid'},'rmm_store':{'unknown_network_section':json.dumps({'LAN Addresses':'192.0.2.5, 2001:db8::5','MAC Address':'00-11-22-33-44-55','Description':'PRIVATE MACHINE','password':'192.0.2.99','notes':'SECRET'})},'properties':{'API key':'SECRET'}})
+    report=network_diagnostics({'customer':{'email':'private@example.invalid'},'rmm_store':{'unknown_network_section':json.dumps({'LAN Addresses':'192.168.2.5, 2001:db8::5','MAC Address':'00-11-22-33-44-55','Description':'PRIVATE MACHINE','password':'192.168.2.99','notes':'SECRET'})},'properties':{'API key':'SECRET'}})
     encoded=json.dumps(report)
-    assert '192.0.2.5' in encoded and '2001:db8::5' in encoded
+    assert '192.168.2.5' in encoded and '2001:db8::5' in encoded
     assert '00:11:22:33:44:55' in encoded
-    assert all(s not in encoded for s in ('PRIVATE MACHINE','SECRET','192.0.2.99','private@example.invalid'))
+    assert all(s not in encoded for s in ('PRIVATE MACHINE','SECRET','192.168.2.99','private@example.invalid'))
     assert any('unknownnetworksection' in r['path'] for r in report['fields'])
 
 def test_network_diagnostic_preview_authorization(environment,source):
@@ -175,7 +203,7 @@ def test_network_diagnostic_preview_authorization(environment,source):
     result=admin.post('/api/syncro/network-diagnostics',json=payload)
     assert result.status_code==200,result.text
     assert result.headers['cache-control']=='no-store'
-    assert '192.0.2.1' in result.text and 'TEST-SECRET' not in result.text
+    assert '192.168.2.1' in result.text and 'TEST-SECRET' not in result.text
     assert staff.post('/api/syncro/network-diagnostics',json=payload).status_code==403
     assert admin.post('/api/syncro/network-diagnostics',json={**payload,'asset_id':999}).status_code==404
     assert admin.post('/api/syncro/network-diagnostics',json={**payload,'token':'expired'}).status_code==409

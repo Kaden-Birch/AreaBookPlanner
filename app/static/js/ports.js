@@ -22,9 +22,10 @@ export function parseSpeeds(text,field='Supported speeds') {
   return [...new Set(values)].sort((a,b)=>a-b);
 }
 const connectors=['unknown','rj45','sfp','sfp+','qsfp','virtual','other'];
+const groupName=i=>i.port_group||(i.notes==='Reported by Syncro; no physical port, VLAN or uplink inferred.'?'Syncro-reported adapters (physical ports unverified)':'Ports');
 
 export function portGroupNames(interfaces) {
-  return [...new Set([...interfaces].sort((a,b)=>a.id-b.id).map(i=>i.port_group||'Ports'))];
+  return [...new Set([...interfaces].sort((a,b)=>a.id-b.id).map(groupName))];
 }
 
 export async function openPorts({clinic,deviceId,onChanged,container=null}) {
@@ -42,7 +43,7 @@ export async function openPorts({clinic,deviceId,onChanged,container=null}) {
     }
     const vlans=catalog.vlans.filter(v=>v.location_id===data.location_id);
     const groups=portGroupNames(data.interfaces);
-    modal.body.innerHTML=`<p class="help">Documented configuration, not live monitoring. Click ports to select; Shift-click selects a range. Each group uses at most two rows.</p><div class="actions"><label>Colour by<select id="port-colour"><option value="speed" ${colour==='speed'?'selected':''}>Speed</option><option value="vlan" ${colour==='vlan'?'selected':''}>VLAN</option></select></label><button class="btn" id="port-add">+ Add port group</button><button class="btn" id="port-network">Network interfaces & addresses</button><button class="btn" id="port-all">Select all</button><button class="btn" id="port-clear">Clear selection</button></div><p class="help">${colour==='speed'?'Red <1 Gb · Blue 1–<2.5 Gb · Green 2.5–<10 Gb · Orange ≥10 Gb · Grey unknown. Connected ports use documented link speed; unused ports use capability.':'Port fill: access/native VLAN. Coloured markers: tagged VLANs. T = trunk. Grey = no untagged VLAN.'}</p>${groups.map(group=>{const ports=data.interfaces.filter(i=>(i.port_group||'Ports')===group).sort((a,b)=>a.port_order-b.port_order||a.id-b.id);return `<h3>${esc(group)}</h3><div class="port-scroll"><div class="port-grid" style="grid-template-columns:repeat(${Math.ceil(ports.length/2)},76px)">${ports.map(i=>{
+    modal.body.innerHTML=`<p class="help">Documented configuration, not live monitoring. Click ports to select; Shift-click selects a range. Each group uses at most two rows.</p><div class="actions"><label>Colour by<select id="port-colour"><option value="speed" ${colour==='speed'?'selected':''}>Speed</option><option value="vlan" ${colour==='vlan'?'selected':''}>VLAN</option></select></label><button class="btn" id="port-add">+ Add port group</button><button class="btn" id="port-network">Network interfaces & addresses</button><button class="btn" id="port-all">Select all</button><button class="btn" id="port-clear">Clear selection</button></div><p class="help">${colour==='speed'?'Red <1 Gb · Blue 1–<2.5 Gb · Green 2.5–<10 Gb · Orange ≥10 Gb · Grey unknown. Connected ports use documented link speed; unused ports use capability.':'Port fill: access/native VLAN. Coloured markers: tagged VLANs. T = trunk. Grey = no untagged VLAN.'}</p>${groups.map(group=>{const ports=data.interfaces.filter(i=>groupName(i)===group).sort((a,b)=>a.port_order-b.port_order||a.id-b.id);return `<h3>${esc(group)}</h3><div class="port-scroll"><div class="port-grid" style="grid-template-columns:repeat(${Math.ceil(ports.length/2)},76px)">${ports.map(i=>{
       const links=data.connections.filter(c=>c.source_interface_id===i.id||c.target_interface_id===i.id),link=links[0];
       const capability=i.connector==='sfp'||i.connector==='sfp+'||i.connector==='qsfp'?i.supported_speeds.filter(s=>i.module_speeds?.includes(s)):i.supported_speeds;
       const speed=link?link.speed_mbps:Math.max(0,...capability),native=i.memberships.find(m=>['access','native'].includes(m.mode)),tags=i.memberships.filter(m=>m.mode==='tagged');

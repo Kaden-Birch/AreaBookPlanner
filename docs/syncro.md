@@ -1,5 +1,13 @@
 # Syncro read-only import
 
+## Detailed network import and repairing earlier imports
+
+Asset imports now also GET `/customer_assets/{id}` (requires **Assets - View Details**). Nested adapter lists and JSON-encoded network fields are normalized into separate interfaces with MACs, IPv4 and IPv6 addresses. MAC colon, hyphen, dotted and compact formats are supported. Scalar subnet masks/prefixes are applied only where the association is unambiguous. Explicit public/WAN-IP fields are not treated as local adapters. Unrecognized/absent fields and detail permission failures are reported in the preview; list data remains available as a fallback.
+
+To repair an existing import, preview the same customer, select Machines, and check **Fill missing network information** before confirming. This only initializes devices with **no interfaces and no existing device IP/MAC**. Devices with any existing network documentation are skipped; no ports, VLANs, addresses or uplinks are overwritten. Repeat imports are idempotent. New assets receive the reported interfaces without needing this checkbox.
+
+The API's published examples do not contain populated RMM adapter data. These mappings are tested against representative nested/flat payloads; deployment-specific fields still require a redacted real response if a preview reports no supported IP/MAC fields. No production Syncro key is included in tests.
+
 Global settings → Syncro accepts the account subdomain (not a full URL) and a dedicated read-only API key. The application uses server-side HTTPS GET requests with a Bearer header, refuses redirects, caps response size/pagination and throttles calls. The key is never returned to browsers. It is stored in the application's settings database: protect the database, backups and Docker volume like credentials. This is not an encrypted secret vault.
 
 Required reads: Customers List/Search and View Detail, Assets List/Search, Tickets List/Search, and Invoices List/Search if invoices are selected. Test connection verifies customer access only. Individual category errors are displayed in the preview, never silently interpreted as no records. Review Syncro's API license before enabling: https://api-docs.syncromsp.com/.

@@ -8,6 +8,7 @@ def source(monkeypatch):
     calls=[]
     def get(self,path,params=None):
         calls.append((path,params))
+        if path=='/customer_assets/2':return {'asset':get(self,'/customer_assets',{'page':1})['assets'][0]}
         if path=='/customers/42':return {'customer':{'id':42,'business_name':'Imported Clinic','address':'123 Test St','city':'Lethbridge','latitude':49.7,'longitude':-112.8,'online_profile_url':'SECRET','notes':'PASSWORD'}}
         if path=='/customers':return {'customers':[{'id':42,'business_name':'Imported Clinic'}],'meta':{'total_pages':1}}
         if (params or {}).get('page',1)>1:return {'assets':[],'meta':{'total_pages':2}}
@@ -99,3 +100,61 @@ def test_transport_uses_get_header_auth_and_redacts_errors(environment,monkeypat
     monkeypatch.setattr(syncro,'build_opener',lambda *args:Broken())
     response=admin.get('/api/syncro/customers')
     assert response.status_code==502 and 'TEST-SECRET' not in response.text
+
+def test_nested_adapters_and_safe_backfill(environment,source,monkeypatch):
+    admin,_,areas=environment;setup(admin)
+    original=syncro.Client.get
+    detailed=False
+    def get(self,path,params=None):
+        if path=='/customer_assets/2':
+            return {'asset':{'id':2,'customer_id':42,'rmm_store':{'network_adapters':[
+                {'Name':'Ethernet','MACAddress':'0011.2233.4455','IPAddresses':['192.0.2.20/24','2001:db8::20/64']},
+                {'Name':'Wi-Fi','MACAddress':'AA-BB-CC-DD-EE-FF','IPAddress':'192.0.2.21'}] if detailed else []},'properties':{}}}
+        result=original(self,path,params)
+        if path=='/customer_assets':result['assets'][0]['properties']={}
+        return result
+    monkeypatch.setattr(syncro.Client,'get',get)
+    def run(fill=False):
+        draft=admin.post('/api/syncro/preview',json={'customer_id':42,'categories':['assets']})
+        assert draft.status_code==200,draft.text
+        result=admin.post('/api/syncro/import',json={'token':draft.json()['token'],'name':'Network test','area_id':areas['Lethbridge'],'fill_missing_network':fill})
+        assert result.status_code==200,result.text
+        return result.json()
+    result=run();cid=result['clinic_id']
+    did=admin.get(f'/api/syncro/clinics/{cid}').json()['records'][0]['local_id']
+    detailed=True
+    assert run()['interfaces_added']==0
+    assert run(True)['interfaces_added']==2
+    network=admin.get(f'/api/devices/{did}/network').json()
+    assert [i['mac_address'] for i in network['interfaces']]==['00:11:22:33:44:55','aa:bb:cc:dd:ee:ff']
+    assert len(network['interfaces'][0]['addresses'])==2
+    assert run(True)['interfaces_added']==0
+    assert admin.get(f'/api/devices/{did}/network').json()['interfaces']==network['interfaces']
+
+def test_network_extractor_ignores_public_ip_and_secrets():
+    from app.syncro_network import adapters
+    rows=adapters({'rmm_store':{'general':{'network_adapters':json.dumps([{'Name':'LAN','MAC':'001122334455','IPAddress':['10.0.0.1','::1','bad']}]),'public_ip':'198.51.100.1','password':'secret'}}})
+    assert len(rows)==1 and rows[0]['mac_address']=='00:11:22:33:44:55'
+    assert [a['address'] for a in rows[0]['addresses']]==['10.0.0.1']
+    assert 'secret' not in json.dumps(rows)
+
+def test_detail_permission_failure_preserves_list_data(environment,source,monkeypatch):
+    admin,_,_=environment;setup(admin);original=syncro.Client.get
+    def get(self,path,params=None):
+        if path=='/customer_assets/2':raise syncro.HTTPException(502,'Syncro returned HTTP 403')
+        return original(self,path,params)
+    monkeypatch.setattr(syncro.Client,'get',get)
+    draft=admin.post('/api/syncro/preview',json={'customer_id':42,'categories':['assets']}).json()
+    assert draft['warnings'] and len(draft['records']['assets'][0]['interfaces'])==1
+
+def test_backfill_preserves_legacy_values_and_manual_interface(environment):
+    from app.database import get_db
+    from app.syncro_network import fill_missing
+    _,_,_=environment
+    reported=[{'name':'Ethernet','mac_address':'00:11:22:33:44:55','addresses':[{'address':'192.0.2.1','version':4,'prefix':24}]}]
+    with get_db() as conn:
+        assert fill_missing(conn,1,reported)==0  # fixture has a manually recorded IP
+        did=conn.execute("INSERT INTO devices(clinic_id,device_type,name) VALUES (1,'workstation','Manual ports')").lastrowid
+        conn.execute("INSERT INTO network_interfaces(device_id,name,notes) VALUES (?,'Port 1','Do not overwrite')",(did,))
+        assert fill_missing(conn,did,reported)==0
+        assert conn.execute('SELECT notes FROM network_interfaces WHERE device_id=?',(did,)).fetchone()[0]=='Do not overwrite'

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from ..database import db_dependency
 from .extras import get_setting, set_setting
+from ..syncro_network import adapters, fill_missing
 
 router=APIRouter(prefix='/api/syncro',tags=['Syncro'])
 SCHEMA='''
@@ -64,7 +65,7 @@ class Client:
         self.base=f'https://{self.tenant}.syncromsp.com'
     def get(self,path,params=None):
         global _last
-        if not re.fullmatch(r'/(customers(?:/\d+)?|contacts|customer_assets|tickets|invoices)',path):raise ValueError('Unsupported Syncro read')
+        if not re.fullmatch(r'/(customers(?:/\d+)?|contacts|customer_assets(?:/\d+)?|tickets|invoices)',path):raise ValueError('Unsupported Syncro read')
         with _lock:
             time.sleep(max(0,0.5-(time.monotonic()-_last)))
             _last=time.monotonic()
@@ -154,6 +155,20 @@ def preview(payload:PreviewIn,conn=Depends(db_dependency)):
         try:
             rows=client.collection('/customer_assets' if category=='assets' else '/'+category,category,payload.customer_id)
             data['records'][category]=[normalize(category,r,client.base) for r in rows]
+            if category=='assets':
+                started=time.monotonic()
+                for raw,record in zip(rows,data['records'][category]):
+                    detail=raw
+                    try:
+                        if time.monotonic()-started>45:raise HTTPException(502,'Detail time limit reached; remaining assets use list data')
+                        response=client.get('/customer_assets/'+str(record['id'])).get('asset')
+                        if not isinstance(response,dict) or str(response.get('customer_id'))!=str(payload.customer_id) or response.get('id')!=record['id']:raise HTTPException(502,'Asset detail identity mismatch')
+                        detail={**raw,**response}
+                    except HTTPException as e:data['warnings'].append(f"Asset {record['id']}: {e.detail}; using available list data")
+                    record['interfaces']=adapters(detail)
+                    record['addresses']=[a for i in record['interfaces'] for a in i['addresses']]
+                    record['mac_address']=next((i['mac_address'] for i in record['interfaces'] if i['mac_address']),'')
+                    if not record['interfaces']:data['warnings'].append(f"Asset {record['id']}: no supported IP/MAC fields found; no interface will be invented")
         except (HTTPException,ValueError,TypeError) as e:data['warnings'].append(category+': '+(e.detail if isinstance(e,HTTPException) else 'Unexpected fields; category not imported'))
     token=secrets.token_urlsafe(32)
     conn.execute('DELETE FROM syncro_previews WHERE expires<?',(time.time(),))
@@ -162,6 +177,7 @@ def preview(payload:PreviewIn,conn=Depends(db_dependency)):
     return data|{'token':token,'clinic_id':linked['clinic_id'] if linked else None}
 
 class ImportIn(BaseModel):
+    fill_missing_network:bool=False
     token:str
     area_id:int
     clinic_id:int | None=None
@@ -187,7 +203,7 @@ def import_customer(payload:ImportIn,conn=Depends(db_dependency)):
         cid=conn.execute("INSERT INTO clinics(name,address,city,province,postal_code,phone,email,area_id,relationship,stage) VALUES (?,?,?,?,?,?,?,?,'current_client','won')",[c[k] for k in ('name','address','city','province','postal_code','phone','email')]+[payload.area_id]).lastrowid
         conn.execute('UPDATE clinics SET lat=?,lng=? WHERE id=?',(c.get('lat'),c.get('lng'),cid))
     conn.execute('INSERT INTO syncro_links(tenant,customer_id,clinic_id) VALUES (?,?,?) ON CONFLICT(tenant,customer_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP',(tenant,customer,cid))
-    counts={'created':0,'preserved':0}
+    counts={'created':0,'preserved':0,'interfaces_added':0}
     for kind in ('contacts','assets','tickets','invoices'):
         for record in data['records'].get(kind,[]):
             old=conn.execute('SELECT * FROM syncro_records WHERE tenant=? AND kind=? AND external_id=?',(tenant,kind,record['id'])).fetchone()
@@ -206,15 +222,14 @@ def import_customer(payload:ImportIn,conn=Depends(db_dependency)):
                     local=conn.execute('INSERT INTO contacts(clinic_id,first_name,last_name,email,phone,mobile) VALUES (?,?,?,?,?,?)',(cid,first or 'Syncro contact',last,record['email'],record['phone'],record['mobile'])).lastrowid
                 elif kind=='assets':
                     local=conn.execute('INSERT INTO devices(clinic_id,name,device_type,serial,manufacturer,model,os,notes) VALUES (?,?,?,?,?,?,?,?)',(cid,record['name'],record['device_type'],record['serial'],record['manufacturer'],record['model'],record['os'],'Imported from Syncro: '+record['url']+'\nReview device type and assign site/uplink.')).lastrowid
-                    if record['addresses'] or record['mac_address']:
-                        iid=conn.execute('INSERT INTO network_interfaces(device_id,name,mac_address,notes) VALUES (?,?,?,?)',(local,'Reported interface',record['mac_address'],'Syncro reported addresses; adapter/port association is unverified.')).lastrowid
-                        for index,a in enumerate(record['addresses']):conn.execute('INSERT INTO network_addresses(interface_id,address,version,prefix_length,is_primary) VALUES (?,?,?,?,?)',(iid,a['address'],a['version'],a['prefix'],int(index==0)))
-                        conn.execute('UPDATE devices SET ip_address=?,mac_address=?,ipv6_enabled=? WHERE id=?',(record['addresses'][0]['address'] if record['addresses'] else None,record['mac_address'],int(any(a['version']==6 for a in record['addresses'])),local))
                 elif kind=='tickets':
                     assets=[r['local_id'] for a in record['assets'] if (r:=conn.execute("SELECT local_id FROM syncro_records WHERE tenant=? AND kind='assets' AND external_id=? AND clinic_id=?",(tenant,a,cid)).fetchone())]
                     status=ticket_status(record)
                     local=conn.execute('INSERT INTO clinic_tickets(clinic_id,device_id,title,url,ticket_at,status) VALUES (?,?,?,?,?,?)',(cid,assets[0] if assets else None,record['title'],record['url'],record['date'],status)).lastrowid
                     for did in assets[1:]:conn.execute('INSERT INTO device_tickets(device_id,title,url,ticket_date,status) VALUES (?,?,?,?,?)',(did,record['title'],record['url'],record['date'],status))
+            if kind=='assets' and local and (not old or payload.fill_missing_network):
+                legacy=[{'name':'Reported interface','mac_address':record.get('mac_address',''),'addresses':record.get('addresses',[])}] if record.get('mac_address') or record.get('addresses') else []
+                counts['interfaces_added']+=fill_missing(conn,local,record.get('interfaces',legacy))
             conn.execute('INSERT INTO syncro_records(tenant,kind,external_id,clinic_id,local_id,data) VALUES (?,?,?,?,?,?) ON CONFLICT(tenant,kind,external_id) DO UPDATE SET data=excluded.data,updated_at=CURRENT_TIMESTAMP',(tenant,kind,record['id'],cid,local,json.dumps(record)))
     conn.execute('DELETE FROM syncro_previews WHERE token=?',(payload.token,))
     return {'clinic_id':cid,**counts,'warnings':data['warnings']}

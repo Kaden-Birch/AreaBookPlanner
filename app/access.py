@@ -79,6 +79,7 @@ def scope_rules(role, area):
     visibility = "visibility IN ('general','technical')" if role == "it" else "visibility IN ('general','sales')"
     rules = {"clinics": clinics}
     rules['syncro_links']=owned
+    rules['syncro_connections']='0'
     rules['unifi_sites']=owned if role=='it' else '0'
     for table in ('integration_jobs','integration_changes','integration_fields'):
         rules[table]=owned if role=='it' else '0'

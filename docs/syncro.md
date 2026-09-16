@@ -1,5 +1,15 @@
 # Syncro read-only import
 
+## Multiple customers and API connections at one site
+
+A clinic/site can now link to multiple Syncro customers, such as a medical practice and an attached pharmacy sharing the same UniFi console or Meraki network. Import each customer separately and select **Match existing clinic**, then choose the same **AreaBook site**. Existing clinic details and network mappings stay intact. Machines from each customer are placed at the selected site without invented uplinks. Existing machines are not moved on reimport; review device matches and wiring afterwards.
+
+Customers within the same Syncro account can use the existing default API connection. For a different account or separately permissioned key, use **Global settings → Additional Syncro connections → Add Syncro connection**. Give it a name, subdomain and read-only API key. The import dialog's **Syncro connection** selector controls which saved key is used. Multiple named connections may use the same subdomain; keys are never returned to the browser. Manage a connection to replace/remove its key or test customer access. Removing a key leaves documentation intact but prevents successful refreshes for customers using that key. To change subdomains, add a new connection instead of repurposing an existing one.
+
+Each source customer remains uniquely mapped to one AreaBook clinic/site. Imported records retain tenant/customer provenance, and each customer gets its own staggered refresh job. Categories, baselines and missing-record checks are customer-specific: refreshing the practice never marks pharmacy machines missing. No Syncro customer is automatically merged based on name, and distinct source asset records are not automatically merged based on IP alone. Reimporting the same source asset remains idempotent.
+
+Upgrade preserves existing mappings, record IDs and main-site placement, and backfills each existing record's source customer. Existing default credentials remain unchanged. Saved named keys require the same database/backup protections as the default key. Staff retain the existing role/Area filters; administrators alone can manage connections or imports.
+
 ## Network diagnostics
 
 Build an import preview with Machines selected, expand **assets**, and click **Download network diagnostics** beneath one machine. No import confirmation is needed. The admin-only action verifies the preview owner, expiry, account and asset/customer association, then performs a read-only asset-detail request. The downloaded JSON contains filtered field paths/types and validated IP/MAC literals, including those found in nested JSON. It excludes arbitrary source text, customer/contact data and credential fields. Review the file before sharing: IP/MAC identifiers remain intentionally visible. This diagnostic does not correct or delete adapters.

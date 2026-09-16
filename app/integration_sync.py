@@ -36,7 +36,10 @@ def setting(conn, key):
 
 def enabled(conn): return setting(conn,'integration_sync_enabled')=='1'
 
-def provider_key(conn,provider,cid):
+def provider_key(conn,provider,cid,config=None):
+    if provider=='syncro' and config and config.get('connection_id') is not None:
+        row=conn.execute('SELECT api_key FROM syncro_connections WHERE id=?',(config['connection_id'],)).fetchone()
+        return row[0] if row else ''
     if provider=='meraki':
         row=conn.execute('SELECT api_key FROM meraki_credentials WHERE clinic_id=?',(cid,)).fetchone()
         return row[0] if row else ''
@@ -77,12 +80,13 @@ def collect(job):
     from .unifi_mapping import device, network, text
     cfg=json.loads(job['config']); provider=job['provider']
     with get_db() as c:
-        generation=hashlib.sha256(provider_key(c,provider,job['clinic_id']).encode()).hexdigest()
+        generation=hashlib.sha256(provider_key(c,provider,job['clinic_id'],cfg).encode()).hexdigest()
         baseline=source_baseline(c,job)
         if provider=='syncro':
-            client=syncro.Client(c)
+            client=syncro.Client(c,cfg.get('connection_id'))
             if client.tenant!=cfg['tenant']:raise HTTPException(409,'Syncro account changed; relink this clinic')
-            kinds=[r[0] for r in c.execute('SELECT DISTINCT kind FROM syncro_records WHERE clinic_id=? AND tenant=?',(job['clinic_id'],cfg['tenant']))]
+            kinds=[r[0] for r in c.execute('SELECT DISTINCT kind FROM syncro_records WHERE clinic_id=? AND tenant=? AND customer_id=?',(job['clinic_id'],cfg['tenant'],cfg['customer_id']))]
+            kinds=sorted(set(kinds)|set(json.loads(cfg.get('categories','[]'))))
         elif provider=='meraki':
             from .meraki_client import Client as Meraki
             client=Meraki(provider_key(c,provider,job['clinic_id']))
@@ -132,8 +136,8 @@ def collect(job):
 def source_baseline(c,job):
     cfg=json.loads(job['config'])
     if job['provider']=='syncro':
-        query='SELECT id,local_id,data FROM syncro_records WHERE clinic_id=? AND tenant=? ORDER BY id'
-        args=(job['clinic_id'],cfg['tenant'])
+        query='SELECT id,local_id,data FROM syncro_records WHERE clinic_id=? AND tenant=? AND customer_id=? ORDER BY id'
+        args=(job['clinic_id'],cfg['tenant'],cfg['customer_id'])
     elif job['provider']=='meraki':
         query='SELECT id,local_id,data FROM meraki_records WHERE clinic_id=? AND network_id=? ORDER BY id'
         args=(job['clinic_id'],cfg['network_id'])
@@ -227,9 +231,9 @@ def apply_result(job,result,stop=None):
         if not current or not current['enabled'] or not enabled(c) or (stop and stop.is_set()):return False
         if current['config']!=job['config'] or source_baseline(c,job)!=result['baseline']:
             raise HTTPException(409,'Source mapping or a reviewed import changed during refresh; retrying with fresh data')
-        if hashlib.sha256(provider_key(c,job['provider'],job['clinic_id']).encode()).hexdigest()!=result['generation']:raise HTTPException(409,'Credentials changed during refresh; result discarded')
+        if hashlib.sha256(provider_key(c,job['provider'],job['clinic_id'],json.loads(job['config'])).encode()).hexdigest()!=result['generation']:raise HTTPException(409,'Credentials changed during refresh; result discarded')
         cfg=json.loads(job['config']);provider=job['provider'];table=provider+'_records'
-        if provider=='syncro':condition='tenant=? AND clinic_id=?';params=(cfg['tenant'],job['clinic_id'])
+        if provider=='syncro':condition='tenant=? AND clinic_id=? AND customer_id=?';params=(cfg['tenant'],job['clinic_id'],cfg['customer_id'])
         elif provider=='meraki':condition='network_id=? AND clinic_id=?';params=(cfg['network_id'],job['clinic_id'])
         else:condition='host_id=? AND site_id=? AND clinic_id=?';params=(cfg['host_id'],cfg['site_id'],job['clinic_id'])
         existing={(r['kind'],str(r['external_id'])):dict(r) for r in c.execute(f'SELECT * FROM {table} WHERE '+condition,params)}

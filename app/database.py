@@ -632,6 +632,8 @@ def init_db() -> None:
         conn.executescript(AUTH_SCHEMA)
         from .routers.syncro import SCHEMA as SYNCRO_SCHEMA
         conn.executescript(SYNCRO_SCHEMA)
+        from .routers.syncro import initialize as initialize_syncro
+        initialize_syncro(conn)
         from .routers.unifi import SCHEMA as UNIFI_SCHEMA
         conn.executescript(UNIFI_SCHEMA)
         from .routers.meraki import SCHEMA as MERAKI_SCHEMA

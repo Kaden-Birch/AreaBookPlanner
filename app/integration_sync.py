@@ -36,12 +36,20 @@ def setting(conn, key):
 
 def enabled(conn): return setting(conn,'integration_sync_enabled')=='1'
 
+def provider_key(conn,provider,cid):
+    if provider=='meraki':
+        row=conn.execute('SELECT api_key FROM meraki_credentials WHERE clinic_id=?',(cid,)).fetchone()
+        return row[0] if row else ''
+    return setting(conn,provider+'_api_key') or ''
+
 def discover(conn):
     sources=[]
     for r in conn.execute('SELECT * FROM syncro_links'):
         sources.append(('syncro',f"{r['tenant']}:{r['customer_id']}",r['clinic_id'],dict(r)))
     for r in conn.execute('SELECT * FROM unifi_sites'):
         sources.append(('unifi',f"{r['host_id']}/{r['site_id']}",r['clinic_id'],dict(r)))
+    for r in conn.execute('SELECT * FROM meraki_sites'):
+        sources.append(('meraki',r['network_id'],r['clinic_id'],dict(r)))
     for index,(provider,key,cid,config) in enumerate(sources):
         conn.execute('INSERT INTO integration_jobs(provider,source_key,clinic_id,config,next_at) VALUES (?,?,?,?,?) ON CONFLICT(provider,source_key) DO UPDATE SET config=excluded.config',
                      (provider,key,cid,json.dumps(config),time.time()+index*1800/max(1,len(sources))))
@@ -69,13 +77,20 @@ def collect(job):
     from .unifi_mapping import device, network, text
     cfg=json.loads(job['config']); provider=job['provider']
     with get_db() as c:
-        generation=hashlib.sha256((setting(c,provider+'_api_key') or '').encode()).hexdigest()
+        generation=hashlib.sha256(provider_key(c,provider,job['clinic_id']).encode()).hexdigest()
         baseline=source_baseline(c,job)
         if provider=='syncro':
             client=syncro.Client(c)
             if client.tenant!=cfg['tenant']:raise HTTPException(409,'Syncro account changed; relink this clinic')
             kinds=[r[0] for r in c.execute('SELECT DISTINCT kind FROM syncro_records WHERE clinic_id=? AND tenant=?',(job['clinic_id'],cfg['tenant']))]
+        elif provider=='meraki':
+            from .meraki_client import Client as Meraki
+            client=Meraki(provider_key(c,provider,job['clinic_id']))
         else:client=UniFi(setting(c,'unifi_api_key'));kinds=['devices','clients','networks','vpn']
+    if provider=='meraki':
+        from .meraki_mapping import collect as collect_meraki
+        data=collect_meraki(client,cfg['organization_id'],cfg['network_id'])
+        return data|{'records':[(r['kind'],r['id'],r) for r in data['records']],'generation':generation,'baseline':baseline}
     records=[]; complete=[]; warnings=[]; started=time.monotonic()
     for kind in kinds:
         try:
@@ -119,6 +134,9 @@ def source_baseline(c,job):
     if job['provider']=='syncro':
         query='SELECT id,local_id,data FROM syncro_records WHERE clinic_id=? AND tenant=? ORDER BY id'
         args=(job['clinic_id'],cfg['tenant'])
+    elif job['provider']=='meraki':
+        query='SELECT id,local_id,data FROM meraki_records WHERE clinic_id=? AND network_id=? ORDER BY id'
+        args=(job['clinic_id'],cfg['network_id'])
     else:
         query='SELECT id,local_id,data FROM unifi_records WHERE clinic_id=? AND host_id=? AND site_id=? ORDER BY id'
         args=(job['clinic_id'],cfg['host_id'],cfg['site_id'])
@@ -156,7 +174,7 @@ def adapters_for(provider,r):
 def update_device(c,job,did,old,new):
     d=c.execute('SELECT * FROM devices WHERE id=? AND clinic_id=?',(did,job['clinic_id'])).fetchone()
     if not d:return
-    provider=job['provider']; prefix='Imported from Syncro' if provider=='syncro' else 'Imported from UniFi'
+    provider=job['provider']; label={'syncro':'Syncro','unifi':'UniFi','meraki':'Meraki'}[provider];prefix='Imported from '+label
     claimable=(d['notes'] or '').startswith(prefix)
     for field in ('os','model','manufacturer'):
         k='mac' if field=='mac_address' and provider=='unifi' else field
@@ -167,7 +185,7 @@ def update_device(c,job,did,old,new):
         previous=[i for i in old_ifs if m and mac(i.get('mac_address'))==m]
         matches=[i for i in c.execute('SELECT * FROM network_interfaces WHERE device_id=?',(did,)) if m and mac(i['mac_address'])==m]
         if len(previous)!=1 or len(matches)!=1:continue
-        iface=matches[0];origin=(iface['notes'] or '').startswith('Reported by '+('Syncro' if provider=='syncro' else 'UniFi'))
+        iface=matches[0];origin=(iface['notes'] or '').startswith('Reported by '+label)
         for version in (4,6):
             before=[a for a in previous[0].get('addresses',[]) if a['version']==version]
             after=[a for a in adapter.get('addresses',[]) if a['version']==version]
@@ -190,7 +208,7 @@ def update_device(c,job,did,old,new):
             if row['is_primary'] and current==a['address']:
                 managed(c,job,'devices',did,'ip_address',before[0]['address'],a['address'],origin and d['ip_address']==before[0]['address'])
     # Structural changes are observations for review, never silent rewiring/deletion.
-    for field in ('uplink','ports','device_type'):
+    for field in ('uplink','uplink_port','vlan','ports','device_type'):
         if old.get(field)!=new.get(field):notice(c,job,f'{did}:{field}',f'{new.get("name","Device")}: {field} changed',{'before':old.get(field),'after':new.get(field),'device_id':did})
     old_macs={mac(i.get('mac_address')) for i in old_ifs};new_macs={mac(i.get('mac_address')) for i in new_ifs}
     if old_macs!=new_macs:notice(c,job,f'{did}:adapters','Network adapter inventory changed',{'device_id':did,'before':sorted(m for m in old_macs if m),'after':sorted(m for m in new_macs if m)})
@@ -209,10 +227,11 @@ def apply_result(job,result,stop=None):
         if not current or not current['enabled'] or not enabled(c) or (stop and stop.is_set()):return False
         if current['config']!=job['config'] or source_baseline(c,job)!=result['baseline']:
             raise HTTPException(409,'Source mapping or a reviewed import changed during refresh; retrying with fresh data')
-        if hashlib.sha256((setting(c,job['provider']+'_api_key') or '').encode()).hexdigest()!=result['generation']:raise HTTPException(409,'Credentials changed during refresh; result discarded')
+        if hashlib.sha256(provider_key(c,job['provider'],job['clinic_id']).encode()).hexdigest()!=result['generation']:raise HTTPException(409,'Credentials changed during refresh; result discarded')
         cfg=json.loads(job['config']);provider=job['provider'];table=provider+'_records'
-        condition='tenant=? AND clinic_id=?' if provider=='syncro' else 'host_id=? AND site_id=? AND clinic_id=?'
-        params=(cfg['tenant'],job['clinic_id']) if provider=='syncro' else (cfg['host_id'],cfg['site_id'],job['clinic_id'])
+        if provider=='syncro':condition='tenant=? AND clinic_id=?';params=(cfg['tenant'],job['clinic_id'])
+        elif provider=='meraki':condition='network_id=? AND clinic_id=?';params=(cfg['network_id'],job['clinic_id'])
+        else:condition='host_id=? AND site_id=? AND clinic_id=?';params=(cfg['host_id'],cfg['site_id'],job['clinic_id'])
         existing={(r['kind'],str(r['external_id'])):dict(r) for r in c.execute(f'SELECT * FROM {table} WHERE '+condition,params)}
         before=capture(c);seen=set()
         for kind,rid,new in result['records']:
@@ -225,7 +244,7 @@ def apply_result(job,result,stop=None):
             if kind in ('assets','devices','clients'):update_device(c,job,did,previous,new)
             elif kind=='tickets' and did:
                 managed(c,job,'clinic_tickets',did,'status',ticket_status(previous),ticket_status(new),True)
-            elif kind in ('networks','vpn') and previous!=new:notice(c,job,kind+':'+rid,'Network configuration changed: '+str(new.get('name') or rid),new)
+            elif kind in ('networks','vpn','topology') and previous!=new:notice(c,job,kind+':'+rid,'Network configuration changed: '+str(new.get('name') or rid),new)
             c.execute(f'UPDATE {table} SET data=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(json.dumps(new),old['id']))
         for key,old in existing.items():
             if key[0] in result['complete'] and key not in seen:
@@ -260,6 +279,6 @@ def worker(provider,stop):
 
 def start():
     stop=threading.Event()
-    threads=[threading.Thread(target=worker,args=(p,stop),daemon=True,name=p+'-sync') for p in ('syncro','unifi')]
+    threads=[threading.Thread(target=worker,args=(p,stop),daemon=True,name=p+'-sync') for p in ('syncro','unifi','meraki')]
     for t in threads:t.start()
     return stop,threads

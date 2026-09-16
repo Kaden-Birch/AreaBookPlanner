@@ -634,6 +634,8 @@ def init_db() -> None:
         conn.executescript(SYNCRO_SCHEMA)
         from .routers.unifi import SCHEMA as UNIFI_SCHEMA
         conn.executescript(UNIFI_SCHEMA)
+        from .routers.meraki import SCHEMA as MERAKI_SCHEMA
+        conn.executescript(MERAKI_SCHEMA)
         from .integration_sync import SCHEMA as INTEGRATION_SYNC_SCHEMA
         conn.executescript(INTEGRATION_SYNC_SCHEMA)
         for table, column, ddl in [

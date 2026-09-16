@@ -17,6 +17,7 @@ from .routers import topology_admin
 from .routers import topology_trace
 from .routers import syncro
 from .routers import unifi
+from .routers import meraki
 from .routers import integration_sync
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,6 +45,7 @@ app.include_router(admin_router)
 app.include_router(it_dashboard.router)
 app.include_router(syncro.router)
 app.include_router(unifi.router)
+app.include_router(meraki.router)
 app.include_router(integration_sync.router)
 
 

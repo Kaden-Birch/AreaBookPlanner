@@ -162,7 +162,7 @@ class Import(BaseModel):
     import_networks: bool = True
     import_uplinks: bool = False
 
-def fill_device(conn, did, record, new):
+def fill_device(conn, did, record, new, provider='UniFi'):
     """Fill blanks only. Conflicting observations remain in the source snapshot."""
     d = conn.execute('SELECT * FROM devices WHERE id=?', (did,)).fetchone()
     conn.execute("UPDATE devices SET model=COALESCE(NULLIF(model,''),?),mac_address=COALESCE(NULLIF(mac_address,''),?) WHERE id=?", (record['model'] or None, record['mac'] or None, did))
@@ -172,7 +172,7 @@ def fill_device(conn, did, record, new):
     if not interfaces and (record['mac'] or record['addresses']):
         # Don't attach a new MAC to conflicting legacy documentation.
         if new or (not d['mac_address'] or mac(d['mac_address']) == record['mac']):
-            iid = conn.execute('INSERT INTO network_interfaces(device_id,name,mac_address,notes) VALUES (?,?,?,?)', (did, 'UniFi reported interface', record['mac'] or None, 'Reported by UniFi; management/client address, not a confirmed physical port.')).lastrowid
+            iid = conn.execute('INSERT INTO network_interfaces(device_id,name,mac_address,notes) VALUES (?,?,?,?)', (did, provider+' reported interface', record['mac'] or None, 'Reported by '+provider+'; management/client address, not a confirmed physical port.')).lastrowid
     if iid and not conn.execute('SELECT 1 FROM network_addresses WHERE interface_id=?', (iid,)).fetchone() and not conn.execute('SELECT 1 FROM interface_vlans WHERE interface_id=?', (iid,)).fetchone():
         for a in record['addresses']:
             if d['ip_address'] and d['ip_address'] != a['address']:

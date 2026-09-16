@@ -44,6 +44,9 @@ export async function reviewChanges(cid){
     if(admin){
       modal.body.querySelector('[data-syncro]').onclick=async()=>{modal.close();(await import('./syncro.js')).importSyncro();};
       modal.body.querySelector('[data-unifi]').onclick=async()=>{modal.close();(await import('./unifi.js')).importUnifi(cid);};
+      const meraki=document.createElement('button');meraki.className='btn';meraki.textContent='Open Meraki import';
+      meraki.onclick=async()=>{modal.close();(await import('./meraki.js')).importMeraki(cid);};
+      modal.body.querySelector('.actions').append(meraki);
     }
   }
   try{await load();}catch(e){modal.body.textContent=e.message;}

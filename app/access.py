@@ -24,6 +24,8 @@ def permission_for(path, method):
         return {'it'} if read and re.fullmatch(r'/api/integration-sync/clinics/\d+',path) else set()
     if path.startswith('/api/unifi'):
         return {'it'} if read and re.fullmatch(r'/api/unifi/clinics/\d+', path) else set()
+    if path.startswith('/api/meraki'):
+        return {'it'} if read and re.fullmatch(r'/api/meraki/clinics/\d+', path) else set()
     if path.startswith('/api/syncro'):
         return WORKSPACES if read and re.fullmatch(r'/api/syncro/clinics/\d+',path) else set()
     if path == '/api/it/dashboard':
@@ -82,6 +84,9 @@ def scope_rules(role, area):
         rules[table]=owned if role=='it' else '0'
     if role=='it':rules['integration_changes'] += " AND visibility!='sales'"
     rules['unifi_records']=owned if role=='it' else '0'
+    rules['meraki_credentials']='0'
+    for table in ('meraki_sites','meraki_records'):
+        rules[table]=owned if role=='it' else '0'
     rules['syncro_records']=owned+ (" AND kind IN ('contacts','assets','tickets')" if role=='it' else " AND kind IN ('contacts','invoices')")
     for table in ("contacts", "clinic_locations", "clinic_events", "quotes", "invoices", "orders", "devices", "clinic_tickets", "site_network_ranges"):
         rules[table] = owned
@@ -225,7 +230,7 @@ def scoped_db(request: Request):
         if not area and not is_admin:
             raise HTTPException(403, "Ask an administrator to assign an active Area")
         scoped = ScopedConnection(conn, user)
-        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path) or request.url.path=='/api/unifi/import'
+        technical = re.search(r'/(devices|services|topology|vlans|connections|vpn|network-ranges|locations|sites|connect|disconnect|tasks|tickets)(/|$)',request.url.path) or request.url.path in ('/api/unifi/import','/api/meraki/import')
         audit = ((user['active_role']=='it' or is_admin) and request.method in ('POST','PUT','PATCH','DELETE') and technical
                  and not request.url.path.endswith(('/import/preview','/versions')))
         if audit:
@@ -233,7 +238,7 @@ def scoped_db(request: Request):
             before = capture(scoped)
         yield scoped
         if is_admin and request.method in ('POST','PUT','PATCH','DELETE') and (
-            request.url.path in ('/api/settings','/api/unifi/settings') or request.url.path.startswith(('/api/pricebook','/api/templates'))):
+            request.url.path in ('/api/settings','/api/unifi/settings') or re.fullmatch(r'/api/meraki/clinics/\d+/settings',request.url.path) or request.url.path.startswith(('/api/pricebook','/api/templates'))):
             # Metadata only: never persist request bodies, keys or template text.
             conn.execute('INSERT INTO global_settings_history(actor_id,path,method) VALUES (?,?,?)',(user['id'],request.url.path,request.method))
         if audit:
